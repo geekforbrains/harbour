@@ -30,7 +30,7 @@ function buildPrompt(payload, isResume) {
       .map(a => `[${a.author_type}] ${a.content}`)
       .join("\n\n");
 
-    return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response.`;
+    return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response. If you need further human input, include [WAITING] in your response again. When you are done, provide a summary of what you did.`;
   }
 
   // New run: build full context prompt
@@ -79,8 +79,11 @@ function buildPrompt(payload, isResume) {
   }
 
   prompt += `\n## Important\n\n`;
-  prompt += `When you are done, provide a summary of what you did. `;
-  prompt += `If you need human input, clearly state what you need and why.\n`;
+  prompt += `When you are done, provide a summary of what you did.\n`;
+  prompt += `If you need human input before you can continue, include the marker [WAITING] in your response `;
+  prompt += `and clearly explain what you need and why. `;
+  prompt += `The run will be paused and a human will respond on the dashboard. `;
+  prompt += `You will then be resumed with their response.\n`;
 
   return prompt;
 }
@@ -173,9 +176,9 @@ async function runSingleAgent(runner) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
   }
 
-  // Mark as done. Harbour agents complete runs in a single pass.
-  // Human-in-the-loop (waiting) is handled by external agents that call the API directly.
-  const status = "done";
+  // Detect waiting marker: if agent output contains [WAITING], pause for human input
+  const isWaiting = /\[WAITING\]/i.test(output);
+  const status = isWaiting ? "waiting" : "done";
 
   try {
     await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
@@ -183,10 +186,17 @@ async function runSingleAgent(runner) {
     console.error(`  [${agentName}] Failed to update status: ${err.message}`);
   }
 
-  // Clean up session on completion
-  delete sessions[runId];
-  saveSessions(sessions);
-  console.log(`  [${agentName}] Run ${runId} completed with status: ${status}`);
+  if (isWaiting) {
+    // Preserve the CLI session so we can resume when the human responds
+    sessions[runId] = { sessionId: newSessionId, cli };
+    saveSessions(sessions);
+    console.log(`  [${agentName}] Run ${runId} waiting for human input (session preserved)`);
+  } else {
+    // Clean up session on completion
+    delete sessions[runId];
+    saveSessions(sessions);
+    console.log(`  [${agentName}] Run ${runId} completed with status: ${status}`);
+  }
 }
 
 export async function runAgents() {
