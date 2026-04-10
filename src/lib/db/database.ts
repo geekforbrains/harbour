@@ -234,7 +234,7 @@ export function getRows(databaseId: string, opts?: {
     const dir = opts?.order === "ASC" ? "ASC" : "DESC";
     sql += ` ORDER BY "${opts.orderBy}" ${dir}`;
   } else {
-    sql += ` ORDER BY _id DESC`;
+    sql += ` ORDER BY rowid DESC`;
   }
 
   sql += ` LIMIT ? OFFSET ?`;

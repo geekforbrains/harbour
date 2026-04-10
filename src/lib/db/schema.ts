@@ -319,6 +319,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
   if (runCheck?.sql && !runCheck.sql.includes("pending")) {
     db.exec(`
+      DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -351,6 +352,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
   if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
     db.exec(`
+      DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -376,6 +378,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
   if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
     db.exec(`
+      DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

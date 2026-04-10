@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.2 — 2026-04-10
+
+### Bug Fixes
+
+- **Schema migration safety**: Each `CREATE TABLE runs_new` migration block now drops any pre-existing `runs_new` table first. Without this guard, an interrupted migration (e.g. mid-restart) left an orphaned `runs_new` table that caused every subsequent startup to abort schema initialization, leaving the `runs` table missing columns (`kill_requested_at`, `extra_instructions`, `session_id`, `session_cwd`) and breaking all endpoints that touched those columns.
+
+- **`ORDER BY rowid` for linked databases**: `getRows()` in `database.ts` and `buildRunPayload()` in `runs.ts` both sorted linked agent-managed tables by `_id DESC`. Tables created before v1.9 use `id TEXT PRIMARY KEY` and have no `_id` column, causing a `SqliteError: no such column: _id` inside `buildRunPayload()`. Since `buildRunPayload()` is called after a run is already claimed (status set to `running`), the error caused the `/next` polling endpoint to return 500 while the run remained permanently stuck in `running`. Switching to `rowid` works for both old (`id TEXT`) and new (`_id INTEGER`) table generations.
+
 ## v1.9.0 — 2026-04-10
 
 ### Run Detail Actions

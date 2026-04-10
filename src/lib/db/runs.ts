@@ -401,7 +401,7 @@ function buildRunPayload(runId: string) {
   const data: Record<string, any> = {};
   for (const d of linkedDbs) {
     data[d.name] = db.prepare(
-      `SELECT * FROM "${d.table_name}" ORDER BY _id DESC LIMIT 100`
+      `SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`
     ).all();
   }
 
