@@ -531,53 +531,60 @@ export default function RunDetailPage() {
     <div className="space-y-6">
       <BackLink href="/" label="Runs" />
 
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex items-center gap-2 min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">{run.job_name}</h1>
-          <StatusBadge status={run.status} />
+          <span className="hidden sm:inline-flex">
+            <StatusBadge status={run.status} />
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          {canKill && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleKill}
-              disabled={killInFlight}
-              className="text-orange-600 dark:text-orange-400 hover:text-orange-700"
-            >
-              <Ban className="h-3.5 w-3.5 mr-1.5" />
-              {killInFlight ? "Killing..." : "Kill"}
-            </Button>
-          )}
-          {(run.status === "failed" || run.status === "skipped" || run.status === "killed") && (
-            <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
-              <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
-            </Button>
-          )}
-          {run.job_id && (
-            <Link href={`/jobs/${run.job_id}`}>
-              <Button variant="outline" size="sm">View Job</Button>
-            </Link>
-          )}
-          {MANAGEABLE_STATUSES.includes(run.status) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
-                <MoreVertical className="h-3.5 w-3.5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {MANAGEABLE_STATUSES.filter(s => s !== run.status).map(s => (
-                  <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
-                    Mark as {s}
+        <div className="flex items-center justify-between sm:justify-start gap-2">
+          <span className="sm:hidden">
+            <StatusBadge status={run.status} />
+          </span>
+          <div className="flex items-center gap-2">
+            {canKill && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleKill}
+                disabled={killInFlight}
+                className="text-orange-600 dark:text-orange-400 hover:text-orange-700"
+              >
+                <Ban className="h-3.5 w-3.5 mr-1.5" />
+                {killInFlight ? "Killing..." : "Kill"}
+              </Button>
+            )}
+            {(run.status === "failed" || run.status === "skipped" || run.status === "killed") && (
+              <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
+                <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
+              </Button>
+            )}
+            {run.job_id && (
+              <Link href={`/jobs/${run.job_id}`}>
+                <Button variant="outline" size="sm">View Job</Button>
+              </Link>
+            )}
+            {MANAGEABLE_STATUSES.includes(run.status) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
+                  <MoreVertical className="h-3.5 w-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {MANAGEABLE_STATUSES.filter(s => s !== run.status).map(s => (
+                    <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
+                      Mark as {s}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleDelete} className="text-red-600 dark:text-red-400">
+                    <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                    Delete run
                   </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleDelete} className="text-red-600 dark:text-red-400">
-                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                  Delete run
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         </div>
       </div>
 
