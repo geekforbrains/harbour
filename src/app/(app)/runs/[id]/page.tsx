@@ -645,6 +645,21 @@ export default function RunDetailPage() {
         </div>
       </div>
 
+      {/* Agent-uploaded attachments (no activity_id) */}
+      {(() => {
+        const orphaned = (run.attachments ?? []).filter(a => a.activity_id === null);
+        if (!orphaned.length) return null;
+        return (
+          <div className="space-y-1">
+            <SectionHeader>Attachments</SectionHeader>
+            <AttachmentList items={orphaned} />
+            {orphaned.filter(a => isVideoAttachment(a)).map(a => (
+              <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
+            ))}
+          </div>
+        );
+      })()}
+
       {/* Reply Form (waiting, pending, done, failed — but not running) */}
       {(run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
         <form
