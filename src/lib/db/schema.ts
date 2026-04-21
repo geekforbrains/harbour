@@ -489,6 +489,7 @@ export function initializeSchema(db: Database.Database) {
     .find((c: any) => c.name === "agent_id");
   if (jobAgentCol?.notnull === 1) {
     db.exec(`
+      DROP TABLE IF EXISTS jobs_new;
       CREATE TABLE jobs_new (
         id TEXT PRIMARY KEY,
         agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
@@ -508,7 +509,15 @@ export function initializeSchema(db: Database.Database) {
         thinking TEXT,
         workflow_only INTEGER NOT NULL DEFAULT 0
       );
-      INSERT INTO jobs_new SELECT * FROM jobs;
+      INSERT INTO jobs_new
+        (id, agent_id, name, description, instructions, schedule, workflow_command,
+         active, last_run_at, next_run_at, created_at, updated_at,
+         one_off, timeout_minutes, model, thinking, workflow_only)
+      SELECT
+         id, agent_id, name, description, instructions, schedule, workflow_command,
+         active, last_run_at, next_run_at, created_at, updated_at,
+         one_off, timeout_minutes, model, thinking, workflow_only
+      FROM jobs;
       DROP TABLE jobs;
       ALTER TABLE jobs_new RENAME TO jobs;
       CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
@@ -521,6 +530,9 @@ export function initializeSchema(db: Database.Database) {
     .find((c: any) => c.name === "agent_id");
   if (runAgentCol?.notnull === 1) {
     db.exec(`
+      DELETE FROM runs WHERE job_id NOT IN (SELECT id FROM jobs);
+      DELETE FROM job_env_vars WHERE job_id NOT IN (SELECT id FROM jobs);
+      DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -536,7 +548,13 @@ export function initializeSchema(db: Database.Database) {
         session_id TEXT,
         session_cwd TEXT
       );
-      INSERT INTO runs_new SELECT * FROM runs;
+      INSERT INTO runs_new
+        (id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at,
+         kill_requested_at, created_at, updated_at, extra_instructions, session_id, session_cwd)
+      SELECT
+         id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at,
+         kill_requested_at, created_at, updated_at, extra_instructions, session_id, session_cwd
+      FROM runs;
       DROP TABLE runs;
       ALTER TABLE runs_new RENAME TO runs;
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
