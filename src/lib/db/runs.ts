@@ -302,7 +302,7 @@ export function getAgentNextRun(agentId: string) {
       WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
     `).get(agentId, now) as any;
@@ -364,7 +364,7 @@ export function getNextWorkflowRun() {
       AND j.workflow_only = 1 AND j.workflow_command IS NOT NULL
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
     `).get(now) as any;
@@ -423,7 +423,7 @@ export function peekAgentNext(agentId: string) {
     SELECT j.id, j.name FROM jobs j
     WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-    AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending'))
+    AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending'))
     ORDER BY j.next_run_at ASC LIMIT 1
   `).get(agentId, now) as any;
 

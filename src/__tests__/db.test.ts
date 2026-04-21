@@ -895,3 +895,98 @@ describe("Run List Queries", () => {
     expect((recent[0] as any).job_active).toBe(1);
   });
 });
+
+// ===========================================================================
+// Waiting runs should not block scheduling
+// ===========================================================================
+
+describe("Waiting runs do not block new scheduled runs", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("should schedule a new run for the same job when a previous run is waiting", () => {
+    const job = createJob(agentId, { name: "Recurring", schedule: '{"every":60}' });
+    const past = Math.floor(Date.now() / 1000) - 60;
+
+    // Seed a prior run in 'waiting' (e.g. paused for human review)
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+
+    // Simulate the scheduler reaching the next fire time
+    updateJob(job!.id, { nextRunAt: past });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Recurring");
+    expect(payload!.run.status).toBe("running");
+  });
+
+  it("peek should report available when a job is due and a prior run is waiting", () => {
+    const job = createJob(agentId, { name: "Peekable", schedule: '{"every":60}' });
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const peeked = peekAgentNext(agentId);
+    expect(peeked.available).toBe(true);
+    expect(peeked.job_name).toBe("Peekable");
+  });
+
+  it("should still pick up pending before new scheduled (waiting → pending → resumed)", () => {
+    const job = createJob(agentId, { name: "Resumable", schedule: '{"every":60}' });
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "waiting");
+    updateRunStatus(run!.id, "pending");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.run.id).toBe(run!.id);
+    expect(payload!.run.status).toBe("running");
+  });
+
+  it("running on job A DOES block a new scheduled tick on job A (concurrency guard)", () => {
+    const job = createJob(agentId, { name: "Busy", schedule: '{"every":60}' });
+    // Seed a currently-running run
+    createRun(job!.id, agentId);
+    // Force job's next_run_at into the past
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    // Agent-level busy check returns null even before the job-level NOT EXISTS runs
+    expect(getAgentNextRun(agentId)).toBeNull();
+
+    // No second run should exist for this job
+    const runs = listRunsByJob(job!.id);
+    expect(runs).toHaveLength(1);
+    expect((runs[0] as any).status).toBe("running");
+  });
+
+  it("pending on job A also blocks a new scheduled tick (waiting-to-resume)", () => {
+    const job = createJob(agentId, { name: "Resuming", schedule: '{"every":60}' });
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "waiting");
+    updateRunStatus(run!.id, "pending");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    // getAgentNextRun should resume the existing pending run, not create a new one
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.run.id).toBe(run!.id);
+    expect(listRunsByJob(job!.id)).toHaveLength(1);
+  });
+
+  it("waiting on job A does not block job B on same agent", () => {
+    const jobA = createJob(agentId, { name: "Job A", schedule: '{"every":60}' });
+    const jobB = createJob(agentId, { name: "Job B", schedule: '{"every":60}' });
+    const priorA = createRun(jobA!.id, agentId);
+    updateRunStatus(priorA!.id, "waiting");
+    updateJob(jobB!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Job B");
+  });
+});
