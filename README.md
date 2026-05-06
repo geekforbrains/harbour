@@ -20,6 +20,8 @@ Harbour is a polling-based control plane. It never calls out to agents — they 
 
 **Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Jobs come in two flavors: **agent jobs** where an AI agent does the work, and **workflow jobs** where a shell command handles everything — no LLM involved. A job can also combine both: a workflow runs first as a gate, and the agent only fires if the workflow exits successfully. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
 
+**Manual-trigger-only jobs.** If you want a job that fires only when you trigger it from the dashboard or via Captain (no recurring schedule), the current job-creation form still requires a value in the schedule field. Enter any valid cron expression (e.g., `0 0 1 1 *`) and mark the job **inactive**. Inactive jobs don't fire on their schedule but can still be triggered manually with "Run now."
+
 **Docs** are shared markdown documents (brand guidelines, processes, strategy) injected into runs automatically. **Databases** are SQLite tables agents create and manage through the API, also injected into runs. **Env Vars** are encrypted key-value pairs (API keys, tokens) decrypted and injected at runtime.
 
 ### The `/next` Endpoints
