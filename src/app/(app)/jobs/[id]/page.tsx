@@ -34,8 +34,6 @@ type Job = {
   databases: { id: string; name: string; table_name: string }[];
   envVars: { id: string; name: string }[];
 };
-type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
-
 const INSTRUCTIONS_CHAR_LIMIT = 400;
 
 function InstructionsBlock({ text }: { text: string }) {
@@ -85,20 +83,10 @@ export default function JobDetailPage() {
     enabled: !!job?.agent_id,
   });
 
-  const { data: recentRunsData = [] } = useQuery({
-    queryKey: ["runs", "recent"],
+  const { data: jobRunsData = [] } = useQuery({
+    queryKey: ["jobs", id, "runs"],
     queryFn: async () => {
-      const res = await fetch("/api/runs?filter=recent");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
-
-  const { data: waitingRunsData = [] } = useQuery({
-    queryKey: ["runs", "waiting"],
-    queryFn: async () => {
-      const res = await fetch("/api/runs?filter=waiting");
+      const res = await fetch(`/api/jobs/${id}/runs?limit=10`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -125,12 +113,7 @@ export default function JobDetailPage() {
     refetchInterval: 5000,
   });
 
-  const recentArr = Array.isArray(recentRunsData) ? recentRunsData : [];
-  const waitingArr = Array.isArray(waitingRunsData) ? waitingRunsData : [];
-  const specificRuns = [
-    ...waitingArr.filter((r: any) => r.job_id === id),
-    ...recentArr.filter((r: any) => r.job_id === id),
-  ];
+  const specificRuns = Array.isArray(jobRunsData) ? jobRunsData : [];
 
   const [showEdit, setShowEdit] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
@@ -375,15 +358,22 @@ export default function JobDetailPage() {
         {specificRuns.length === 0 ? (
           <EmptyState>No runs yet.</EmptyState>
         ) : (
-          <div className="space-y-2">
-            {specificRuns.map(run => (
-              <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-                <StatusDot status={run.status} />
-                <span className="text-sm font-medium flex-1">{run.status}</span>
-                <span className="text-xs text-muted-foreground">{timeAgo(run.completed_at || run.created_at)}</span>
+          <>
+            <div className="space-y-2">
+              {specificRuns.map(run => (
+                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                  <StatusDot status={run.status} />
+                  <span className="text-sm font-medium flex-1">{run.status}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo(run.completed_at || run.created_at)}</span>
+                </Link>
+              ))}
+            </div>
+            <div className="text-center pt-1">
+              <Link href={`/runs?jobId=${id}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                View all runs for this job →
               </Link>
-            ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
