@@ -56,6 +56,7 @@ import {
   triggerJobRun,
   listScheduledRuns,
   listRunningRuns,
+  createOneOffRun,
 } from "@/lib/db/queries";
 
 // ---------------------------------------------------------------------------
@@ -808,7 +809,7 @@ describe("/next Payload", () => {
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
     expect(payload!.job.name).toBe("Full Job");
-    expect(payload!.job.instructions).toBe("Do everything");
+    expect(payload!.job.instructions).toContain("Do everything");
     expect(payload!.docs).toHaveLength(1);
     expect((payload!.docs[0] as any).title).toBe("Brand Guide");
     expect(payload!.data.history).toHaveLength(1);
@@ -921,7 +922,109 @@ describe("Trigger Job Run", () => {
 
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
-    expect(payload!.job.instructions).toBe("Only these instructions");
+    expect(payload!.job.instructions).toContain("Only these instructions");
+  });
+});
+
+// ===========================================================================
+// Run Titles
+// ===========================================================================
+
+import { setRunTitle } from "@/lib/db/queries";
+import { normalizeTitle, defaultRunTitle, MAX_TITLE_LENGTH } from "@/lib/run-title";
+
+describe("Run Titles", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("populates a placeholder title on createRun", () => {
+    const job = seedJob(agentId, "Daily Standup");
+    const run = createRun(job!.id, agentId);
+    expect((run as any).title).toMatch(/^Daily Standup · \d{1,2}:\d{2}(am|pm)$/);
+  });
+
+  it("populates a placeholder title on triggerJobRun", () => {
+    const job = seedJob(agentId, "Triage");
+    const triggered = triggerJobRun(job!.id);
+    expect(triggered).not.toBeNull();
+    const run = getRunById(triggered!.runId);
+    expect((run as any).title).toMatch(/^Triage · /);
+  });
+
+  it("populates a placeholder title on one-off runs", () => {
+    const { runId } = createOneOffRun(agentId, { name: "Ad hoc analysis" });
+    const run = getRunById(runId);
+    expect((run as any).title).toMatch(/^Ad hoc analysis · /);
+  });
+
+  it("setRunTitle overwrites the placeholder", () => {
+    const job = seedJob(agentId, "Dev");
+    const run = createRun(job!.id, agentId);
+    const updated = setRunTitle(run!.id, "Issue #1234 — Fix login redirect");
+    expect((updated as any).title).toBe("Issue #1234 — Fix login redirect");
+  });
+
+  it("setRunTitle returns null when the run does not exist", () => {
+    expect(setRunTitle("nonexistent-id", "x")).toBeNull();
+  });
+
+  it("normalizeTitle trims, collapses whitespace, and enforces max length", () => {
+    expect(normalizeTitle("  hello   world  ")).toBe("hello world");
+    expect(normalizeTitle("")).toBeNull();
+    expect(normalizeTitle("   ")).toBeNull();
+    expect(normalizeTitle(undefined)).toBeNull();
+    expect(normalizeTitle(123)).toBeNull();
+    const long = "x".repeat(120);
+    expect(normalizeTitle(long)?.length).toBe(MAX_TITLE_LENGTH);
+  });
+
+  it("defaultRunTitle uses the supplied timezone", () => {
+    // Pick a UTC timestamp where the hour will differ across timezones
+    const ts = Math.floor(Date.UTC(2024, 0, 1, 18, 30) / 1000);
+    const utc = defaultRunTitle("Job", ts, "UTC");
+    const ny = defaultRunTitle("Job", ts, "America/New_York");
+    expect(utc).toContain("6:30pm");
+    expect(ny).toContain("1:30pm");
+  });
+});
+
+describe("Run Title in /next payload", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("injects a title-setting preamble for agent runs", () => {
+    const job = createJob(agentId, { name: "J", instructions: "Do X", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.instructions).toContain("set a short title");
+    expect(payload!.job.instructions).toContain("Do X");
+  });
+
+  it("includes job.title_format when set", () => {
+    const job = createJob(agentId, {
+      name: "Dev",
+      instructions: "fix bugs",
+      schedule: '{"every":1}',
+      titleFormat: 'Issue #XXX — short summary',
+    });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect(payload!.job.instructions).toContain("Format guide: Issue #XXX — short summary");
+    expect((payload!.job as any).title_format).toBe("Issue #XXX — short summary");
+  });
+
+  it("exposes the run title on the payload", () => {
+    const job = createJob(agentId, { name: "Test Job", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect((payload!.run as any).title).toMatch(/^Test Job · /);
   });
 });
 

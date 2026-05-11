@@ -3,14 +3,17 @@ import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
+import { defaultRunTitle } from "../run-title";
 
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
+  const job = db.prepare(`SELECT name FROM jobs WHERE id = ?`).get(jobId) as { name: string } | undefined;
+  const title = job ? defaultRunTitle(job.name, Math.floor(Date.now() / 1000)) : null;
   db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, claimed_at)
-    VALUES (?, ?, ?, 'running', unixepoch())
-  `).run(id, jobId, agentId || null);
+    INSERT INTO runs (id, job_id, agent_id, status, claimed_at, title)
+    VALUES (?, ?, ?, 'running', unixepoch(), ?)
+  `).run(id, jobId, agentId || null, title);
   return getRunById(id);
 }
 
@@ -76,6 +79,15 @@ export function requestKillRun(id: string): boolean {
   if (run.kill_requested_at) return true; // already requested — idempotent
   db.prepare(`UPDATE runs SET kill_requested_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(id);
   return true;
+}
+
+export function setRunTitle(id: string, title: string) {
+  const db = getDb();
+  const result = db.prepare(
+    `UPDATE runs SET title = ?, updated_at = unixepoch() WHERE id = ?`
+  ).run(title, id);
+  if (result.changes === 0) return null;
+  return getRunById(id);
 }
 
 export function updateRunSessionId(id: string, sessionId: string, cwd?: string) {
@@ -561,6 +573,19 @@ function buildRunPayload(runId: string) {
       : run.extra_instructions;
   }
 
+  // Prepend the title-setting preamble for agent runs. Workflow-only runs
+  // have no LLM and can't honor it. The preamble references the resolved
+  // `set_title` endpoint that the route adds to the api section below.
+  if (run.agent_id) {
+    const formatHint = job.title_format
+      ? `Format guide: ${job.title_format}`
+      : `Use a short sentence summarizing what this run is doing.`;
+    const preamble =
+      `Before doing anything else, set a short title for this run via the ` +
+      `\`set_title\` endpoint in the \`api\` section (max 80 chars). ${formatHint}`;
+    instructions = instructions ? `${preamble}\n\n---\n\n${instructions}` : preamble;
+  }
+
   // Agent runtime config (eager) — read live so remote runners pick up
   // dashboard toggles without reconnecting.
   const agentRow = run.agent_id
@@ -569,7 +594,7 @@ function buildRunPayload(runId: string) {
   const agent = agentRow ? { eager: !!agentRow.eager } : undefined;
 
   return {
-    run: { id: run.id, status: run.status, activity: run.activity },
+    run: { id: run.id, status: run.status, title: run.title || null, activity: run.activity },
     job: {
       id: job.id,
       name: job.name,
@@ -578,6 +603,7 @@ function buildRunPayload(runId: string) {
       workflow_only: !!job.workflow_only,
       model: job.model || null,
       thinking: job.thinking || null,
+      title_format: job.title_format || null,
       timeout_minutes: job.timeout_minutes ?? 30,
     },
     ...(agent ? { agent } : {}),

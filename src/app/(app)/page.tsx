@@ -1,20 +1,16 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Plus, ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Activity, ArrowRight } from "lucide-react";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
-import { CreateDialog } from "@/components/app/create-dialog";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
 type Run = RunRowData;
 
 export default function RunsPage() {
-  const [showCreate, setShowCreate] = useState(false);
   const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
   const historyHref = activeProjectId ? `/runs?projectId=${activeProjectId}` : "/runs";
@@ -49,9 +45,6 @@ export default function RunsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
           <p className="text-sm text-muted-foreground mt-1">All run activity.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1.5" /> New Run
-        </Button>
       </div>
 
       {running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
@@ -111,8 +104,6 @@ export default function RunsPage() {
           </section>
         </>
       )}
-
-      <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="run" />
     </div>
   );
 }
