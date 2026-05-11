@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Filter, Plus, X } from "lucide-react";
+import { Activity, Filter, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/app/empty-state";
 import { BackLink } from "@/components/app/back-link";
-import { CreateDialog } from "@/components/app/create-dialog";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
@@ -40,7 +39,6 @@ export default function RunsHistoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeProjectId = useActiveProjectId();
-  const [showCreate, setShowCreate] = useState(false);
 
   // Read filters from URL (URL is the source of truth)
   const statusesFromUrl = useMemo(() => {
@@ -178,9 +176,6 @@ export default function RunsHistoryPage() {
           <h1 className="text-2xl font-semibold tracking-tight">All Runs</h1>
           <p className="text-sm text-muted-foreground mt-1">Full run history, filterable.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1.5" /> New Run
-        </Button>
       </div>
 
       {/* Filter bar */}
@@ -297,8 +292,6 @@ export default function RunsHistoryPage() {
           </div>
         </>
       )}
-
-      <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="run" />
     </div>
   );
 }

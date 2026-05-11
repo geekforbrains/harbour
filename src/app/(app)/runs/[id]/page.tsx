@@ -37,6 +37,7 @@ type Activity = {
 
 type Run = {
   id: string; job_id: string; agent_id: string | null; status: string;
+  title: string | null;
   job_name: string; agent_name: string | null; agent_type: string | null; agent_cli: string | null;
   session_id: string | null; session_cwd: string | null; one_off: number; job_workflow_only: number;
   created_at: number; updated_at: number; completed_at: number | null;
@@ -532,11 +533,16 @@ export default function RunDetailPage() {
       <BackLink href="/" label="Runs" />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{run.job_name}</h1>
-          <span className="hidden sm:inline-flex">
-            <StatusBadge status={run.status} />
-          </span>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight truncate">{run.title || run.job_name}</h1>
+            <span className="hidden sm:inline-flex">
+              <StatusBadge status={run.status} />
+            </span>
+          </div>
+          <Link href={`/jobs/${run.job_id}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate">
+            {run.job_name}
+          </Link>
         </div>
         <div className="flex items-center justify-between sm:justify-start gap-2">
           <span className="sm:hidden">

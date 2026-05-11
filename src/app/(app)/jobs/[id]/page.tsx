@@ -29,6 +29,7 @@ type Job = {
   id: string; agent_id: string; agent_name: string; name: string; description: string | null;
   instructions: string | null; schedule: string; workflow_command: string | null; workflow_only: number;
   timeout_minutes: number; model: string | null; thinking: string | null;
+  title_format: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
   docs: { id: string; title: string }[];
   databases: { id: string; name: string; table_name: string }[];
@@ -127,6 +128,7 @@ export default function JobDetailPage() {
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
+  const [editTitleFormat, setEditTitleFormat] = useState("");
   const [editDocIds, setEditDocIds] = useState<string[]>([]);
   const [editEnvVarIds, setEditEnvVarIds] = useState<string[]>([]);
   const [showEditDocPicker, setShowEditDocPicker] = useState(false);
@@ -147,6 +149,7 @@ export default function JobDetailPage() {
         timeoutMinutes: editTimeout,
         model: editModel || "",
         thinking: editThinking || "",
+        titleFormat: editTitleFormat,
         docIds: editDocIds,
         envVarIds: editEnvVarIds,
       }),
@@ -230,7 +233,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -363,8 +366,8 @@ export default function JobDetailPage() {
               {specificRuns.map(run => (
                 <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
                   <StatusDot status={run.status} />
-                  <span className="text-sm font-medium flex-1">{run.status}</span>
-                  <span className="text-xs text-muted-foreground">{timeAgo(run.completed_at || run.created_at)}</span>
+                  <span className="text-sm font-medium flex-1 truncate">{run.title || run.status}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.created_at)}</span>
                 </Link>
               ))}
             </div>
@@ -461,6 +464,15 @@ export default function JobDetailPage() {
             <div className="space-y-2">
               <Label>Instructions</Label>
               <Textarea value={editInstructions} onChange={e => setEditInstructions(e.target.value)} rows={4} className="max-h-[30vh] break-all" />
+            </div>
+            <div className="space-y-2">
+              <Label>Title Format</Label>
+              <Input
+                value={editTitleFormat}
+                onChange={e => setEditTitleFormat(e.target.value)}
+                placeholder={`e.g. "Issue #XXX — short summary"`}
+              />
+              <p className="text-xs text-muted-foreground">Optional. Tells the agent how to phrase each run title. Leave blank for a generic short sentence.</p>
             </div>
             <div className="space-y-2">
               <Label>Schedule</Label>

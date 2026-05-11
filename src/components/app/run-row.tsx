@@ -14,6 +14,7 @@ export type RunRowData = {
   status: string;
   job_id: string;
   job_name: string;
+  title?: string | null;
   job_active?: number;
   one_off?: number;
   agent_name?: string | null;
@@ -59,25 +60,24 @@ export function RunRow({ run, showActions = true }: Props) {
       <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
         <RunStatusIcon status={run.status} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium">{run.job_name}</span>
-            {isManual && (
-              <span
-                title="Manual / one-off run"
-                className="inline-flex items-center gap-1 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 px-1.5 py-0.5 text-[10px] font-medium"
-              >
-                <Hand className="h-2.5 w-2.5" />
-                Manual
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
+          <div className="text-sm font-medium truncate">{run.title || run.job_name}</div>
+          <div className="text-xs text-muted-foreground truncate mt-0.5">{run.job_name}</div>
+          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground flex-wrap">
             {run.job_workflow_only && !run.agent_name ? (
               <><Terminal className="h-3 w-3" /><span>Workflow</span></>
             ) : run.job_workflow_command && run.agent_name ? (
               <><Bot className="h-3 w-3" /><Terminal className="h-3 w-3" /><span>{run.agent_name}</span></>
             ) : (
               <><Bot className="h-3 w-3" /><span>{run.agent_name ?? "—"}</span></>
+            )}
+            {isManual && (
+              <span
+                title="Manual / one-off run"
+                className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium"
+              >
+                <Hand className="h-2.5 w-2.5" />
+                Manual
+              </span>
             )}
           </div>
         </div>
