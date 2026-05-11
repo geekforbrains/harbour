@@ -99,26 +99,38 @@ export function deleteRun(id: string) {
   deleteRunAttachmentsDir(id);
 }
 
-export function listRunsByJob(jobId: string, limit = 50) {
+export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.job_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(jobId, limit);
+    WHERE r.job_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(jobId, limit, offset);
 }
 
-export function listRunsByAgent(agentId: string, limit = 50) {
+export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.agent_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(agentId, limit);
+    WHERE r.agent_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(agentId, limit, offset);
 }
 
 export function listScheduledRuns(projectId?: string) {
@@ -164,13 +176,82 @@ export function listRecentRuns(limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed') ${projectFilter}
+    WHERE r.status IN ('done', 'failed', 'killed') ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `).all(...(projectId ? [projectId, limit] : [limit]));
+}
+
+const ALL_STATUSES = ["scheduled", "running", "waiting", "pending", "done", "failed", "killed", "skipped"] as const;
+type RunStatus = (typeof ALL_STATUSES)[number];
+
+export type RunsHistoryFilters = {
+  statuses?: RunStatus[];        // omit/empty → all except 'skipped' (use includeSkipped to opt in)
+  includeSkipped?: boolean;      // only meaningful if statuses is omitted
+  agentId?: string;
+  jobId?: string;
+  projectId?: string;
+  from?: number;                 // unix seconds (inclusive)
+  to?: number;                   // unix seconds (inclusive)
+  sort?: "newest" | "oldest";
+};
+
+export function listRunsHistory(filters: RunsHistoryFilters = {}, limit = 25, offset = 0) {
+  const db = getDb();
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+
+  // Status filter: validate against allowed set; default excludes 'skipped'
+  let statuses = filters.statuses?.filter((s): s is RunStatus => (ALL_STATUSES as readonly string[]).includes(s)) ?? [];
+  if (statuses.length === 0) {
+    statuses = ALL_STATUSES.filter(s => filters.includeSkipped || s !== "skipped");
+  }
+  where.push(`r.status IN (${statuses.map(() => "?").join(",")})`);
+  params.push(...statuses);
+
+  if (filters.agentId) {
+    where.push(`r.agent_id = ?`);
+    params.push(filters.agentId);
+  }
+  if (filters.jobId) {
+    where.push(`r.job_id = ?`);
+    params.push(filters.jobId);
+  }
+  if (filters.projectId) {
+    where.push(`r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)`);
+    params.push(filters.projectId);
+  }
+  // Time window matches the column we sort on so the filter feels predictable.
+  if (filters.from != null) {
+    where.push(`COALESCE(r.completed_at, r.created_at) >= ?`);
+    params.push(filters.from);
+  }
+  if (filters.to != null) {
+    where.push(`COALESCE(r.completed_at, r.created_at) <= ?`);
+    params.push(filters.to);
+  }
+
+  const order = filters.sort === "oldest" ? "ASC" : "DESC";
+  const safeLimit = Math.min(Math.max(1, limit | 0), 200);
+  const safeOffset = Math.max(0, offset | 0);
+
+  const rows = db.prepare(`
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE ${where.join(" AND ")}
+    ORDER BY COALESCE(r.completed_at, r.created_at) ${order}, r.created_at ${order}
+    LIMIT ? OFFSET ?
+  `).all(...params, safeLimit + 1, safeOffset) as any[];
+
+  const hasMore = rows.length > safeLimit;
+  return { runs: hasMore ? rows.slice(0, safeLimit) : rows, hasMore };
 }
 
 // Activity log
