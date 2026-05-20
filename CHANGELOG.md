@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.16.0 — 2026-05-20
+
+### Runs
+
+- New **Runs** history page with URL-backed filters for date range, agent, job, status, sort order, and optional skipped-run inclusion. The page loads 25 runs at a time with pagination instead of redirecting to the dashboard.
+- Job and Agent detail pages now fetch their own run history through dedicated endpoints (`GET /api/jobs/:id/runs`, `GET /api/agents/:id/runs`) instead of client-filtering the global recent-runs pool. Older per-job/per-agent runs are visible even when they fall outside the dashboard's recent window.
+- Recent/history views now include killed runs as real terminal runs. Skipped workflow-gate runs remain hidden by default, with an explicit history-page toggle.
+- Run rows were extracted into a shared component and now label one-off/manually triggered runs with a **Manual** badge.
+- Runs now have short titles. Harbour seeds a placeholder title at run creation, injects a first-step title-setting preamble into `/next`, and exposes `PUT /api/runs/:id/title` so agents can rename the run before doing work. Run lists and detail headers show the title first with the job name as secondary context.
+- Jobs support a `titleFormat` hint so users can guide how agents name runs. The worker and admin API docs now document the new title endpoint and payload fields.
+
+### Security
+
+- Harbour runner API keys and Bearer tokens are now redacted before run activity and streamed run output are stored. This prevents tool-call logs such as `curl -H "Authorization: Bearer hbr_..."` from exposing live runner credentials in the dashboard or database.
+
+### Fixes
+
+- Running or waiting runs no longer block unrelated future scheduled runs for the same job. Harbour now checks only active `scheduled`, `running`, or `pending` runs when deciding whether a recurring job should enqueue another run.
+- SQLite table-recreate migrations now disable foreign keys around the `CREATE/INSERT/DROP/RENAME` sequence. This prevents migration-time cascades from deleting runs, activity, output, or attachments when parent tables are rebuilt.
+- Claude Code effort options now include `xhigh`, matching the installed CLI's current `--effort` ladder.
+- Lint is clean across the project.
+
 ## v1.15.0 — 2026-05-08
 
 ### Security
