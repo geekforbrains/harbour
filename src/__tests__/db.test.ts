@@ -32,6 +32,8 @@ import {
   listRecentRuns,
   addRunActivity,
   listRunActivity,
+  addRunOutput,
+  listRunOutput,
   getAgentNextRun,
   getNextWorkflowRun,
   peekAgentNext,
@@ -421,6 +423,40 @@ describe("Activity Log", () => {
     expect((activity[0] as any).author_type).toBe("agent");
     expect((activity[1] as any).author_type).toBe("user");
     expect((activity[2] as any).author_type).toBe("system");
+  });
+
+  it("redacts Harbour and Bearer tokens from activity", () => {
+    const agentId = seedAgent().id;
+    const jobId = seedJob(agentId)!.id;
+    const run = createRun(jobId, agentId);
+
+    addRunActivity(run!.id, "agent", agentId, "test-bot", "curl -H 'Authorization: Bearer hbr_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'");
+
+    const activity = listRunActivity(run!.id);
+    expect((activity[0] as any).content).toContain("Bearer [REDACTED_TOKEN]");
+    expect((activity[0] as any).content).not.toContain("hbr_123456");
+  });
+});
+
+// ===========================================================================
+// Run Output
+// ===========================================================================
+
+describe("Run Output", () => {
+  it("redacts tokens from streamed tool output", () => {
+    const agentId = seedAgent().id;
+    const jobId = seedJob(agentId)!.id;
+    const run = createRun(jobId, agentId);
+
+    addRunOutput(run!.id, [{
+      event_type: "tool_start",
+      tool_name: "shell",
+      content: "curl -H \"Authorization: Bearer hbr_adm_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\" http://localhost",
+    }]);
+
+    const output = listRunOutput(run!.id);
+    expect(output[0].content).toContain("Bearer [REDACTED_TOKEN]");
+    expect(output[0].content).not.toContain("hbr_adm_123456");
   });
 });
 

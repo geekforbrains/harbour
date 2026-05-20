@@ -266,17 +266,24 @@ export function listRunsHistory(filters: RunsHistoryFilters = {}, limit = 25, of
   return { runs: hasMore ? rows.slice(0, safeLimit) : rows, hasMore };
 }
 
+function redactSensitiveContent(content: string): string {
+  return content
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [REDACTED_TOKEN]")
+    .replace(/\bhbr_(?:adm_)?[A-Za-z0-9]+\b/g, "[REDACTED_HARBOUR_KEY]");
+}
+
 // Activity log
 
 export function addRunActivity(runId: string, authorType: string, authorId: string | null, authorName: string, content: string) {
   const db = getDb();
   const id = uuid();
+  const safeContent = redactSensitiveContent(content);
   db.prepare(`
     INSERT INTO run_activity (id, run_id, author_type, author_id, author_name, content)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, runId, authorType, authorId, authorName, content);
+  `).run(id, runId, authorType, authorId, authorName, safeContent);
   db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
-  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content, created_at: Math.floor(Date.now() / 1000) };
+  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content: safeContent, created_at: Math.floor(Date.now() / 1000) };
 }
 
 export function listRunActivity(runId: string) {
@@ -303,7 +310,7 @@ export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id
   `);
   const insertMany = db.transaction((evts: typeof events) => {
     for (const e of evts) {
-      stmt.run(runId, e.event_type, e.content || null, e.tool_name || null);
+      stmt.run(runId, e.event_type, e.content ? redactSensitiveContent(e.content) : null, e.tool_name || null);
     }
   });
   insertMany(events);
