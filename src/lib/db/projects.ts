@@ -1,30 +1,44 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 
+export type ProjectRecord = {
+  id: string;
+  workspace_id: string | null;
+  name: string;
+  created_at: number;
+  updated_at: number;
+};
+
 // --- Project CRUD ---
 
-export function createProject(name: string) {
+export function createProject(name: string, workspaceId?: string | null): ProjectRecord | null {
   const db = getDb();
   const id = uuid();
-  db.prepare(`INSERT INTO projects (id, name) VALUES (?, ?)`).run(id, name);
+  const ownerWorkspaceId = workspaceId || "borg-interface";
+  db.prepare(`INSERT INTO projects (id, workspace_id, name) VALUES (?, ?, ?)`).run(id, ownerWorkspaceId, name);
   return getProjectById(id);
 }
 
-export function getProjectById(id: string) {
+export function getProjectById(id: string): ProjectRecord | null {
   const db = getDb();
-  return db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as any || null;
+  const row = db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRecord | undefined;
+  return row || null;
 }
 
-export function listProjects() {
+export function listProjects(workspaceId?: string): ProjectRecord[] {
   const db = getDb();
-  return db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all();
+  if (workspaceId) {
+    return db.prepare(`SELECT * FROM projects WHERE workspace_id = ? ORDER BY name ASC`).all(workspaceId) as ProjectRecord[];
+  }
+  return db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all() as ProjectRecord[];
 }
 
-export function updateProject(id: string, data: { name?: string }) {
+export function updateProject(id: string, data: { name?: string; workspace_id?: string | null }): ProjectRecord | null {
   const db = getDb();
   const fields: string[] = [];
-  const values: any[] = [];
+  const values: Array<string | null> = [];
   if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
+  if (data.workspace_id !== undefined) { fields.push("workspace_id = ?"); values.push(data.workspace_id); }
   if (fields.length === 0) return getProjectById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);

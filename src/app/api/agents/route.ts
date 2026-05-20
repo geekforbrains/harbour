@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAgents, createAgent } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listAgents(projectId));
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId") || undefined;
+  return NextResponse.json(listAgents(projectId, workspaceId));
 });
 
 export const POST = withUserAuth(async (req) => {

@@ -1,6 +1,6 @@
 @README.md
 
-Harbour is a control plane for AI agents doing ongoing work. See README.md for full architecture, API surface, and design rationale.
+Harbour is the BORG Interface control plane for AI agents doing ongoing work. See README.md for full architecture, API surface, and design rationale.
 
 ## Tech
 
@@ -11,7 +11,8 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
 - `src/app/api/` — API routes (agent-facing + dashboard), all use `withAuth`/`withUserAuth` wrappers
 - `src/lib/db/projects.ts` — project CRUD + linking/unlinking (auto-links job dependencies)
-- `src/components/app/project-switcher.tsx` — sidebar/mobile project dropdown with create dialog
+- `src/lib/db/workspaces.ts` — workspace CRUD for businesses/operating areas above projects
+- `src/components/app/project-switcher.tsx` — sidebar/mobile workspace + project selector with create dialogs
 - `src/components/app/project-link-dialog.tsx` — "Add Existing" dialog for linking items to projects
 - `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
 - `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
@@ -44,7 +45,7 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Model and thinking/effort can be set per agent (default) and overridden per job.
 - API routes use `withAuth(handler)` or `withUserAuth(handler)` — never inline auth checks. Agent-facing mutation routes use `requireAgentOwnership()` to enforce scope.
 - Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
-- Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
+- Workspaces are top-level business/operating areas. Projects belong to workspaces. Entities don't know about projects directly — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
 
 ## Dev server
 

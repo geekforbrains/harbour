@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Anchor } from "lucide-react";
+
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -45,9 +45,9 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm border-0 shadow-lg shadow-primary/5">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary">
-            <Anchor className="h-6 w-6 text-primary-foreground" />
+            <span className="text-2xl leading-none">👽</span>
           </div>
-          <CardTitle className="text-xl tracking-tight">Harbour</CardTitle>
+          <CardTitle className="text-xl tracking-tight">Tron Brain</CardTitle>
           <CardDescription>Sign in to your account</CardDescription>
         </CardHeader>
         <CardContent>

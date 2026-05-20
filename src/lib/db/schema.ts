@@ -7,6 +7,9 @@ import { dbPath, harbourHome, ensureDir } from "../paths";
 
 let _db: Database.Database | null = null;
 
+type TableInfoRow = { name: string; notnull?: number };
+type SqliteMasterRow = { sql: string };
+
 /**
  * One-time migration: if a legacy ./harbour.db exists in the cwd and the
  * default ~/.harbour/harbour.db doesn't, copy it (plus its WAL sidecars)
@@ -76,6 +79,13 @@ export function initializeSchema(db: Database.Database) {
       name TEXT NOT NULL,
       description TEXT,
       api_key_hash TEXT NOT NULL,
+      scope_type TEXT NOT NULL DEFAULT 'global' CHECK(scope_type IN ('global','workspace','project')),
+      workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+      project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      composio_cli_enabled INTEGER NOT NULL DEFAULT 0,
+      composio_mcp_enabled INTEGER NOT NULL DEFAULT 0,
+      composio_toolkits TEXT,
+      composio_tools TEXT,
       last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -233,9 +243,22 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Workspaces: top-level business/operating areas
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL DEFAULT 'workspace',
+      root_path TEXT,
+      description TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Projects: optional organizational grouping (view layer only)
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
+      workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -270,6 +293,58 @@ export function initializeSchema(db: Database.Database) {
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
       PRIMARY KEY (project_id, database_id)
+    );
+
+    -- Skills: reusable capabilities and brand kits imported from SKILLS/
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      scope TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global','workspace','project','brand-kit')),
+      owner_workspace TEXT,
+      owner_project TEXT,
+      source_agent TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draft','archived')),
+      path TEXT,
+      provenance TEXT,
+      version TEXT,
+      dependencies TEXT,
+      tags TEXT,
+      triggers TEXT,
+      digest TEXT,
+      content TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS skill_proposals (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      scope TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global','workspace','project','brand-kit')),
+      owner_workspace TEXT,
+      owner_project TEXT,
+      source_agent TEXT,
+      path TEXT,
+      provenance TEXT,
+      version TEXT,
+      dependencies TEXT,
+      tags TEXT,
+      triggers TEXT,
+      digest TEXT,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed','promoted','rejected')),
+      rejection_reason TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_skills (
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL CHECK(mode IN ('include','exclude')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (agent_id, skill_id)
     );
 
     -- Video processing: tracks processing state for uploaded video attachments
@@ -342,18 +417,21 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
     CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(scope_type, workspace_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, owner_workspace, owner_project, status);
+    CREATE INDEX IF NOT EXISTS idx_skill_proposals_status ON skill_proposals(status);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)
-  const docCols = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
-  if (docCols.some((c: any) => c.name === "agent_id")) {
+  const docCols = db.prepare(`PRAGMA table_info(docs)`).all() as TableInfoRow[];
+  if (docCols.some((c) => c.name === "agent_id")) {
     db.exec(`DROP INDEX IF EXISTS idx_docs_agent`);
     db.exec(`ALTER TABLE docs DROP COLUMN agent_id`);
   }
 
   // Migrations: add 'pending' to runs status CHECK constraint
   // SQLite CHECK constraints can't be altered, so we recreate the table if needed
-  const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck?.sql && !runCheck.sql.includes("pending")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -377,16 +455,16 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add one_off and timeout_minutes columns to jobs
-  const jobCols = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (!jobCols.some((c: any) => c.name === "one_off")) {
+  const jobCols = db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[];
+  if (!jobCols.some((c) => c.name === "one_off")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN one_off INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!jobCols.some((c: any) => c.name === "timeout_minutes")) {
+  if (!jobCols.some((c) => c.name === "timeout_minutes")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN timeout_minutes INTEGER NOT NULL DEFAULT 30`);
   }
 
   // Migrations: add 'scheduled' status and scheduled_for column to runs
-  const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -412,7 +490,7 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add 'killed' status and kill_requested_at column to runs
-  const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -439,6 +517,72 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: normalize non-JSON schedule strings to canonical JSON
+  // Migrations: workspaces + project ownership
+  const workspaceCols = db.prepare(`PRAGMA table_info(workspaces)`).all() as TableInfoRow[];
+  if (workspaceCols.length === 0) {
+    db.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'workspace',
+        root_path TEXT,
+        description TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )
+    `);
+  }
+
+  const projectCols = db.prepare(`PRAGMA table_info(projects)`).all() as TableInfoRow[];
+  const hadProjectWorkspaceId = projectCols.some((c) => c.name === "workspace_id");
+  if (!hadProjectWorkspaceId) {
+    db.exec(`ALTER TABLE projects ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL`);
+  }
+
+  const seedWorkspace = db.prepare(`
+    INSERT OR IGNORE INTO workspaces (id, name, slug, kind, root_path, description)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const workspaceSeeds = [
+    ["borg-interface", "BORG Interface", "borg-interface", "system", "/Users/davidk/Documents/Borg Interface", "Umbrella workspace for the second brain, interface, skills, and local model config"],
+    ["agent-research", "AGENT RESEARCH", "agent-research", "factory", "/Users/davidk/Documents/Borg Interface/AGENT RESEARCH", "AI coding factory: AgentOps, agents, evals, registries, and agent skills"],
+    ["cultr-ventures", "CULTR VENTURES", "cultr-ventures", "business", "/Users/davidk/Documents/Borg Interface/CULTR VENTURES", "Dave's holding company workspace"],
+    ["phaseone", "PhaseOne", "phaseone", "business", "/Users/davidk/Documents/Borg Interface/PhaseOne", "Dave's separate PhaseOne company workspace"],
+  ];
+  for (const row of workspaceSeeds) seedWorkspace.run(...row);
+
+  const seedProject = db.prepare(`
+    INSERT OR IGNORE INTO projects (id, workspace_id, name)
+    VALUES (?, ?, ?)
+  `);
+  const projectSeeds = [
+    ["tron-brain", "borg-interface", "TRON BRAIN"],
+    ["harbour", "borg-interface", "harbour"],
+    ["skills", "borg-interface", "SKILLS"],
+    ["gemma-llm", "borg-interface", "GEMMA LLM"],
+    ["agentops", "agent-research", "agentops"],
+    ["youtube-scraper-agent", "agent-research", "youtube-scraper-agent"],
+    ["deceived-rei-agent", "agent-research", "deceived_rei_agent"],
+    ["clawdius-website-leads", "agent-research", "CLAWDIUS WEBSITE LEADs"],
+    ["ironvision-production-scaffold", "agent-research", "ironvision-production-scaffold"],
+    ["trendfinder", "agent-research", "trendFinder"],
+    ["cantina-agentic-os", "cultr-ventures", "Cantina Agentic OS"],
+    ["cultr-health-website", "cultr-ventures", "Cultr Health Website"],
+    ["unit-project", "cultr-ventures", "UNIT-PRoject"],
+    ["vidasocialapp", "cultr-ventures", "VidaSocialApp"],
+    ["distressed-app-acquisition-engine", "cultr-ventures", "distressed_app_acquisition_engine"],
+    ["rank-to-rent-prd-bundle", "cultr-ventures", "rank_to_rent_prd_bundle"],
+    ["winston-salem-septic-pros", "cultr-ventures", "winston-salem-septic-pros"],
+    ["newer-cantina", "phaseone", "Newer Cantina"],
+    ["pops-coating", "phaseone", "Pops--Coating"],
+    ["tm8", "phaseone", "TM8"],
+  ];
+  for (const row of projectSeeds) seedProject.run(...row);
+  if (!hadProjectWorkspaceId) {
+    db.prepare(`UPDATE projects SET workspace_id = 'borg-interface' WHERE workspace_id IS NULL`).run();
+  }
+
   const nonJsonSchedules = db.prepare(
     `SELECT id, schedule FROM jobs WHERE schedule NOT LIKE '{%'`
   ).all() as { id: string; schedule: string }[];
@@ -451,43 +595,64 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add type, cli, model columns to agents table for harbour agents
-  const agentCols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
-  if (!agentCols.some((c: any) => c.name === "type")) {
+  const agentCols = db.prepare(`PRAGMA table_info(agents)`).all() as TableInfoRow[];
+  if (!agentCols.some((c) => c.name === "type")) {
     db.exec(`ALTER TABLE agents ADD COLUMN type TEXT NOT NULL DEFAULT 'external'`);
   }
-  if (!agentCols.some((c: any) => c.name === "cli")) {
+  if (!agentCols.some((c) => c.name === "cli")) {
     db.exec(`ALTER TABLE agents ADD COLUMN cli TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "model")) {
+  if (!agentCols.some((c) => c.name === "model")) {
     db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "thinking")) {
+  if (!agentCols.some((c) => c.name === "thinking")) {
     db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "remote")) {
+  if (!agentCols.some((c) => c.name === "remote")) {
     db.exec(`ALTER TABLE agents ADD COLUMN remote INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!agentCols.some((c: any) => c.name === "eager")) {
+  if (!agentCols.some((c) => c.name === "eager")) {
     db.exec(`ALTER TABLE agents ADD COLUMN eager INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!agentCols.some((c) => c.name === "scope_type")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'global'`);
+  }
+  if (!agentCols.some((c) => c.name === "workspace_id")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL`);
+  }
+  if (!agentCols.some((c) => c.name === "project_id")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL`);
+  }
+  if (!agentCols.some((c) => c.name === "composio_cli_enabled")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN composio_cli_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!agentCols.some((c) => c.name === "composio_mcp_enabled")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN composio_mcp_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!agentCols.some((c) => c.name === "composio_toolkits")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN composio_toolkits TEXT`);
+  }
+  if (!agentCols.some((c) => c.name === "composio_tools")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN composio_tools TEXT`);
   }
 
   // Migrations: add pinned column to docs table
-  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
-  if (!docCols2.some((c: any) => c.name === "pinned")) {
+  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as TableInfoRow[];
+  if (!docCols2.some((c) => c.name === "pinned")) {
     db.exec(`ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migrations: add model and thinking columns to jobs table
-  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (!jobCols2.some((c: any) => c.name === "model")) {
+  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[];
+  if (!jobCols2.some((c) => c.name === "model")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
   }
-  if (!jobCols2.some((c: any) => c.name === "thinking")) {
+  if (!jobCols2.some((c) => c.name === "thinking")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
   }
 
   // Migrations: admin API keys table
-  const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as any[];
+  const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as TableInfoRow[];
   if (adminKeyCols.length === 0) {
     db.exec(`
       CREATE TABLE admin_api_keys (
@@ -503,29 +668,29 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add extra_instructions, session_id, session_cwd columns to runs
-  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as any[];
-  if (!runCols.some((c: any) => c.name === "extra_instructions")) {
+  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as TableInfoRow[];
+  if (!runCols.some((c) => c.name === "extra_instructions")) {
     db.exec(`ALTER TABLE runs ADD COLUMN extra_instructions TEXT`);
   }
-  if (!runCols.some((c: any) => c.name === "session_id")) {
+  if (!runCols.some((c) => c.name === "session_id")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_id TEXT`);
   }
-  if (!runCols.some((c: any) => c.name === "session_cwd")) {
+  if (!runCols.some((c) => c.name === "session_cwd")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
   }
 
   // Migrations: rename check_command → workflow_command, add workflow_only
-  const jobCols3 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (jobCols3.some((c: any) => c.name === "check_command")) {
+  const jobCols3 = db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[];
+  if (jobCols3.some((c) => c.name === "check_command")) {
     db.exec(`ALTER TABLE jobs RENAME COLUMN check_command TO workflow_command`);
   }
-  if (!jobCols3.some((c: any) => c.name === "workflow_only")) {
+  if (!jobCols3.some((c) => c.name === "workflow_only")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN workflow_only INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migration: make agent_id nullable on jobs (for workflow-only jobs without an agent)
-  const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as any[])
-    .find((c: any) => c.name === "agent_id");
+  const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[])
+    .find((c) => c.name === "agent_id");
   if (jobAgentCol?.notnull === 1) {
     db.exec(`
       CREATE TABLE jobs_new (
@@ -556,8 +721,8 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migration: make agent_id nullable on runs (for agentless workflow runs)
-  const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as any[])
-    .find((c: any) => c.name === "agent_id");
+  const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as TableInfoRow[])
+    .find((c) => c.name === "agent_id");
   if (runAgentCol?.notnull === 1) {
     db.exec(`
       CREATE TABLE runs_new (

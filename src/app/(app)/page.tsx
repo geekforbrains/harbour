@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Bot, Terminal, Plus, Zap, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -84,9 +85,18 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
+const STATUS_META: Record<string, { title: string; description: string }> = {
+  waiting:   { title: "Inbox",     description: "Runs waiting for execution." },
+  running:   { title: "Running",   description: "Runs currently in progress." },
+  scheduled: { title: "Scheduled", description: "Runs scheduled for the future." },
+  recent:    { title: "Archive",   description: "Recently completed runs." },
+};
+
 export default function RunsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const projectFilter = useProjectFilter();
+  const searchParams = useSearchParams();
+  const statusFilter = searchParams.get("status"); // waiting | running | scheduled | recent | null
 
   const { data: runsData, isLoading: loading } = useQuery<{
     scheduled?: Run[];
@@ -109,14 +119,19 @@ export default function RunsPage() {
   const pending = allWaiting.filter((r: Run) => r.status === "pending");
   const recent = runsData?.recent || [];
 
+  // Which sections to show based on ?status filter
+  const show = (section: string) => !statusFilter || statusFilter === section;
+
+  const meta = statusFilter ? STATUS_META[statusFilter] : null;
+
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
-          <p className="text-sm text-muted-foreground mt-1">All run activity.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{meta?.title ?? "Runs"}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{meta?.description ?? "All run activity."}</p>
         </div>
         <Button onClick={() => setShowCreate(true)} size="sm">
           <Plus className="h-4 w-4 mr-1.5" /> New Run
@@ -129,7 +144,7 @@ export default function RunsPage() {
         </EmptyState>
       ) : (
         <>
-          {running.length > 0 && (
+          {show("running") && running.length > 0 && (
             <section>
               <SectionHeader count={running.length}>Running</SectionHeader>
               <div className="space-y-2">
@@ -138,7 +153,7 @@ export default function RunsPage() {
             </section>
           )}
 
-          {scheduled.length > 0 && (
+          {show("scheduled") && scheduled.length > 0 && (
             <section>
               <SectionHeader count={scheduled.length}>Scheduled</SectionHeader>
               <div className="space-y-2">
@@ -147,7 +162,7 @@ export default function RunsPage() {
             </section>
           )}
 
-          {waiting.length > 0 && (
+          {show("waiting") && waiting.length > 0 && (
             <section>
               <SectionHeader count={waiting.length}>Waiting</SectionHeader>
               <div className="space-y-2">
@@ -156,7 +171,7 @@ export default function RunsPage() {
             </section>
           )}
 
-          {pending.length > 0 && (
+          {show("waiting") && pending.length > 0 && (
             <section>
               <SectionHeader count={pending.length}>Pending</SectionHeader>
               <div className="space-y-2">
@@ -165,12 +180,14 @@ export default function RunsPage() {
             </section>
           )}
 
-          <section>
-            <SectionHeader>Recent</SectionHeader>
-            <div className="space-y-2">
-              {recent.map(run => <RunRow key={run.id} run={run} />)}
-            </div>
-          </section>
+          {show("recent") && (
+            <section>
+              <SectionHeader>Recent</SectionHeader>
+              <div className="space-y-2">
+                {recent.map(run => <RunRow key={run.id} run={run} />)}
+              </div>
+            </section>
+          )}
         </>
       )}
 

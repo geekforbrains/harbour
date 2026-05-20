@@ -53,8 +53,14 @@ harbour.db-shm
 
 # claude code worktrees
 .claude/worktrees/
+.worktrees/
 data/
 data-remote/
+
+# local BORG Interface adjacent runtime repos / generated indexes
+/deer-flow/
+/freellmapi/
+/graphify-out/
 
 # security audit (working doc, not for distribution)
 AUDIT.md

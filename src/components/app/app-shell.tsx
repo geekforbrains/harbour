@@ -1,17 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Anchor, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 
-import { AppContext, type User, type Project } from "./app-context";
+import { AppContext, type User, type Project, type Workspace } from "./app-context";
 import { ThemeToggle } from "./theme-toggle";
+import { WorkspaceNav } from "./workspace-nav";
 import { NavLinks } from "./nav-links";
-import { ProjectSwitcher } from "./project-switcher";
+import { ProjectSwitcher, WorkspaceProjectList } from "./project-switcher";
 import { MobileBottomNav } from "./mobile-nav";
+import { TokenStatusBar } from "./token-status-bar";
 
 export { useApp } from "./app-context";
 
@@ -19,6 +21,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     fetch("/api/auth/me").then((r) => {
@@ -34,21 +37,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).catch(() => { window.location.href = "/login"; });
   }, [router]);
 
-  // Active project (persisted in localStorage)
-  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
-  const [projectStateLoaded, setProjectStateLoaded] = useState(false);
+  // Active workspace/project (persisted in localStorage)
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("harbour_active_workspace");
+  });
+  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("harbour_active_project");
+  });
 
-  useEffect(() => {
-    const stored = localStorage.getItem("harbour_active_project");
-    if (stored) setActiveProjectIdState(stored);
-    setProjectStateLoaded(true);
-  }, []);
+  function setActiveWorkspaceId(id: string | null) {
+    setActiveWorkspaceIdState(id);
+    setActiveProjectId(null);
+    if (typeof window === "undefined") return;
+    if (id) localStorage.setItem("harbour_active_workspace", id);
+    else localStorage.removeItem("harbour_active_workspace");
+  }
 
   function setActiveProjectId(id: string | null) {
     setActiveProjectIdState(id);
+    if (typeof window === "undefined") return;
     if (id) localStorage.setItem("harbour_active_project", id);
     else localStorage.removeItem("harbour_active_project");
   }
+
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const res = await fetch("/api/workspaces");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 10000,
+    enabled: !!user,
+  });
 
   // Fetch projects
   const { data: projects = [] } = useQuery<Project[]>({
@@ -62,13 +86,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   });
 
-  // If stored project no longer exists, clear it
-  useEffect(() => {
-    if (projectStateLoaded && activeProjectId && projects.length > 0 && !projects.some(p => p.id === activeProjectId)) {
-      setActiveProjectId(null);
-    }
-  }, [projects, activeProjectId, projectStateLoaded]);
-
   // Fetch system timezone
   const { data: timezone = Intl.DateTimeFormat().resolvedOptions().timeZone } = useQuery({
     queryKey: ["settings", "timezone"],
@@ -81,12 +98,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   });
 
-  // Poll waiting runs count (project-filtered)
-  const waitingProjectParam = activeProjectId ? `&projectId=${activeProjectId}` : "";
+  // Poll waiting runs count (project/workspace filtered)
+  const waitingScopeParam = activeProjectId
+    ? `&projectId=${activeProjectId}`
+    : activeWorkspaceId ? `&workspaceId=${activeWorkspaceId}` : "";
   const { data: waitingCount = 0 } = useQuery({
-    queryKey: ["runs", "waiting-count", activeProjectId],
+    queryKey: ["runs", "waiting-count", activeProjectId, activeWorkspaceId],
     queryFn: async () => {
-      const res = await fetch(`/api/runs?filter=waiting${waitingProjectParam}`);
+      const res = await fetch(`/api/runs?filter=waiting${waitingScopeParam}`);
       if (!res.ok) return 0;
       const data = await res.json();
       return Array.isArray(data) ? data.length : 0;
@@ -102,13 +121,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (!authChecked) return null;
 
+  // Pages that need edge-to-edge layout (no max-w-5xl centering)
+  const isFullBleed = pathname.startsWith("/captain");
+
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-4 py-4">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
-          <Anchor className="h-4 w-4 text-primary-foreground" />
+          <span className="text-base leading-none">👽</span>
         </div>
-        <span className="text-lg font-semibold tracking-tight">Harbour</span>
+        <span className="text-lg font-semibold tracking-tight">BORG Interface</span>
       </div>
 
       <Separator />
@@ -116,9 +138,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="px-2 py-2">
         <ProjectSwitcher />
       </div>
+      <WorkspaceProjectList />
+
       <Separator />
 
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto py-2 space-y-1">
+        <WorkspaceNav />
+        <Separator className="my-2" />
         <NavLinks />
       </div>
 
@@ -139,7 +165,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount, timezone, projects, activeProjectId, setActiveProjectId }}>
+    <AppContext.Provider value={{ user, waitingCount, timezone, workspaces, projects, activeWorkspaceId, setActiveWorkspaceId, activeProjectId, setActiveProjectId }}>
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}
@@ -149,7 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Mobile Header */}
           <div className="fixed top-0 left-0 right-0 z-40 flex items-center gap-2 border-b bg-card/95 backdrop-blur-lg px-3 py-2 pt-[calc(0.5rem+env(safe-area-inset-top))] md:hidden">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shrink-0">
-              <Anchor className="h-4 w-4 text-primary-foreground" />
+              <span className="text-base leading-none">👽</span>
             </div>
             <div className="flex-1 min-w-0">
               <ProjectSwitcher variant="mobile" />
@@ -160,11 +186,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <main className="flex-1 overflow-auto min-h-0">
-            <div className="mx-auto max-w-5xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top))] md:px-8 md:pb-8 md:pt-8">
-              {children}
-            </div>
+            {isFullBleed ? (
+              children
+            ) : (
+              <div className="mx-auto max-w-5xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top))] md:px-8 md:pb-8 md:pt-8">
+                {children}
+              </div>
+            )}
           </main>
 
+          <TokenStatusBar />
           <MobileBottomNav />
         </div>
       </div>

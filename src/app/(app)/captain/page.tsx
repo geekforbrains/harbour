@@ -437,7 +437,7 @@ export default function CaptainPage() {
   }
 
   return (
-    <div className="-mx-4 -mb-6 md:-mx-8 md:-mb-8 md:-mt-8 flex h-[calc(100dvh-4.5rem-env(safe-area-inset-top)-3.5rem)] md:h-[calc(100dvh)] overflow-hidden">
+    <div className="flex h-[calc(100dvh-4.5rem-env(safe-area-inset-top)-3.5rem)] md:h-[calc(100dvh)] overflow-hidden">
       {/* Conversation sidebar — desktop */}
       {sidebarOpen && (
         <div className="hidden md:flex w-64 shrink-0 border-r flex-col bg-card">

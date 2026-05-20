@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns, createOneOffRun } from "@/lib/db/queries";
 import { getRecentRunsLimit } from "@/lib/db/settings";
@@ -6,20 +6,21 @@ import { getRecentRunsLimit } from "@/lib/db/settings";
 export const GET = withAuth(async (req) => {
   const filter = req.nextUrl.searchParams.get("filter");
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId") || undefined;
   if (filter === "waiting") {
-    return NextResponse.json(listWaitingRuns(projectId));
+    return NextResponse.json(listWaitingRuns(projectId, workspaceId));
   }
   const limit = getRecentRunsLimit();
   if (filter === "recent") {
-    return NextResponse.json(listRecentRuns(limit, projectId));
+    return NextResponse.json(listRecentRuns(limit, projectId, workspaceId));
   }
 
   // Default: return all sections
   return NextResponse.json({
-    scheduled: listScheduledRuns(projectId),
-    running: listRunningRuns(projectId),
-    waiting: listWaitingRuns(projectId),
-    recent: listRecentRuns(limit, projectId),
+    scheduled: listScheduledRuns(projectId, workspaceId),
+    running: listRunningRuns(projectId, workspaceId),
+    waiting: listWaitingRuns(projectId, workspaceId),
+    recent: listRecentRuns(limit, projectId, workspaceId),
   });
 });
 

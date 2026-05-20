@@ -112,8 +112,9 @@ GET  /api/admin-guide               # full admin API reference
 \`\`\`
 
 For write operations, you'll need an admin API key (Bearer token) or a
-session cookie. Check the admin_api_keys table or create one via the
-dashboard Settings page.
+session cookie. Check the admin_api_keys table or create one via the dashboard Settings page.
+
+Admin key (pre-configured): see \`SELECT key FROM admin_api_keys LIMIT 1;\` in the DB.
 
 ## Key file paths
 
@@ -127,6 +128,49 @@ dashboard Settings page.
 | \`${harbourHome()}/sessions.json\` | CLI session state for resume |
 | \`${harbourHome()}/runner.log\` | Agent runner log |
 | \`${harbourHome()}/workflows/\` | Workflow scripts directory |
+
+## DeerFlow — Research & Coding Agent
+
+DeerFlow is a LangGraph-based research and coding agent system running alongside Harbour.
+
+- **UI**: http://localhost:2026 (Next.js frontend via Nginx)
+- **Gateway API**: http://localhost:8001 (REST + SSE)
+- **Path**: /Users/davidk/Documents/Borg Interface/harbour/deer-flow/
+- **Start**: \`cd "/Users/davidk/Documents/Borg Interface/harbour/deer-flow" && PATH="/opt/homebrew/bin:/Users/davidk/.local/bin:$PATH" bash scripts/serve.sh --dev --daemon\`
+- **Stop**: \`cd "/Users/davidk/Documents/Borg Interface/harbour/deer-flow" && bash scripts/serve.sh --stop\`
+- **Logs**: /Users/davidk/Documents/Borg Interface/harbour/deer-flow/logs/{gateway,frontend,nginx}.log
+
+### DeerFlow API — key endpoints
+
+\`\`\`bash
+# Check if gateway is up
+curl http://localhost:8001/api/health
+
+# List available models
+curl http://localhost:8001/api/models
+
+# Start a research task (SSE stream)
+curl -X POST http://localhost:8001/api/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"messages": [{"role": "user", "content": "Research: <topic>"}], "thread_id": "thread-1", "model": "claude-sonnet-4-6"}'
+
+# DeerFlow uses Server-Sent Events for streaming — pipe to a file for full output
+\`\`\`
+
+### What DeerFlow is for
+DeerFlow handles deep research tasks and coding. It has:
+- Multi-agent research pipelines (planner, researcher, writer)
+- Web search (Tavily, Serper, Jina)
+- Code generation and execution
+- Long-running background tasks via its own database (SQLite at backend/.deer-flow/)
+
+**Use case split**:
+- **Harbour** = control plane: schedule recurring jobs, manage agents, monitor runs
+- **DeerFlow** = research & coding: deep one-off research, coding tasks, content generation
+- **TRON BRAIN** = BORG Interface source of truth at /Users/davidk/Documents/Borg Interface/TRON BRAIN
+- **AGENT RESEARCH** = AI coding factory at /Users/davidk/Documents/Borg Interface/AGENT RESEARCH
+
+Captain can trigger DeerFlow research by POSTing to its gateway and monitoring the stream.
 
 ## Guidelines
 

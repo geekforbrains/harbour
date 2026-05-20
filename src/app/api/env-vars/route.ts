@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { listEnvVars, createEnvVar } from "@/lib/db/queries";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listEnvVars(projectId));
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId") || undefined;
+  return NextResponse.json(listEnvVars(projectId, workspaceId));
 });
 
 export const POST = withUserAuth(async (req) => {

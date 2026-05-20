@@ -121,56 +121,77 @@ export function listRunsByAgent(agentId: string, limit = 50) {
   `).all(agentId, limit);
 }
 
-export function listScheduledRuns(projectId?: string) {
+function runScopeFilter(projectId?: string, workspaceId?: string) {
+  if (projectId) {
+    return {
+      sql: `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)`,
+      values: [projectId],
+    };
+  }
+  if (workspaceId) {
+    return {
+      sql: `AND r.job_id IN (
+        SELECT pj.job_id
+        FROM project_jobs pj
+        JOIN projects p ON p.id = pj.project_id
+        WHERE p.workspace_id = ?
+      )`,
+      values: [workspaceId],
+    };
+  }
+  return { sql: "", values: [] };
+}
+
+export function listScheduledRuns(projectId?: string, workspaceId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const scope = runScopeFilter(projectId, workspaceId);
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'scheduled' ${projectFilter}
+    WHERE r.status = 'scheduled' ${scope.sql}
     ORDER BY r.scheduled_for ASC
-  `).all(...(projectId ? [projectId] : []));
+  `).all(...scope.values);
 }
 
-export function listRunningRuns(projectId?: string) {
+export function listRunningRuns(projectId?: string, workspaceId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const scope = runScopeFilter(projectId, workspaceId);
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'running' ${projectFilter}
+    WHERE r.status = 'running' ${scope.sql}
     ORDER BY r.updated_at DESC
-  `).all(...(projectId ? [projectId] : []));
+  `).all(...scope.values);
 }
 
-export function listWaitingRuns(projectId?: string) {
+export function listWaitingRuns(projectId?: string, workspaceId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const scope = runScopeFilter(projectId, workspaceId);
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('waiting', 'pending') ${projectFilter}
+    WHERE r.status IN ('waiting', 'pending') ${scope.sql}
     ORDER BY r.updated_at ASC
-  `).all(...(projectId ? [projectId] : []));
+  `).all(...scope.values);
 }
 
-export function listRecentRuns(limit = 10, projectId?: string) {
+export function listRecentRuns(limit = 10, projectId?: string, workspaceId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const scope = runScopeFilter(projectId, workspaceId);
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed') ${projectFilter}
+    WHERE r.status IN ('done', 'failed') ${scope.sql}
     ORDER BY r.completed_at DESC LIMIT ?
-  `).all(...(projectId ? [projectId, limit] : [limit]));
+  `).all(...scope.values, limit);
 }
 
 // Activity log
@@ -506,4 +527,3 @@ function buildRunPayload(runId: string) {
     attachments,
   };
 }
-

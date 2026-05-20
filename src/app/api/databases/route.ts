@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { listDatabases, createDatabase, getDatabaseByName } from "@/lib/db/queries";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listDatabases(projectId));
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId") || undefined;
+  return NextResponse.json(listDatabases(projectId, workspaceId));
 });
 
 export const POST = withAuth(async (req) => {
@@ -19,7 +20,8 @@ export const POST = withAuth(async (req) => {
   try {
     const db = createDatabase(body.name, body.columns);
     return NextResponse.json(db, { status: 201 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create database";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 });

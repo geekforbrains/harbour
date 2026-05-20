@@ -95,7 +95,7 @@ export function listJobsByAgent(agentId: string) {
   `).all(agentId);
 }
 
-export function listAllJobs(projectId?: string) {
+export function listAllJobs(projectId?: string, workspaceId?: string) {
   const db = getDb();
   if (projectId) {
     return db.prepare(`
@@ -110,6 +110,25 @@ export function listAllJobs(projectId?: string) {
       AND j.id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)
       ORDER BY j.name
     `).all(projectId);
+  }
+  if (workspaceId) {
+    return db.prepare(`
+      SELECT j.*, a.name as agent_name,
+        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
+        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
+        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
+        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
+      FROM jobs j
+      LEFT JOIN agents a ON j.agent_id = a.id
+      WHERE j.one_off = 0
+      AND j.id IN (
+        SELECT pj.job_id
+        FROM project_jobs pj
+        JOIN projects p ON p.id = pj.project_id
+        WHERE p.workspace_id = ?
+      )
+      ORDER BY j.name
+    `).all(workspaceId);
   }
   return db.prepare(`
     SELECT j.*, a.name as agent_name,

@@ -5,17 +5,34 @@ import { homedir } from "os";
 import path from "path";
 
 const CLI_TOOLS = [
-  { id: "claude", name: "Claude", binary: "claude", versionFlag: "--version" },
-  { id: "codex", name: "Codex", binary: "codex", versionFlag: "--version" },
-  { id: "gemini", name: "Gemini", binary: "gemini", versionFlag: "--version" },
+  { id: "claude",   name: "Claude",   binary: "claude",   versionFlag: "--version" },
+  { id: "codex",    name: "Codex",    binary: "codex",    versionFlag: "--version" },
+  { id: "gemini",   name: "Gemini",   binary: "gemini",   versionFlag: "--version" },
+  { id: "pi",       name: "Pi",       binary: "pi",       versionFlag: "--version" },
+  { id: "opencode", name: "OpenCode", binary: "opencode", versionFlag: "--version" },
 ];
 
-// Extend PATH with common user binary locations that may not be in the server's PATH
+// Extend PATH with common user binary locations that may not be in the server's PATH.
+// Include nvm active-version bin so pi/opencode (installed via npm -g) resolve correctly.
+function nvmBinPaths(): string[] {
+  try {
+    const nvmDir = process.env.NVM_DIR || path.join(homedir(), ".nvm");
+    const { readdirSync } = require("fs") as typeof import("fs");
+    const versions = readdirSync(path.join(nvmDir, "versions", "node"))
+      .sort()
+      .reverse(); // newest first
+    return versions.map(v => path.join(nvmDir, "versions", "node", v, "bin"));
+  } catch {
+    return [];
+  }
+}
+
 const EXTRA_PATHS = [
   path.join(homedir(), ".local", "bin"),
   path.join(homedir(), ".npm-global", "bin"),
   "/usr/local/bin",
   "/opt/homebrew/bin",
+  ...nvmBinPaths(),
 ];
 
 const extendedPath = [...EXTRA_PATHS, process.env.PATH].join(":");

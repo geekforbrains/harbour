@@ -56,7 +56,26 @@ import {
   triggerJobRun,
   listScheduledRuns,
   listRunningRuns,
+  listWorkspaces,
+  createWorkspace,
+  listProjects,
+  createProject,
+  getProjectById,
+  createEnvVar,
+  listEnvVars,
+  WorkspaceConflictError,
+  linkAgentToProject,
+  linkJobToProject,
+  linkDocToProject,
+  linkEnvVarToProject,
+  linkDatabaseToProject,
 } from "@/lib/db/queries";
+
+type WorkspaceRow = { id: string };
+type ProjectRow = { id: string; workspace_id: string | null };
+type NamedRow = { id: string; name: string };
+type TitledRow = { id: string; title: string };
+type RunRow = { id: string; job_name: string };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,6 +108,88 @@ beforeEach(() => {
 
 afterEach(() => {
   resetDb();
+});
+
+// ===========================================================================
+// Workspace / Project Management
+// ===========================================================================
+
+describe("Workspace / Project Management", () => {
+  it("seeds BORG Interface workspaces", () => {
+    const workspaces = listWorkspaces() as WorkspaceRow[];
+    expect(workspaces.map(w => w.id)).toContain("borg-interface");
+    expect(workspaces.map(w => w.id)).toContain("agent-research");
+    expect(workspaces.map(w => w.id)).toContain("cultr-ventures");
+    expect(workspaces.map(w => w.id)).toContain("phaseone");
+  });
+
+  it("creates projects inside a workspace", () => {
+    const workspace = createWorkspace({ name: "Test Workspace" }) as WorkspaceRow;
+    const project = createProject("Nested Project", workspace.id) as ProjectRow;
+    expect(project.workspace_id).toBe(workspace.id);
+    const projects = listProjects(workspace.id) as ProjectRow[];
+    expect(projects.map(p => p.id)).toContain(project.id);
+  });
+
+  it("rejects duplicate workspace slugs cleanly", () => {
+    createWorkspace({ name: "Duplicate Workspace" });
+    expect(() => createWorkspace({ name: "Duplicate Workspace" })).toThrow(WorkspaceConflictError);
+  });
+
+  it("does not reassign intentionally null workspace ownership on later schema init", () => {
+    const workspace = createWorkspace({ name: "Temporary Workspace" }) as WorkspaceRow;
+    const project = createProject("Temporary Project", workspace.id) as ProjectRow;
+
+    getDb().prepare(`DELETE FROM workspaces WHERE id = ?`).run(workspace.id);
+    expect((getProjectById(project.id) as ProjectRow).workspace_id).toBeNull();
+
+    initializeSchema(getDb());
+    expect((getProjectById(project.id) as ProjectRow).workspace_id).toBeNull();
+  });
+
+  it("filters linked records by workspace through projects", () => {
+    const alphaWorkspace = createWorkspace({ name: "Alpha Workspace" }) as WorkspaceRow;
+    const betaWorkspace = createWorkspace({ name: "Beta Workspace" }) as WorkspaceRow;
+    const alphaProject = createProject("Alpha Project", alphaWorkspace.id) as ProjectRow;
+    const betaProject = createProject("Beta Project", betaWorkspace.id) as ProjectRow;
+
+    const alphaAgent = createAgent("alpha-agent");
+    const betaAgent = createAgent("beta-agent");
+    linkAgentToProject(alphaProject.id, alphaAgent.id);
+    linkAgentToProject(betaProject.id, betaAgent.id);
+
+    const alphaJob = createJob(alphaAgent.id, { name: "alpha-job", schedule: "{\"every\":60}" })!;
+    const betaJob = createJob(betaAgent.id, { name: "beta-job", schedule: "{\"every\":60}" })!;
+    linkJobToProject(alphaProject.id, alphaJob.id);
+    linkJobToProject(betaProject.id, betaJob.id);
+
+    const alphaRun = createRun(alphaJob.id, alphaAgent.id)!;
+    const betaRun = createRun(betaJob.id, betaAgent.id)!;
+    updateRunStatus(alphaRun.id, "waiting");
+    updateRunStatus(betaRun.id, "waiting");
+
+    const alphaDoc = createDoc("alpha-doc")!;
+    const betaDoc = createDoc("beta-doc")!;
+    linkDocToProject(alphaProject.id, alphaDoc.id);
+    linkDocToProject(betaProject.id, betaDoc.id);
+
+    const alphaEnv = createEnvVar("ALPHA_TOKEN", "secret")!;
+    const betaEnv = createEnvVar("BETA_TOKEN", "secret")!;
+    linkEnvVarToProject(alphaProject.id, alphaEnv.id);
+    linkEnvVarToProject(betaProject.id, betaEnv.id);
+
+    const alphaDb = createDatabase("alpha_db", [{ name: "value", type: "TEXT" }])!;
+    const betaDb = createDatabase("beta_db", [{ name: "value", type: "TEXT" }])!;
+    linkDatabaseToProject(alphaProject.id, alphaDb.id);
+    linkDatabaseToProject(betaProject.id, betaDb.id);
+
+    expect((listAgents(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["alpha-agent"]);
+    expect((listAllJobs(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["alpha-job"]);
+    expect((listWaitingRuns(undefined, alphaWorkspace.id) as RunRow[]).map(r => r.job_name)).toEqual(["alpha-job"]);
+    expect((listDocs(undefined, alphaWorkspace.id) as TitledRow[]).map(r => r.title)).toEqual(["alpha-doc"]);
+    expect((listEnvVars(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["ALPHA_TOKEN"]);
+    expect((listDatabases(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["alpha_db"]);
+  });
 });
 
 // ===========================================================================

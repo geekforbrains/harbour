@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAllJobs, createJob } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listAllJobs(projectId));
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId") || undefined;
+  return NextResponse.json(listAllJobs(projectId, workspaceId));
 });
 
 // Create an agentless workflow-only job

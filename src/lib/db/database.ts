@@ -132,7 +132,7 @@ export function getDatabaseByName(name: string): (DatabaseMeta & { columns: Colu
   return { ...meta, columns: columns.filter(c => c.name !== "_id") };
 }
 
-export function listDatabases(projectId?: string) {
+export function listDatabases(projectId?: string, workspaceId?: string) {
   const db = getDb();
   let metas: DatabaseMeta[];
   if (projectId) {
@@ -141,6 +141,17 @@ export function listDatabases(projectId?: string) {
       WHERE id IN (SELECT database_id FROM project_databases WHERE project_id = ?)
       ORDER BY name ASC
     `).all(projectId) as DatabaseMeta[];
+  } else if (workspaceId) {
+    metas = db.prepare(`
+      SELECT * FROM databases
+      WHERE id IN (
+        SELECT pd.database_id
+        FROM project_databases pd
+        JOIN projects p ON p.id = pd.project_id
+        WHERE p.workspace_id = ?
+      )
+      ORDER BY name ASC
+    `).all(workspaceId) as DatabaseMeta[];
   } else {
     metas = db.prepare(`SELECT * FROM databases ORDER BY name ASC`).all() as DatabaseMeta[];
   }
@@ -325,4 +336,3 @@ export function getJobsForDatabase(databaseId: string) {
     WHERE jd.database_id = ?
   `).all(databaseId);
 }
-

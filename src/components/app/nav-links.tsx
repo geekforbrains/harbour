@@ -2,9 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useApp } from "./app-context";
 import {
-  Activity,
   Briefcase,
   Bot,
   FileText,
@@ -12,16 +10,11 @@ import {
   KeyRound,
   Users,
   Settings,
-  MessageSquare,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
-  const { waitingCount } = useApp();
-
   const links = [
-    { href: "/captain", label: "Captain", icon: MessageSquare },
-    { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
     { href: "/docs", label: "Docs", icon: FileText },
@@ -50,11 +43,6 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
           >
             <link.icon className="h-4 w-4" />
             {link.label}
-            {"badge" in link && (link.badge ?? 0) > 0 && (
-              <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-medium leading-none text-primary-foreground">
-                {link.badge}
-              </span>
-            )}
           </Link>
         );
       })}

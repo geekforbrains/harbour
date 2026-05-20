@@ -48,7 +48,7 @@ export function getAgentById(id: string) {
   return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, eager, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
 }
 
-export function listAgents(projectId?: string) {
+export function listAgents(projectId?: string, workspaceId?: string) {
   const db = getDb();
   if (projectId) {
     return db.prepare(`
@@ -61,6 +61,23 @@ export function listAgents(projectId?: string) {
       WHERE a.id IN (SELECT agent_id FROM project_agents WHERE project_id = ?)
       ORDER BY a.name
     `).all(projectId);
+  }
+  if (workspaceId) {
+    return db.prepare(`
+      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+        (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
+        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
+        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
+        (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
+      FROM agents a
+      WHERE a.id IN (
+        SELECT pa.agent_id
+        FROM project_agents pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE p.workspace_id = ?
+      )
+      ORDER BY a.name
+    `).all(workspaceId);
   }
   return db.prepare(`
     SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,

@@ -51,7 +51,7 @@ export function deleteDoc(id: string) {
   db.prepare(`DELETE FROM docs WHERE id = ?`).run(id);
 }
 
-export function listDocs(projectId?: string) {
+export function listDocs(projectId?: string, workspaceId?: string) {
   const db = getDb();
   if (projectId) {
     return db.prepare(`
@@ -61,6 +61,20 @@ export function listDocs(projectId?: string) {
       WHERE d.id IN (SELECT doc_id FROM project_docs WHERE project_id = ?)
       ORDER BY d.pinned DESC, d.title ASC
     `).all(projectId);
+  }
+  if (workspaceId) {
+    return db.prepare(`
+      SELECT d.id, d.title, d.pinned, d.created_at, d.updated_at,
+        (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
+      FROM docs d
+      WHERE d.id IN (
+        SELECT pd.doc_id
+        FROM project_docs pd
+        JOIN projects p ON p.id = pd.project_id
+        WHERE p.workspace_id = ?
+      )
+      ORDER BY d.pinned DESC, d.title ASC
+    `).all(workspaceId);
   }
   return db.prepare(`
     SELECT d.id, d.title, d.pinned, d.created_at, d.updated_at,

@@ -413,6 +413,205 @@ const PROVIDERS = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Provider: pi (earendil-works/pi) — multi-provider coding agent
+// Install: npm install -g @mariozechner/pi-coding-agent
+// Models use "provider/model" format, e.g. "anthropic/claude-sonnet-4-6"
+// Docs: https://github.com/earendil-works/pi
+// ---------------------------------------------------------------------------
+PROVIDERS.pi = {
+  buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
+    const args = ["--print", "--mode", "json"];
+    if (model) args.push("--model", model);
+    // --thinking accepts: off | minimal | low | medium | high | xhigh
+    if (thinking && thinking !== "off") args.push("--thinking", thinking);
+    if (sessionId && !isNewSession) {
+      args.push("--session", sessionId);
+    }
+    // Keep sessions scoped to this workspace directory
+    const sessionDir = path.join(workingDir, ".pi-sessions");
+    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
+    args.push("--session-dir", sessionDir);
+    args.push(prompt);
+    return { binary: resolveBinary("pi"), args, cwd: workingDir };
+  },
+  parseLine(line) {
+    try {
+      const obj = JSON.parse(line);
+      const events = [];
+
+      // Session header — first line, contains the session UUID
+      if (obj.type === "session" && obj.id) {
+        return { events, sessionId: obj.id };
+      }
+
+      // Streaming text and thinking deltas
+      if (obj.type === "message_update" && obj.assistantMessageEvent) {
+        const evt = obj.assistantMessageEvent;
+        if (evt.type === "text_delta" && evt.delta) {
+          events.push({ event_type: "text_delta", content: evt.delta });
+        }
+        if (evt.type === "thinking_delta" && evt.delta) {
+          events.push({ event_type: "thinking", content: evt.delta });
+        }
+      }
+
+      // Tool execution start — format args for common pi built-in tools
+      if (obj.type === "tool_execution_start") {
+        let displayContent = null;
+        if (obj.args) {
+          const a = obj.args;
+          const n = (obj.toolName || "").toLowerCase();
+          if (n === "bash" && a.command) displayContent = a.command;
+          else if ((n === "read" || n === "write" || n === "edit") && (a.path || a.file_path)) displayContent = a.path || a.file_path;
+          else if (n === "grep" && a.pattern) displayContent = a.pattern;
+          else if (n === "find" && (a.pattern || a.path)) displayContent = a.pattern || a.path;
+          else {
+            const s = JSON.stringify(a);
+            displayContent = s.length > 200 ? s.slice(0, 200) + "…" : s;
+          }
+        }
+        events.push({
+          event_type: "tool_start",
+          content: displayContent,
+          tool_name: obj.toolName || null,
+        });
+      }
+
+      // Tool execution end
+      if (obj.type === "tool_execution_end") {
+        let content = null;
+        if (obj.result != null) {
+          content = typeof obj.result === "string" ? obj.result : JSON.stringify(obj.result);
+          if (content.length > 500) content = content.slice(0, 500) + "…";
+        }
+        events.push({
+          event_type: "tool_end",
+          content: obj.isError ? `Error: ${content}` : content,
+          tool_name: obj.toolName || null,
+        });
+      }
+
+      // Agent finished
+      if (obj.type === "agent_end") {
+        events.push({ event_type: "result", content: null });
+      }
+
+      return { events };
+    } catch {
+      return { events: [] };
+    }
+  },
+  parseResult(stdout) {
+    const lines = stdout.trim().split("\n");
+    let sessionId = null;
+    let content = "";
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === "session" && obj.id) sessionId = obj.id;
+        if (obj.type === "message_update" && obj.assistantMessageEvent?.type === "text_delta") {
+          content += obj.assistantMessageEvent.delta || "";
+        }
+      } catch { /* skip non-JSON lines (stderr noise) */ }
+    }
+    return { content: content.trim() || stdout, sessionId };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Provider: opencode (opencode-ai/opencode) — open source terminal coding agent
+// Install: npm install -g opencode-ai
+// Models use "provider/model" format, e.g. "anthropic/claude-sonnet-4-6"
+// Docs: https://opencode.ai/docs/cli/
+// ---------------------------------------------------------------------------
+PROVIDERS.opencode = {
+  buildCommand(prompt, model, workingDir, sessionId, isNewSession, _thinking) {
+    const args = ["run", "--format", "json", "--dangerously-skip-permissions"];
+    if (model) args.push("--model", model);
+    if (sessionId && !isNewSession) args.push("--session", sessionId);
+    args.push(prompt);
+    return { binary: resolveBinary("opencode"), args, cwd: workingDir };
+  },
+  parseLine(line) {
+    try {
+      const obj = JSON.parse(line);
+      const events = [];
+      const type = obj.type ?? obj.kind ?? "";
+
+      // Session ID — opencode emits a session object at the start
+      const sid = obj.sessionID || obj.session_id || (type === "session" ? obj.id : null);
+      if (sid) return { events, sessionId: sid };
+
+      // Text output
+      if (type === "text_delta" || type === "assistant" || type === "text") {
+        const t = obj.text || obj.content || obj.delta || "";
+        if (t) events.push({ event_type: "text_delta", content: t });
+      }
+      // Content block delta (SST/OpenCode streaming)
+      if (type === "content_block_delta" || type === "message.part.delta") {
+        const delta = obj.delta || obj.content || {};
+        const t = typeof delta === "string" ? delta : (delta.text || delta.content || "");
+        if (t) events.push({ event_type: "text_delta", content: t });
+      }
+
+      // Tool start
+      if (type === "tool_start" || type === "tool.start" || type === "tool_use" || type === "tooluse") {
+        const toolName = obj.name || obj.toolName || obj.tool || null;
+        const argsStr = obj.command || obj.input
+          || (obj.args ? (typeof obj.args === "string" ? obj.args : JSON.stringify(obj.args).slice(0, 200)) : null);
+        events.push({ event_type: "tool_start", content: argsStr, tool_name: toolName });
+      }
+
+      // Tool end
+      if (type === "tool_end" || type === "tool.end" || type === "tool_result") {
+        const result = obj.output || obj.result || obj.content;
+        const content = typeof result === "string" ? result : result != null ? JSON.stringify(result) : null;
+        events.push({
+          event_type: "tool_end",
+          content: content ? content.slice(0, 500) : null,
+          tool_name: obj.name || obj.toolName || null,
+        });
+      }
+
+      // Run complete
+      if (type === "run.end" || type === "agent_end" || type === "done" || type === "turn.end") {
+        events.push({ event_type: "result", content: null });
+      }
+
+      return { events };
+    } catch {
+      // Non-JSON line — treat as plain text output
+      const trimmed = line.trim();
+      if (trimmed) return { events: [{ event_type: "text_delta", content: trimmed + "\n" }] };
+      return { events: [] };
+    }
+  },
+  parseResult(stdout) {
+    const lines = stdout.trim().split("\n");
+    let sessionId = null;
+    let content = "";
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        const type = obj.type ?? obj.kind ?? "";
+        const sid = obj.sessionID || obj.session_id || (type === "session" ? obj.id : null);
+        if (sid) sessionId = sid;
+        if (type === "text_delta" || type === "assistant" || type === "text") {
+          content += obj.text || obj.content || obj.delta || "";
+        }
+        if (type === "content_block_delta" || type === "message.part.delta") {
+          const delta = obj.delta || obj.content || {};
+          content += typeof delta === "string" ? delta : (delta.text || delta.content || "");
+        }
+      } catch {
+        content += line + "\n";
+      }
+    }
+    return { content: content.trim() || stdout, sessionId };
+  },
+};
+
 export function getProvider(cli) {
   const provider = PROVIDERS[cli];
   if (!provider) throw new Error(`Unknown CLI provider: ${cli}`);

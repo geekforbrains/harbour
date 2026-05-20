@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — 2026-05-20
+
+### BORG Interface Workspaces
+
+- Added first-class workspaces above projects so businesses and operating areas can own nested projects.
+- Seeded BORG Interface, AGENT RESEARCH, CULTR VENTURES, and PhaseOne workspaces with their known projects.
+- Updated the sidebar/mobile selector to choose workspaces and projects separately.
+- Updated Captain guidance and Harbour docs for the new BORG Interface paths.
+- Added workspace-scoped filtering for agents, jobs, runs, docs, env vars, and databases.
+- Kept all projects available in the selector while workspace scope filters dashboard views.
+- Added duplicate workspace conflict handling and safer one-time legacy workspace migration behavior.
+- Replaced stale FreeLLM UI start paths with BORG Interface paths.
+
 ## v1.15.0 — 2026-05-08
 
 ### Security
