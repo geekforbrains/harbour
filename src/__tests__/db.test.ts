@@ -153,8 +153,8 @@ describe("Workspace / Project Management", () => {
     const alphaProject = createProject("Alpha Project", alphaWorkspace.id) as ProjectRow;
     const betaProject = createProject("Beta Project", betaWorkspace.id) as ProjectRow;
 
-    const alphaAgent = createAgent("alpha-agent");
-    const betaAgent = createAgent("beta-agent");
+    const alphaAgent = createAgent("alpha-agent", undefined, { scopeType: "project", projectId: alphaProject.id });
+    const betaAgent = createAgent("beta-agent", undefined, { scopeType: "project", projectId: betaProject.id });
     linkAgentToProject(alphaProject.id, alphaAgent.id);
     linkAgentToProject(betaProject.id, betaAgent.id);
 

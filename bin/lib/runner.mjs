@@ -189,6 +189,44 @@ function buildPrompt(payload, apiKey, isResume) {
     prompt += "\n";
   }
 
+  if (payload.skills?.length > 0) {
+    prompt += `## Skill Library\n\nBefore acting, check these resolved skills and apply any that match the job. Use paths as source references when you need the full skill.\n\n`;
+    for (const skill of payload.skills) {
+      prompt += `### ${skill.name} (${skill.scope})\n`;
+      if (skill.path) prompt += `Path: ${skill.path}\n`;
+      if (skill.tags) prompt += `Tags: ${skill.tags}\n`;
+      if (skill.triggers) prompt += `Triggers: ${skill.triggers}\n`;
+      prompt += `${skill.digest || skill.description || "No digest available."}\n\n`;
+    }
+  }
+
+  if (payload.agent?.composio?.cli_enabled || payload.agent?.composio?.mcp_enabled) {
+    const toolkits = payload.agent.composio.toolkits || [];
+    const tools = payload.agent.composio.tools || [];
+    prompt += `## Composio Access\n\n`;
+    if (payload.agent.composio.cli_enabled) {
+      prompt += `Composio CLI is available. Prefer known slugs with \`composio execute <SLUG> -d '{...}'\`; use \`composio execute <SLUG> --get-schema\` when inputs are unclear; use \`composio search "<task>"\` only when the slug is unknown.\n`;
+    }
+    if (payload.agent.composio.mcp_enabled) {
+      prompt += `Composio MCP is enabled for this agent. Use MCP tools when your runtime exposes them; fall back to the Composio CLI if MCP is unavailable.\n`;
+      prompt += `MCP config snippet:\n\`\`\`json\n${JSON.stringify({
+        mcpServers: {
+          composio: {
+            command: "composio",
+            args: ["mcp", "start"],
+            env: {
+              COMPOSIO_TOOLKITS: toolkits.join(","),
+              COMPOSIO_TOOLS: tools.join(","),
+            },
+          },
+        },
+      }, null, 2)}\n\`\`\`\n`;
+    }
+    if (toolkits.length > 0) prompt += `Allowed toolkits: ${toolkits.join(", ")}\n`;
+    if (tools.length > 0) prompt += `Allowed tool slugs: ${tools.join(", ")}\n`;
+    prompt += "\n";
+  }
+
   // Workflow output is appended by the runner after executing the workflow command
   // (see runSingleAgent — workflows are run as shell processes, not by the LLM)
 

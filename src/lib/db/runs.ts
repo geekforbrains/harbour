@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
+import { resolveSkillsForAgent } from "./skills";
 
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
@@ -341,7 +342,14 @@ export function getAgentNextRun(agentId: string) {
 
   const runId = assignRun();
   if (!runId) return null;
-  return buildRunPayload(runId);
+  try {
+    return buildRunPayload(runId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    addRunActivity(runId, "system", null, "System", `Run failed before agent spawn: ${message}`);
+    updateRunStatus(runId, "failed");
+    return null;
+  }
 }
 
 // Workflow polling: get next agentless workflow-only run
@@ -504,9 +512,37 @@ function buildRunPayload(runId: string) {
   // Agent runtime config (eager) — read live so remote runners pick up
   // dashboard toggles without reconnecting.
   const agentRow = run.agent_id
-    ? db.prepare(`SELECT eager FROM agents WHERE id = ?`).get(run.agent_id) as { eager: number } | undefined
+    ? db.prepare(`
+      SELECT eager, composio_cli_enabled, composio_mcp_enabled, composio_toolkits, composio_tools, cli,
+        scope_type, workspace_id, project_id
+      FROM agents WHERE id = ?
+    `).get(run.agent_id) as any
     : undefined;
-  const agent = agentRow ? { eager: !!agentRow.eager } : undefined;
+  const parseList = (value: string | null | undefined) => {
+    if (!value) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const agent = agentRow ? {
+    eager: !!agentRow.eager,
+    cli: agentRow.cli || null,
+    scope_type: agentRow.scope_type || "global",
+    workspace_id: agentRow.workspace_id || null,
+    project_id: agentRow.project_id || null,
+    composio: {
+      cli_enabled: !!agentRow.composio_cli_enabled,
+      mcp_enabled: !!agentRow.composio_mcp_enabled,
+      toolkits: parseList(agentRow.composio_toolkits),
+      tools: parseList(agentRow.composio_tools),
+    },
+  } : undefined;
+  const skillQuery = [job.name, instructions].filter(Boolean).join("\n\n");
+  const skills = run.agent_id ? resolveSkillsForAgent(run.agent_id, skillQuery) : [];
 
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
@@ -524,6 +560,7 @@ function buildRunPayload(runId: string) {
     docs,
     data,
     env,
+    skills,
     attachments,
   };
 }

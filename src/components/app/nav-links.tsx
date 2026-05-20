@@ -8,6 +8,7 @@ import {
   FileText,
   Database,
   KeyRound,
+  Sparkles,
   Users,
   Settings,
 } from "lucide-react";
@@ -20,6 +21,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Env Vars", icon: KeyRound },
+    { href: "/skills", label: "Skills", icon: Sparkles },
     { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];

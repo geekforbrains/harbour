@@ -53,4 +53,14 @@ export const CLI_CONFIG: Record<string, CliConfig> = {
     // standard thinking level — leave empty to hide the selector.
     thinkingOptions: [],
   },
+  openclaw: {
+    models: ["default"],
+    thinkingLabel: "Thinking",
+    thinkingOptions: ["low", "medium", "high"],
+  },
+  hermes: {
+    models: ["hermes-3", "nous-hermes-3"],
+    thinkingLabel: "Thinking",
+    thinkingOptions: ["low", "medium", "high"],
+  },
 };

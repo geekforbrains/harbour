@@ -11,7 +11,21 @@ function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
-export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean; eager?: boolean }) {
+export function createAgent(name: string, description?: string, opts?: {
+  type?: string;
+  cli?: string;
+  model?: string;
+  thinking?: string;
+  remote?: boolean;
+  eager?: boolean;
+  scopeType?: "global" | "workspace" | "project";
+  workspaceId?: string | null;
+  projectId?: string | null;
+  composioCliEnabled?: boolean;
+  composioMcpEnabled?: boolean;
+  composioToolkits?: string[];
+  composioTools?: string[];
+}) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateApiKey();
@@ -22,10 +36,34 @@ export function createAgent(name: string, description?: string, opts?: { type?: 
   const thinking = opts?.thinking || null;
   const remote = opts?.remote ? 1 : 0;
   const eager = opts?.eager ? 1 : 0;
+  const scopeType = opts?.scopeType || "global";
+  const workspaceId = scopeType === "workspace" ? opts?.workspaceId || null : null;
+  const projectId = scopeType === "project" ? opts?.projectId || null : null;
+  const composioCliEnabled = opts?.composioCliEnabled ? 1 : 0;
+  const composioMcpEnabled = opts?.composioMcpEnabled ? 1 : 0;
+  const composioToolkits = opts?.composioToolkits?.length ? JSON.stringify(opts.composioToolkits) : null;
+  const composioTools = opts?.composioTools?.length ? JSON.stringify(opts.composioTools) : null;
   db.prepare(
-    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote, eager) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote, eager);
-  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote, eager: !!eager };
+    `INSERT INTO agents (
+      id, name, description, api_key_hash, type, cli, model, thinking, remote, eager,
+      scope_type, workspace_id, project_id, composio_cli_enabled, composio_mcp_enabled,
+      composio_toolkits, composio_tools
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id, name, description || null, apiKeyHash, type, cli, model, thinking, remote, eager,
+    scopeType, workspaceId, projectId, composioCliEnabled, composioMcpEnabled, composioToolkits, composioTools
+  );
+  if (projectId) {
+    db.prepare(`INSERT OR IGNORE INTO project_agents (project_id, agent_id) VALUES (?, ?)`).run(projectId, id);
+  }
+  return {
+    id, name, description, apiKey, type, cli, model, thinking, remote: !!remote, eager: !!eager,
+    scope_type: scopeType, workspace_id: workspaceId, project_id: projectId,
+    composio_cli_enabled: !!composioCliEnabled,
+    composio_mcp_enabled: !!composioMcpEnabled,
+    composio_toolkits: opts?.composioToolkits || [],
+    composio_tools: opts?.composioTools || [],
+  };
 }
 
 export function authenticateAgent(apiKey: string) {
@@ -45,42 +83,61 @@ export function rotateAgentKey(agentId: string) {
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, eager, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
+  return db.prepare(`
+    SELECT id, name, description, type, cli, model, thinking, remote, eager,
+      scope_type, workspace_id, project_id, composio_cli_enabled, composio_mcp_enabled,
+      composio_toolkits, composio_tools, last_polled_at, created_at, updated_at
+    FROM agents WHERE id = ?
+  `).get(id) as any || null;
 }
 
 export function listAgents(projectId?: string, workspaceId?: string) {
   const db = getDb();
   if (projectId) {
+    const project = db.prepare(`SELECT workspace_id FROM projects WHERE id = ?`).get(projectId) as { workspace_id: string | null } | undefined;
+    const workspaceId = project?.workspace_id || null;
     return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager,
+        a.scope_type, a.workspace_id, a.project_id, a.composio_cli_enabled, a.composio_mcp_enabled,
+        a.composio_toolkits, a.composio_tools, a.last_polled_at, a.created_at,
         (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
         (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
       FROM agents a
-      WHERE a.id IN (SELECT agent_id FROM project_agents WHERE project_id = ?)
+      WHERE a.scope_type = 'global'
+        OR (a.scope_type = 'workspace' AND a.workspace_id = ?)
+        OR (a.scope_type = 'project' AND a.project_id = ?)
+        OR a.id IN (SELECT agent_id FROM project_agents WHERE project_id = ?)
       ORDER BY a.name
-    `).all(projectId);
+    `).all(workspaceId, projectId, projectId);
   }
   if (workspaceId) {
     return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager,
+        a.scope_type, a.workspace_id, a.project_id, a.composio_cli_enabled, a.composio_mcp_enabled,
+        a.composio_toolkits, a.composio_tools, a.last_polled_at, a.created_at,
         (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
         (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
       FROM agents a
-      WHERE a.id IN (
+      WHERE a.scope_type = 'global'
+        OR (a.scope_type = 'workspace' AND a.workspace_id = ?)
+        OR (a.scope_type = 'project' AND a.project_id IN (SELECT id FROM projects WHERE workspace_id = ?))
+        OR a.id IN (
         SELECT pa.agent_id
         FROM project_agents pa
         JOIN projects p ON p.id = pa.project_id
         WHERE p.workspace_id = ?
       )
       ORDER BY a.name
-    `).all(workspaceId);
+    `).all(workspaceId, workspaceId, workspaceId);
   }
   return db.prepare(`
-    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager,
+      a.scope_type, a.workspace_id, a.project_id, a.composio_cli_enabled, a.composio_mcp_enabled,
+      a.composio_toolkits, a.composio_tools, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,

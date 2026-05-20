@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { execSync } from "child_process";
+import { readdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 
@@ -10,6 +11,8 @@ const CLI_TOOLS = [
   { id: "gemini",   name: "Gemini",   binary: "gemini",   versionFlag: "--version" },
   { id: "pi",       name: "Pi",       binary: "pi",       versionFlag: "--version" },
   { id: "opencode", name: "OpenCode", binary: "opencode", versionFlag: "--version" },
+  { id: "openclaw", name: "OpenClaw", binary: "openclaw", versionFlag: "--version" },
+  { id: "hermes",   name: "Hermes",   binary: "hermes",   versionFlag: "--version" },
 ];
 
 // Extend PATH with common user binary locations that may not be in the server's PATH.
@@ -17,7 +20,6 @@ const CLI_TOOLS = [
 function nvmBinPaths(): string[] {
   try {
     const nvmDir = process.env.NVM_DIR || path.join(homedir(), ".nvm");
-    const { readdirSync } = require("fs") as typeof import("fs");
     const versions = readdirSync(path.join(nvmDir, "versions", "node"))
       .sort()
       .reverse(); // newest first
@@ -30,6 +32,7 @@ function nvmBinPaths(): string[] {
 const EXTRA_PATHS = [
   path.join(homedir(), ".local", "bin"),
   path.join(homedir(), ".npm-global", "bin"),
+  path.join(homedir(), ".composio"),
   "/usr/local/bin",
   "/opt/homebrew/bin",
   ...nvmBinPaths(),
@@ -58,5 +61,6 @@ function checkTool(tool: typeof CLI_TOOLS[number]) {
 
 export const GET = withAuth(async () => {
   const tools = CLI_TOOLS.map(checkTool);
-  return NextResponse.json(tools);
+  const composio = checkTool({ id: "composio", name: "Composio", binary: "composio", versionFlag: "--version" });
+  return NextResponse.json(tools.map(tool => ({ ...tool, composio })));
 });

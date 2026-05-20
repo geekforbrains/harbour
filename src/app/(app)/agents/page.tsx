@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, Che
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { useApp } from "@/components/app/app-context";
 
 type Agent = {
   id: string;
@@ -26,6 +27,11 @@ type Agent = {
   pending_count: number;
   last_activity: number | null;
   last_polled_at: number | null;
+  scope_type: string;
+  workspace_id: string | null;
+  project_id: string | null;
+  composio_cli_enabled: number;
+  composio_mcp_enabled: number;
 };
 
 type CliTool = {
@@ -33,6 +39,7 @@ type CliTool = {
   name: string;
   installed: boolean;
   version?: string;
+  composio?: { installed: boolean; path?: string; version?: string };
 };
 
 import { CLI_CONFIG } from "@/lib/cli-config";
@@ -42,6 +49,7 @@ import { Link2 } from "lucide-react";
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
+  const { workspaces, projects, activeWorkspaceId, activeProjectId: appActiveProjectId } = useApp();
   const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
 
@@ -63,6 +71,14 @@ export default function AgentsPage() {
   const [copied, setCopied] = useState(false);
   const [remoteAgent, setRemoteAgent] = useState(false);
   const [eagerAgent, setEagerAgent] = useState(false);
+  const [scopeType, setScopeType] = useState<"global" | "workspace" | "project">("global");
+  const [scopeWorkspaceId, setScopeWorkspaceId] = useState(activeWorkspaceId || "borg-interface");
+  const [scopeProjectId, setScopeProjectId] = useState(appActiveProjectId || projects[0]?.id || "");
+  const [composioCliEnabled, setComposioCliEnabled] = useState(false);
+  const [composioMcpEnabled, setComposioMcpEnabled] = useState(false);
+  const [composioToolkits, setComposioToolkits] = useState("");
+  const [composioTools, setComposioTools] = useState("");
+  const [nowSeconds, setNowSeconds] = useState(0);
 
   // Type selection
   const [agentType, setAgentType] = useState<"harbour" | "external" | null>(null);
@@ -74,6 +90,13 @@ export default function AgentsPage() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedThinking, setSelectedThinking] = useState<string>("");
   const [showLinkExisting, setShowLinkExisting] = useState(false);
+
+  useEffect(() => {
+    const updateNow = () => setNowSeconds(Math.floor(Date.now() / 1000));
+    updateNow();
+    const timer = window.setInterval(updateNow, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
 
   async function loadCliTools() {
@@ -102,10 +125,21 @@ export default function AgentsPage() {
     if (!name.trim()) return;
     setCreating(true);
 
-    const body: Record<string, string | boolean> = { name, description };
+    const body: Record<string, unknown> = {
+      name,
+      description,
+      scopeType,
+      workspaceId: scopeType === "workspace" ? scopeWorkspaceId : undefined,
+      projectId: scopeType === "project" ? scopeProjectId : undefined,
+      composioCliEnabled,
+      composioMcpEnabled,
+      composioToolkits,
+      composioTools,
+    };
     if (agentType === "harbour") {
       body.type = "harbour";
       if (selectedCli && selectedCli !== "none") {
+        body.provider = selectedCli;
         body.cli = selectedCli;
         body.model = selectedModel;
         if (selectedThinking) body.thinking = selectedThinking;
@@ -184,6 +218,13 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     setCliTools([]);
     setRemoteAgent(false);
     setEagerAgent(false);
+    setScopeType("global");
+    setScopeWorkspaceId(activeWorkspaceId || "borg-interface");
+    setScopeProjectId(appActiveProjectId || projects[0]?.id || "");
+    setComposioCliEnabled(false);
+    setComposioMcpEnabled(false);
+    setComposioToolkits("");
+    setComposioTools("");
   }
 
   function getConnectBlob() {
@@ -207,11 +248,53 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     return `harbour agent connect ${getConnectBlob()}`;
   }
 
+  function getOrgoPayload() {
+    if (!newAgent) return "";
+    const base = typeof window !== "undefined" ? window.location.origin : "";
+    return JSON.stringify({
+      runtime: "orgo",
+      harbourUrl: base,
+      agentId: newAgent.id,
+      apiKey: newAgent.apiKey,
+      provider: newAgent.cli,
+      scope: {
+        type: scopeType,
+        workspaceId: scopeType === "workspace" ? scopeWorkspaceId : null,
+        projectId: scopeType === "project" ? scopeProjectId : null,
+      },
+      composio: {
+        cliEnabled: composioCliEnabled,
+        mcpEnabled: composioMcpEnabled,
+        toolkits: composioToolkits.split(",").map(v => v.trim()).filter(Boolean),
+        tools: composioTools.split(",").map(v => v.trim()).filter(Boolean),
+        mcpConfig: composioMcpEnabled ? {
+          runtime: newAgent.cli || "external",
+          mcpServers: {
+            composio: {
+              command: "composio",
+              args: ["mcp", "start"],
+              env: {
+                COMPOSIO_TOOLKITS: composioToolkits,
+                COMPOSIO_TOOLS: composioTools,
+              },
+            },
+          },
+        } : null,
+      },
+      bootstrap: [
+        "Install the selected runtime CLI and Harbour runner.",
+        "Install or link Composio if enabled: composio login; composio --install-skill composio-cli openclaw",
+        "Poll Harbour with the included agent credentials.",
+        "Fetch resolved Harbour skills before spawning work.",
+      ],
+    }, null, 2);
+  }
+
   if (loading) {
     return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   }
 
-  const showRunnerBanner = agents.some(a => a.type === "harbour") && !agents.some(a => a.type === "harbour" && a.last_polled_at && (Date.now() / 1000 - a.last_polled_at) < 300);
+  const showRunnerBanner = agents.some(a => a.type === "harbour") && !agents.some(a => a.type === "harbour" && a.last_polled_at && nowSeconds > 0 && (nowSeconds - a.last_polled_at) < 300);
 
   return (
     <div className="space-y-6">
@@ -302,6 +385,9 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                     The command contains the agent API key. Treat it like a password. If you add workflow gates to this agent&apos;s jobs, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
                   </p>
                   <DialogFooter>
+                    <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getOrgoPayload()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                      {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied Orgo Payload</> : <><Copy className="h-4 w-4 mr-1.5" /> Orgo Payload</>}
+                    </Button>
                     <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getConnectCommand()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
                       {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
                     </Button>
@@ -314,6 +400,9 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                     <strong>{newAgent.name}</strong> is ready. Create a job for this agent and it will start picking up work automatically.
                   </p>
                   <DialogFooter>
+                    <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getOrgoPayload()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                      {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied Orgo Payload</> : <><Copy className="h-4 w-4 mr-1.5" /> Orgo Payload</>}
+                    </Button>
                     <Button onClick={handleCloseCreate}>Done</Button>
                   </DialogFooter>
                 </div>
@@ -325,6 +414,9 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 </p>
                 <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all select-all max-h-64 overflow-y-auto">{getInviteText()}</div>
                 <DialogFooter>
+                  <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getOrgoPayload()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                    {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied Orgo Payload</> : <><Copy className="h-4 w-4 mr-1.5" /> Orgo Payload</>}
+                  </Button>
                   <Button variant="outline" onClick={handleCopy}>
                     {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Invite</>}
                   </Button>
@@ -414,6 +506,34 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
+              <div className="rounded-md border p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Assignment</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Agents created in Harbour must be assigned to global, workspace, or project scope.</p>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["global", "workspace", "project"] as const).map(scope => (
+                    <button
+                      key={scope}
+                      type="button"
+                      onClick={() => setScopeType(scope)}
+                      className={`rounded-md border px-3 py-2 text-sm capitalize transition-colors ${scopeType === scope ? "border-primary bg-primary/10 text-primary" : "hover:bg-accent"}`}
+                    >
+                      {scope}
+                    </button>
+                  ))}
+                </div>
+                {scopeType === "workspace" && (
+                  <select className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={scopeWorkspaceId} onChange={e => setScopeWorkspaceId(e.target.value)}>
+                    {workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+                  </select>
+                )}
+                {scopeType === "project" && (
+                  <select className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={scopeProjectId} onChange={e => setScopeProjectId(e.target.value)}>
+                    {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                )}
+              </div>
               {agentType === "harbour" && selectedCli && selectedCli !== "none" && CLI_CONFIG[selectedCli] && (
                 <ModelThinkingSelect
                   cli={selectedCli}
@@ -424,6 +544,22 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   defaultThinkingLabel="Default"
                 />
               )}
+              <div className="rounded-md border p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Composio</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Expose Composio CLI/MCP instructions and allowed tools to this agent.</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={composioCliEnabled} onChange={e => setComposioCliEnabled(e.target.checked)} />
+                  Composio CLI
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={composioMcpEnabled} onChange={e => setComposioMcpEnabled(e.target.checked)} />
+                  Composio MCP
+                </label>
+                <Input value={composioToolkits} onChange={e => setComposioToolkits(e.target.value)} placeholder="Allowed toolkits, comma separated: github,gmail,slack" />
+                <Input value={composioTools} onChange={e => setComposioTools(e.target.value)} placeholder="Allowed tool slugs, comma separated" />
+              </div>
               {agentType === "harbour" && (
                 <div className="rounded-md border p-3 space-y-2">
                   <label className="flex items-start gap-2 cursor-pointer">

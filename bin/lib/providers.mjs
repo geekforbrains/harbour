@@ -612,6 +612,51 @@ PROVIDERS.opencode = {
   },
 };
 
+function plainJsonProvider(binaryName, argsForPrompt) {
+  return {
+    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
+      const args = argsForPrompt(prompt, model, sessionId, isNewSession, thinking);
+      return { binary: resolveBinary(binaryName), args, cwd: workingDir };
+    },
+    parseLine(line) {
+      try {
+        const obj = JSON.parse(line);
+        const events = [];
+        const text = obj.text || obj.content || obj.delta || obj.message;
+        if (text) events.push({ event_type: "text_delta", content: String(text) });
+        if (obj.tool || obj.tool_name) events.push({ event_type: "tool_start", content: obj.input ? JSON.stringify(obj.input).slice(0, 200) : null, tool_name: obj.tool || obj.tool_name });
+        if (obj.result || obj.output) events.push({ event_type: "tool_end", content: String(obj.result || obj.output).slice(0, 500), tool_name: obj.tool || obj.tool_name || null });
+        if (obj.session_id || obj.sessionId) return { events, sessionId: obj.session_id || obj.sessionId };
+        return { events };
+      } catch {
+        const trimmed = line.trim();
+        return trimmed ? { events: [{ event_type: "text_delta", content: trimmed + "\n" }] } : { events: [] };
+      }
+    },
+    parseResult(stdout) {
+      return { content: stdout.trim(), sessionId: null };
+    },
+  };
+}
+
+PROVIDERS.openclaw = plainJsonProvider("openclaw", (prompt, model, sessionId, isNewSession, thinking) => {
+  const args = ["run", "--json"];
+  if (model) args.push("--model", model);
+  if (thinking) args.push("--thinking", thinking);
+  if (sessionId && !isNewSession) args.push("--resume", sessionId);
+  args.push("--prompt", prompt);
+  return args;
+});
+
+PROVIDERS.hermes = plainJsonProvider("hermes", (prompt, model, sessionId, isNewSession, thinking) => {
+  const args = ["run", "--json"];
+  if (model) args.push("--model", model);
+  if (thinking) args.push("--thinking", thinking);
+  if (sessionId && !isNewSession) args.push("--resume", sessionId);
+  args.push(prompt);
+  return args;
+});
+
 export function getProvider(cli) {
   const provider = PROVIDERS[cli];
   if (!provider) throw new Error(`Unknown CLI provider: ${cli}`);
@@ -655,6 +700,10 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
         env.PATH = `${workspaceBin}:${env.PATH || ""}`;
       }
     } catch { /* no workspace bin/, ignore */ }
+    const composioDir = path.join(os.homedir(), ".composio");
+    if (fs.existsSync(path.join(composioDir, "composio"))) {
+      env.PATH = `${composioDir}:${env.PATH || ""}`;
+    }
 
     const child = spawn(binary, args, {
       cwd,

@@ -28,6 +28,18 @@ export type SkillRecord = {
   updated_at: number;
 };
 
+type SkillProposalRecord = Omit<SkillRecord, "status"> & {
+  status: "proposed" | "promoted" | "rejected";
+  rejection_reason: string | null;
+};
+
+type AgentScopeRow = {
+  id: string;
+  scope_type: SkillScope | "global" | "workspace" | "project";
+  workspace_id: string | null;
+  project_id: string | null;
+};
+
 type SkillInput = {
   id?: string;
   name: string;
@@ -111,8 +123,8 @@ function parseSkillMarkdown(content: string, fallbackPath?: string): SkillInput 
 }
 
 function parseRegistryYaml(text: string): SkillInput[] {
-  const skillsBlock = text.split(/\nskills:\s*\n/)[1]?.split(/\nbrand_kits:\s*\n/)[0] || "";
-  const chunks = skillsBlock.split(/\n\s*-\s+id:\s+/).slice(1);
+  const skillsBlock = text.split(/\nskills:\s*\n/)[1]?.split(/\nbrand_kits:/)[0] || "";
+  const chunks = skillsBlock.split(/(?:^|\n)\s*-\s+id:\s+/).slice(1);
   return chunks.map((chunk) => {
     const firstLineEnd = chunk.indexOf("\n");
     const id = (firstLineEnd === -1 ? chunk : chunk.slice(0, firstLineEnd)).trim().replace(/^["']|["']$/g, "");
@@ -251,7 +263,7 @@ export function createSkillProposal(input: SkillInput & { content: string }) {
 }
 
 export function getSkillProposal(id: string) {
-  return getDb().prepare(`SELECT * FROM skill_proposals WHERE id = ?`).get(id) as any || null;
+  return getDb().prepare(`SELECT * FROM skill_proposals WHERE id = ?`).get(id) as SkillProposalRecord | undefined || null;
 }
 
 export function listSkillProposals(status?: string) {
@@ -292,6 +304,12 @@ export function rejectSkillProposal(id: string, reason?: string) {
   return getSkillProposal(id);
 }
 
+export function archiveSkill(id: string) {
+  const db = getDb();
+  db.prepare(`UPDATE skills SET status = 'archived', updated_at = unixepoch() WHERE id = ?`).run(id);
+  return getSkill(id);
+}
+
 export function getAgentSkillOverrides(agentId: string) {
   return getDb().prepare(`SELECT skill_id, mode FROM agent_skills WHERE agent_id = ? ORDER BY skill_id`).all(agentId) as { skill_id: string; mode: "include" | "exclude" }[];
 }
@@ -306,9 +324,31 @@ export function setAgentSkillOverrides(agentId: string, overrides: { skillId: st
   return getAgentSkillOverrides(agentId);
 }
 
-export function resolveSkillsForAgent(agentId: string) {
+function decodeList(value: string | null) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return value.split(",").map(v => v.trim()).filter(Boolean);
+  }
+}
+
+function skillMatchesRun(skill: SkillRecord, queryText?: string) {
+  if (skill.scope === "global") return true;
+  if (!queryText?.trim()) return true;
+  const query = queryText.toLowerCase();
+  const signals = [...decodeList(skill.tags), ...decodeList(skill.triggers)];
+  if (signals.length > 0) {
+    return signals.some(signal => query.includes(signal.toLowerCase()));
+  }
+  const fallback = [skill.name, skill.description, skill.digest].filter(Boolean).join("\n").toLowerCase();
+  return fallback.split(/\s+/).some(token => token.length > 4 && query.includes(token));
+}
+
+export function resolveSkillsForAgent(agentId: string, queryText?: string) {
   const db = getDb();
-  const agent = db.prepare(`SELECT id, scope_type, workspace_id, project_id FROM agents WHERE id = ?`).get(agentId) as any;
+  const agent = db.prepare(`SELECT id, scope_type, workspace_id, project_id FROM agents WHERE id = ?`).get(agentId) as AgentScopeRow | undefined;
   if (!agent) return [];
 
   let workspaceId = agent.workspace_id as string | null;
@@ -332,7 +372,12 @@ export function resolveSkillsForAgent(agentId: string) {
   const overrides = getAgentSkillOverrides(agentId);
   const excluded = new Set(overrides.filter(o => o.mode === "exclude").map(o => o.skill_id));
   const included = overrides.filter(o => o.mode === "include").map(o => o.skill_id);
-  const byId = new Map(scoped.filter(s => !excluded.has(s.id)).map(s => [s.id, s]));
+  const byId = new Map(
+    scoped
+      .filter(s => !excluded.has(s.id))
+      .filter(s => skillMatchesRun(s, queryText))
+      .map(s => [s.id, s])
+  );
 
   if (included.length > 0) {
     const placeholders = included.map(() => "?").join(",");
