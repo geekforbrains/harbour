@@ -33,6 +33,7 @@ import {
   addRunActivity,
   listRunActivity,
   getAgentNextRun,
+  getNextWorkflowRun,
   peekAgentNext,
   createDoc,
   getDocById,
@@ -488,6 +489,55 @@ describe("Agent Polling", () => {
     expect(payload!.job.name).toBe("Pending Job");
   });
 
+  it("should schedule a new run for the same job when a previous run is waiting", () => {
+    const job = createJob(agentId, { name: "Support Triage", schedule: '{"every":60}' });
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Support Triage");
+    expect(payload!.run.id).not.toBe(prior!.id);
+    expect(payload!.run.status).toBe("running");
+  });
+
+  it("peek should report available when a due job has a previous waiting run", () => {
+    const job = createJob(agentId, { name: "Peekable Waiting", schedule: '{"every":60}' });
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const peeked = peekAgentNext(agentId);
+    expect(peeked.available).toBe(true);
+    expect(peeked.job_name).toBe("Peekable Waiting");
+  });
+
+  it("should still resume pending before creating a new scheduled run", () => {
+    const job = createJob(agentId, { name: "Resumable", schedule: '{"every":60}' });
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "waiting");
+    updateRunStatus(run!.id, "pending");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.run.id).toBe(run!.id);
+    expect(payload!.run.status).toBe("running");
+    expect(listRunsByJob(job!.id)).toHaveLength(1);
+  });
+
+  it("should keep running runs as a concurrency guard", () => {
+    const job = createJob(agentId, { name: "Busy", schedule: '{"every":60}' });
+    createRun(job!.id, agentId);
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    expect(getAgentNextRun(agentId)).toBeNull();
+    const runs = listRunsByJob(job!.id);
+    expect(runs).toHaveLength(1);
+    expect((runs[0] as any).status).toBe("running");
+  });
+
   it("peek should show available work without claiming", () => {
     const job = createJob(agentId, { name: "Peekable", schedule: '{"every":60}' });
     updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
@@ -508,6 +558,30 @@ describe("Agent Polling", () => {
     const peeked = peekAgentNext(agentId);
     expect(peeked.available).toBe(false);
     expect(peeked.reason).toBe("busy");
+  });
+});
+
+// ===========================================================================
+// Workflow Polling
+// ===========================================================================
+
+describe("Workflow Polling", () => {
+  it("should schedule a new workflow run when a previous workflow run is waiting", () => {
+    const job = createJob(null, {
+      name: "Workflow Triage",
+      schedule: '{"every":60}',
+      workflowCommand: "node triage.js",
+      workflowOnly: true,
+    });
+    const prior = createRun(job!.id, null);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getNextWorkflowRun();
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Workflow Triage");
+    expect(payload!.run.id).not.toBe(prior!.id);
+    expect(payload!.run.status).toBe("running");
   });
 });
 
