@@ -50,6 +50,7 @@ function writeRunner(config) {
     cli: config.cli,
     model: config.model ?? null,
     thinking: config.thinking ?? null,
+    eager: !!config.eager,
     url: config.url,
   };
   if (existing >= 0) {

@@ -64,8 +64,31 @@ const PROVIDERS = {
         "--output-format", "stream-json",
         "--verbose",
         "--include-partial-messages",
-        "--dangerously-skip-permissions",
       ];
+      // If the workspace has a valid .claude/settings.json with a permissions
+      // object, opt into the permission system. Otherwise, fall back to the
+      // legacy unrestricted mode so existing agents keep working without
+      // per-agent config.
+      //
+      // Validate by stat (regular file, not a symlink to /dev/null) and JSON
+      // parse with a permissions object — a corrupt or empty settings file
+      // shouldn't silently switch the agent into a less-protected mode.
+      let hasSettings = false;
+      try {
+        const settingsPath = path.join(workingDir, ".claude", "settings.json");
+        const st = fs.statSync(settingsPath);
+        if (st.isFile() && st.size > 0) {
+          const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+          if (parsed && typeof parsed.permissions === "object") {
+            hasSettings = true;
+          }
+        }
+      } catch {
+        // Missing file, parse error, etc. — fall through to legacy mode.
+      }
+      if (!hasSettings) {
+        args.push("--dangerously-skip-permissions");
+      }
       if (model) args.push("--model", model);
       if (thinking) args.push("--effort", thinking);
       if (isNewSession && sessionId) {
@@ -194,16 +217,18 @@ const PROVIDERS = {
 
   codex: {
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
+      // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
+      // generic config override instead: -c model_reasoning_effort=<level>.
       if (sessionId) {
         const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
         if (model) args.push("-m", model);
-        if (thinking) args.push("--reasoning-effort", thinking);
+        if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
         args.push(sessionId, prompt);
         return { binary: resolveBinary("codex"), args, cwd: workingDir };
       }
       const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
       if (model) args.push("-m", model);
-      if (thinking) args.push("--reasoning-effort", thinking);
+      if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
@@ -304,10 +329,12 @@ const PROVIDERS = {
   },
 
   gemini: {
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
-      const args = ["--prompt", prompt, "--yolo", "-o", "stream-json"];
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
+      // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
+      // by model selection) and requires --skip-trust for headless mode in
+      // non-trusted workspace dirs (otherwise exits code 55).
+      const args = ["--prompt", prompt, "--yolo", "--skip-trust", "-o", "stream-json"];
       if (model) args.push("-m", model);
-      if (thinking) args.push("--thinking", thinking);
       if (sessionId) {
         args.push("--resume", sessionId);
       }
@@ -409,14 +436,26 @@ export function ensureWorkingDir(agentName) {
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal } = {}) {
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
   return new Promise((resolve, reject) => {
-    // Build clean environment: strip Claude Code nesting guards
-    const env = { ...process.env };
+    // Build clean environment: strip Claude Code nesting guards, then layer
+    // run-scoped env vars (decrypted Harbour env vars for this job) on top.
+    // Putting them in the actual process env (not just the prompt) lets the
+    // agent's shell expand `$VARNAME` naturally — needed for `curl -H
+    // "Authorization: Bearer $TOKEN"` and similar patterns.
+    const env = { ...process.env, ...(extraEnv || {}) };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CLAUDE_CODE_SESSION;
     delete env.CLAUDE_CODE_PARENT_SESSION;
+    // If the workspace has a `bin/` directory, prepend it to PATH so per-agent
+    // wrapper scripts (e.g. auth-curl shims) resolve as bare command names.
+    try {
+      const workspaceBin = path.join(cwd, "bin");
+      if (fs.statSync(workspaceBin).isDirectory()) {
+        env.PATH = `${workspaceBin}:${env.PATH || ""}`;
+      }
+    } catch { /* no workspace bin/, ignore */ }
 
     const child = spawn(binary, args, {
       cwd,

@@ -55,3 +55,6 @@ harbour.db-shm
 .claude/worktrees/
 data/
 data-remote/
+
+# security audit (working doc, not for distribution)
+AUDIT.md

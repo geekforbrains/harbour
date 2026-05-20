@@ -32,7 +32,10 @@ import {
   listRecentRuns,
   addRunActivity,
   listRunActivity,
+  addRunOutput,
+  listRunOutput,
   getAgentNextRun,
+  getNextWorkflowRun,
   peekAgentNext,
   createDoc,
   getDocById,
@@ -56,6 +59,7 @@ import {
   triggerJobRun,
   listScheduledRuns,
   listRunningRuns,
+  createOneOffRun,
 } from "@/lib/db/queries";
 
 // ---------------------------------------------------------------------------
@@ -191,6 +195,54 @@ describe("Agent Management", () => {
     expect(getAgentById(id).last_polled_at).toBeNull();
     touchAgentPolled(id);
     expect(getAgentById(id).last_polled_at).not.toBeNull();
+  });
+
+  it("should default eager to false on create", () => {
+    const agent = createAgent("e1", undefined, { type: "harbour", cli: "claude-code" });
+    expect(agent.eager).toBe(false);
+    expect(getAgentById(agent.id).eager).toBe(0);
+  });
+
+  it("should create a harbour agent with eager=true", () => {
+    const agent = createAgent("e2", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    expect(agent.eager).toBe(true);
+    expect(getAgentById(agent.id).eager).toBe(1);
+  });
+
+  it("should toggle eager on update", () => {
+    const { id } = createAgent("e3", undefined, { type: "harbour", cli: "claude-code" });
+    expect(getAgentById(id).eager).toBe(0);
+    updateAgent(id, { eager: true });
+    expect(getAgentById(id).eager).toBe(1);
+    updateAgent(id, { eager: false });
+    expect(getAgentById(id).eager).toBe(0);
+  });
+
+  it("should preserve eager when other fields are updated", () => {
+    const { id } = createAgent("e4", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    updateAgent(id, { name: "renamed" });
+    const after = getAgentById(id);
+    expect(after.name).toBe("renamed");
+    expect(after.eager).toBe(1);
+  });
+
+  it("should expose eager in listAgents", () => {
+    createAgent("e5", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    const list = listAgents();
+    const e5 = list.find((a: any) => a.name === "e5") as any;
+    expect(e5).toBeDefined();
+    expect(e5.eager).toBe(1);
+  });
+
+  it("should be idempotent under repeated initializeSchema calls", () => {
+    // Re-running initializeSchema should not re-add the eager column or fail
+    const db = getDb();
+    expect(() => initializeSchema(db)).not.toThrow();
+    expect(() => initializeSchema(db)).not.toThrow();
+    const cols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
+    const eagerCols = cols.filter(c => c.name === "eager");
+    expect(eagerCols).toHaveLength(1);
+    expect(eagerCols[0].dflt_value).toBe("0");
   });
 });
 
@@ -372,6 +424,40 @@ describe("Activity Log", () => {
     expect((activity[1] as any).author_type).toBe("user");
     expect((activity[2] as any).author_type).toBe("system");
   });
+
+  it("redacts Harbour and Bearer tokens from activity", () => {
+    const agentId = seedAgent().id;
+    const jobId = seedJob(agentId)!.id;
+    const run = createRun(jobId, agentId);
+
+    addRunActivity(run!.id, "agent", agentId, "test-bot", "curl -H 'Authorization: Bearer hbr_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'");
+
+    const activity = listRunActivity(run!.id);
+    expect((activity[0] as any).content).toContain("Bearer [REDACTED_TOKEN]");
+    expect((activity[0] as any).content).not.toContain("hbr_123456");
+  });
+});
+
+// ===========================================================================
+// Run Output
+// ===========================================================================
+
+describe("Run Output", () => {
+  it("redacts tokens from streamed tool output", () => {
+    const agentId = seedAgent().id;
+    const jobId = seedJob(agentId)!.id;
+    const run = createRun(jobId, agentId);
+
+    addRunOutput(run!.id, [{
+      event_type: "tool_start",
+      tool_name: "shell",
+      content: "curl -H \"Authorization: Bearer hbr_adm_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\" http://localhost",
+    }]);
+
+    const output = listRunOutput(run!.id);
+    expect(output[0].content).toContain("Bearer [REDACTED_TOKEN]");
+    expect(output[0].content).not.toContain("hbr_adm_123456");
+  });
 });
 
 // ===========================================================================
@@ -439,6 +525,55 @@ describe("Agent Polling", () => {
     expect(payload!.job.name).toBe("Pending Job");
   });
 
+  it("should schedule a new run for the same job when a previous run is waiting", () => {
+    const job = createJob(agentId, { name: "Support Triage", schedule: '{"every":60}' });
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Support Triage");
+    expect(payload!.run.id).not.toBe(prior!.id);
+    expect(payload!.run.status).toBe("running");
+  });
+
+  it("peek should report available when a due job has a previous waiting run", () => {
+    const job = createJob(agentId, { name: "Peekable Waiting", schedule: '{"every":60}' });
+    const prior = createRun(job!.id, agentId);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const peeked = peekAgentNext(agentId);
+    expect(peeked.available).toBe(true);
+    expect(peeked.job_name).toBe("Peekable Waiting");
+  });
+
+  it("should still resume pending before creating a new scheduled run", () => {
+    const job = createJob(agentId, { name: "Resumable", schedule: '{"every":60}' });
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "waiting");
+    updateRunStatus(run!.id, "pending");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.run.id).toBe(run!.id);
+    expect(payload!.run.status).toBe("running");
+    expect(listRunsByJob(job!.id)).toHaveLength(1);
+  });
+
+  it("should keep running runs as a concurrency guard", () => {
+    const job = createJob(agentId, { name: "Busy", schedule: '{"every":60}' });
+    createRun(job!.id, agentId);
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    expect(getAgentNextRun(agentId)).toBeNull();
+    const runs = listRunsByJob(job!.id);
+    expect(runs).toHaveLength(1);
+    expect((runs[0] as any).status).toBe("running");
+  });
+
   it("peek should show available work without claiming", () => {
     const job = createJob(agentId, { name: "Peekable", schedule: '{"every":60}' });
     updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
@@ -459,6 +594,30 @@ describe("Agent Polling", () => {
     const peeked = peekAgentNext(agentId);
     expect(peeked.available).toBe(false);
     expect(peeked.reason).toBe("busy");
+  });
+});
+
+// ===========================================================================
+// Workflow Polling
+// ===========================================================================
+
+describe("Workflow Polling", () => {
+  it("should schedule a new workflow run when a previous workflow run is waiting", () => {
+    const job = createJob(null, {
+      name: "Workflow Triage",
+      schedule: '{"every":60}',
+      workflowCommand: "node triage.js",
+      workflowOnly: true,
+    });
+    const prior = createRun(job!.id, null);
+    updateRunStatus(prior!.id, "waiting");
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getNextWorkflowRun();
+    expect(payload).not.toBeNull();
+    expect(payload!.job.name).toBe("Workflow Triage");
+    expect(payload!.run.id).not.toBe(prior!.id);
+    expect(payload!.run.status).toBe("running");
   });
 });
 
@@ -760,10 +919,51 @@ describe("/next Payload", () => {
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
     expect(payload!.job.name).toBe("Full Job");
-    expect(payload!.job.instructions).toBe("Do everything");
+    expect(payload!.job.instructions).toContain("Do everything");
     expect(payload!.docs).toHaveLength(1);
     expect((payload!.docs[0] as any).title).toBe("Brand Guide");
     expect(payload!.data.history).toHaveLength(1);
+  });
+
+  it("should expose agent.eager=false on the payload by default", () => {
+    const agentId = seedAgent().id;
+    const job = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect((payload as any).agent).toBeDefined();
+    expect((payload as any).agent.eager).toBe(false);
+  });
+
+  it("should expose agent.eager=true on the payload when set", () => {
+    const { id: agentId } = createAgent("eager-bot", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    const job = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect((payload as any).agent.eager).toBe(true);
+  });
+
+  it("should reflect live eager toggle changes (no payload caching)", () => {
+    const { id: agentId } = createAgent("toggle-bot", undefined, { type: "harbour", cli: "claude-code" });
+    const job1 = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job1!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    let payload = getAgentNextRun(agentId);
+    expect((payload as any).agent.eager).toBe(false);
+
+    // Mark the run as done so the next poll picks up another job
+    updateRunStatus(payload!.run.id, "done");
+
+    // Toggle eager + queue another job
+    updateAgent(agentId, { eager: true });
+    const job2 = createJob(agentId, { name: "J2", schedule: '{"every":1}' });
+    updateJob(job2!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    payload = getAgentNextRun(agentId);
+    expect((payload as any).agent.eager).toBe(true);
   });
 });
 
@@ -832,7 +1032,109 @@ describe("Trigger Job Run", () => {
 
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
-    expect(payload!.job.instructions).toBe("Only these instructions");
+    expect(payload!.job.instructions).toContain("Only these instructions");
+  });
+});
+
+// ===========================================================================
+// Run Titles
+// ===========================================================================
+
+import { setRunTitle } from "@/lib/db/queries";
+import { normalizeTitle, defaultRunTitle, MAX_TITLE_LENGTH } from "@/lib/run-title";
+
+describe("Run Titles", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("populates a placeholder title on createRun", () => {
+    const job = seedJob(agentId, "Daily Standup");
+    const run = createRun(job!.id, agentId);
+    expect((run as any).title).toMatch(/^Daily Standup · \d{1,2}:\d{2}(am|pm)$/);
+  });
+
+  it("populates a placeholder title on triggerJobRun", () => {
+    const job = seedJob(agentId, "Triage");
+    const triggered = triggerJobRun(job!.id);
+    expect(triggered).not.toBeNull();
+    const run = getRunById(triggered!.runId);
+    expect((run as any).title).toMatch(/^Triage · /);
+  });
+
+  it("populates a placeholder title on one-off runs", () => {
+    const { runId } = createOneOffRun(agentId, { name: "Ad hoc analysis" });
+    const run = getRunById(runId);
+    expect((run as any).title).toMatch(/^Ad hoc analysis · /);
+  });
+
+  it("setRunTitle overwrites the placeholder", () => {
+    const job = seedJob(agentId, "Dev");
+    const run = createRun(job!.id, agentId);
+    const updated = setRunTitle(run!.id, "Issue #1234 — Fix login redirect");
+    expect((updated as any).title).toBe("Issue #1234 — Fix login redirect");
+  });
+
+  it("setRunTitle returns null when the run does not exist", () => {
+    expect(setRunTitle("nonexistent-id", "x")).toBeNull();
+  });
+
+  it("normalizeTitle trims, collapses whitespace, and enforces max length", () => {
+    expect(normalizeTitle("  hello   world  ")).toBe("hello world");
+    expect(normalizeTitle("")).toBeNull();
+    expect(normalizeTitle("   ")).toBeNull();
+    expect(normalizeTitle(undefined)).toBeNull();
+    expect(normalizeTitle(123)).toBeNull();
+    const long = "x".repeat(120);
+    expect(normalizeTitle(long)?.length).toBe(MAX_TITLE_LENGTH);
+  });
+
+  it("defaultRunTitle uses the supplied timezone", () => {
+    // Pick a UTC timestamp where the hour will differ across timezones
+    const ts = Math.floor(Date.UTC(2024, 0, 1, 18, 30) / 1000);
+    const utc = defaultRunTitle("Job", ts, "UTC");
+    const ny = defaultRunTitle("Job", ts, "America/New_York");
+    expect(utc).toContain("6:30pm");
+    expect(ny).toContain("1:30pm");
+  });
+});
+
+describe("Run Title in /next payload", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("injects a title-setting preamble for agent runs", () => {
+    const job = createJob(agentId, { name: "J", instructions: "Do X", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.instructions).toContain("set a short title");
+    expect(payload!.job.instructions).toContain("Do X");
+  });
+
+  it("includes job.title_format when set", () => {
+    const job = createJob(agentId, {
+      name: "Dev",
+      instructions: "fix bugs",
+      schedule: '{"every":1}',
+      titleFormat: 'Issue #XXX — short summary',
+    });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect(payload!.job.instructions).toContain("Format guide: Issue #XXX — short summary");
+    expect((payload!.job as any).title_format).toBe("Issue #XXX — short summary");
+  });
+
+  it("exposes the run title on the payload", () => {
+    const job = createJob(agentId, { name: "Test Job", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+    const payload = getAgentNextRun(agentId);
+    expect((payload!.run as any).title).toMatch(/^Test Job · /);
   });
 });
 

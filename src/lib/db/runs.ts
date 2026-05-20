@@ -3,14 +3,17 @@ import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
+import { defaultRunTitle } from "../run-title";
 
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
+  const job = db.prepare(`SELECT name FROM jobs WHERE id = ?`).get(jobId) as { name: string } | undefined;
+  const title = job ? defaultRunTitle(job.name, Math.floor(Date.now() / 1000)) : null;
   db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, claimed_at)
-    VALUES (?, ?, ?, 'running', unixepoch())
-  `).run(id, jobId, agentId || null);
+    INSERT INTO runs (id, job_id, agent_id, status, claimed_at, title)
+    VALUES (?, ?, ?, 'running', unixepoch(), ?)
+  `).run(id, jobId, agentId || null, title);
   return getRunById(id);
 }
 
@@ -78,6 +81,15 @@ export function requestKillRun(id: string): boolean {
   return true;
 }
 
+export function setRunTitle(id: string, title: string) {
+  const db = getDb();
+  const result = db.prepare(
+    `UPDATE runs SET title = ?, updated_at = unixepoch() WHERE id = ?`
+  ).run(title, id);
+  if (result.changes === 0) return null;
+  return getRunById(id);
+}
+
 export function updateRunSessionId(id: string, sessionId: string, cwd?: string) {
   const db = getDb();
   if (cwd) {
@@ -99,26 +111,38 @@ export function deleteRun(id: string) {
   deleteRunAttachmentsDir(id);
 }
 
-export function listRunsByJob(jobId: string, limit = 50) {
+export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.job_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(jobId, limit);
+    WHERE r.job_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(jobId, limit, offset);
 }
 
-export function listRunsByAgent(agentId: string, limit = 50) {
+export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.agent_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(agentId, limit);
+    WHERE r.agent_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(agentId, limit, offset);
 }
 
 export function listScheduledRuns(projectId?: string) {
@@ -164,13 +188,88 @@ export function listRecentRuns(limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed') ${projectFilter}
+    WHERE r.status IN ('done', 'failed', 'killed') ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `).all(...(projectId ? [projectId, limit] : [limit]));
+}
+
+const ALL_STATUSES = ["scheduled", "running", "waiting", "pending", "done", "failed", "killed", "skipped"] as const;
+type RunStatus = (typeof ALL_STATUSES)[number];
+
+export type RunsHistoryFilters = {
+  statuses?: RunStatus[];        // omit/empty → all except 'skipped' (use includeSkipped to opt in)
+  includeSkipped?: boolean;      // only meaningful if statuses is omitted
+  agentId?: string;
+  jobId?: string;
+  projectId?: string;
+  from?: number;                 // unix seconds (inclusive)
+  to?: number;                   // unix seconds (inclusive)
+  sort?: "newest" | "oldest";
+};
+
+export function listRunsHistory(filters: RunsHistoryFilters = {}, limit = 25, offset = 0) {
+  const db = getDb();
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+
+  // Status filter: validate against allowed set; default excludes 'skipped'
+  let statuses = filters.statuses?.filter((s): s is RunStatus => (ALL_STATUSES as readonly string[]).includes(s)) ?? [];
+  if (statuses.length === 0) {
+    statuses = ALL_STATUSES.filter(s => filters.includeSkipped || s !== "skipped");
+  }
+  where.push(`r.status IN (${statuses.map(() => "?").join(",")})`);
+  params.push(...statuses);
+
+  if (filters.agentId) {
+    where.push(`r.agent_id = ?`);
+    params.push(filters.agentId);
+  }
+  if (filters.jobId) {
+    where.push(`r.job_id = ?`);
+    params.push(filters.jobId);
+  }
+  if (filters.projectId) {
+    where.push(`r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)`);
+    params.push(filters.projectId);
+  }
+  // Time window matches the column we sort on so the filter feels predictable.
+  if (filters.from != null) {
+    where.push(`COALESCE(r.completed_at, r.created_at) >= ?`);
+    params.push(filters.from);
+  }
+  if (filters.to != null) {
+    where.push(`COALESCE(r.completed_at, r.created_at) <= ?`);
+    params.push(filters.to);
+  }
+
+  const order = filters.sort === "oldest" ? "ASC" : "DESC";
+  const safeLimit = Math.min(Math.max(1, limit | 0), 200);
+  const safeOffset = Math.max(0, offset | 0);
+
+  const rows = db.prepare(`
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE ${where.join(" AND ")}
+    ORDER BY COALESCE(r.completed_at, r.created_at) ${order}, r.created_at ${order}
+    LIMIT ? OFFSET ?
+  `).all(...params, safeLimit + 1, safeOffset) as any[];
+
+  const hasMore = rows.length > safeLimit;
+  return { runs: hasMore ? rows.slice(0, safeLimit) : rows, hasMore };
+}
+
+function redactSensitiveContent(content: string): string {
+  return content
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [REDACTED_TOKEN]")
+    .replace(/\bhbr_(?:adm_)?[A-Za-z0-9]+\b/g, "[REDACTED_HARBOUR_KEY]");
 }
 
 // Activity log
@@ -178,12 +277,13 @@ export function listRecentRuns(limit = 10, projectId?: string) {
 export function addRunActivity(runId: string, authorType: string, authorId: string | null, authorName: string, content: string) {
   const db = getDb();
   const id = uuid();
+  const safeContent = redactSensitiveContent(content);
   db.prepare(`
     INSERT INTO run_activity (id, run_id, author_type, author_id, author_name, content)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, runId, authorType, authorId, authorName, content);
+  `).run(id, runId, authorType, authorId, authorName, safeContent);
   db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
-  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content, created_at: Math.floor(Date.now() / 1000) };
+  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content: safeContent, created_at: Math.floor(Date.now() / 1000) };
 }
 
 export function listRunActivity(runId: string) {
@@ -210,7 +310,7 @@ export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id
   `);
   const insertMany = db.transaction((evts: typeof events) => {
     for (const e of evts) {
-      stmt.run(runId, e.event_type, e.content || null, e.tool_name || null);
+      stmt.run(runId, e.event_type, e.content ? redactSensitiveContent(e.content) : null, e.tool_name || null);
     }
   });
   insertMany(events);
@@ -302,7 +402,7 @@ export function getAgentNextRun(agentId: string) {
       WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
     `).get(agentId, now) as any;
@@ -364,7 +464,7 @@ export function getNextWorkflowRun() {
       AND j.workflow_only = 1 AND j.workflow_command IS NOT NULL
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
     `).get(now) as any;
@@ -423,7 +523,7 @@ export function peekAgentNext(agentId: string) {
     SELECT j.id, j.name FROM jobs j
     WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-    AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending'))
+    AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending'))
     ORDER BY j.next_run_at ASC LIMIT 1
   `).get(agentId, now) as any;
 
@@ -480,8 +580,28 @@ function buildRunPayload(runId: string) {
       : run.extra_instructions;
   }
 
+  // Prepend the title-setting preamble for agent runs. Workflow-only runs
+  // have no LLM and can't honor it. The preamble references the resolved
+  // `set_title` endpoint that the route adds to the api section below.
+  if (run.agent_id) {
+    const formatHint = job.title_format
+      ? `Format guide: ${job.title_format}`
+      : `Use a short sentence summarizing what this run is doing.`;
+    const preamble =
+      `Before doing anything else, set a short title for this run via the ` +
+      `\`set_title\` endpoint in the \`api\` section (max 80 chars). ${formatHint}`;
+    instructions = instructions ? `${preamble}\n\n---\n\n${instructions}` : preamble;
+  }
+
+  // Agent runtime config (eager) — read live so remote runners pick up
+  // dashboard toggles without reconnecting.
+  const agentRow = run.agent_id
+    ? db.prepare(`SELECT eager FROM agents WHERE id = ?`).get(run.agent_id) as { eager: number } | undefined
+    : undefined;
+  const agent = agentRow ? { eager: !!agentRow.eager } : undefined;
+
   return {
-    run: { id: run.id, status: run.status, activity: run.activity },
+    run: { id: run.id, status: run.status, title: run.title || null, activity: run.activity },
     job: {
       id: job.id,
       name: job.name,
@@ -490,12 +610,13 @@ function buildRunPayload(runId: string) {
       workflow_only: !!job.workflow_only,
       model: job.model || null,
       thinking: job.thinking || null,
+      title_format: job.title_format || null,
       timeout_minutes: job.timeout_minutes ?? 30,
     },
+    ...(agent ? { agent } : {}),
     docs,
     data,
     env,
     attachments,
   };
 }
-

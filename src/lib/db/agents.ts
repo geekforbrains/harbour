@@ -11,7 +11,7 @@ function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
-export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean }) {
+export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean; eager?: boolean }) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateApiKey();
@@ -21,10 +21,11 @@ export function createAgent(name: string, description?: string, opts?: { type?: 
   const model = opts?.model || null;
   const thinking = opts?.thinking || null;
   const remote = opts?.remote ? 1 : 0;
+  const eager = opts?.eager ? 1 : 0;
   db.prepare(
-    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote);
-  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote };
+    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote, eager) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote, eager);
+  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote, eager: !!eager };
 }
 
 export function authenticateAgent(apiKey: string) {
@@ -44,14 +45,14 @@ export function rotateAgentKey(agentId: string) {
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
+  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, eager, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
 }
 
 export function listAgents(projectId?: string) {
   const db = getDb();
   if (projectId) {
     return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.last_polled_at, a.created_at,
+      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
         (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -62,7 +63,7 @@ export function listAgents(projectId?: string) {
     `).all(projectId);
   }
   return db.prepare(`
-    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.last_polled_at, a.created_at,
+    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -71,7 +72,7 @@ export function listAgents(projectId?: string) {
   `).all();
 }
 
-export function updateAgent(id: string, data: { name?: string; description?: string; cli?: string; model?: string; thinking?: string }) {
+export function updateAgent(id: string, data: { name?: string; description?: string; cli?: string; model?: string; thinking?: string; eager?: boolean }) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
@@ -80,6 +81,7 @@ export function updateAgent(id: string, data: { name?: string; description?: str
   if (data.cli !== undefined) { fields.push("cli = ?"); values.push(data.cli); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
+  if (data.eager !== undefined) { fields.push("eager = ?"); values.push(data.eager ? 1 : 0); }
   if (fields.length === 0) return getAgentById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);

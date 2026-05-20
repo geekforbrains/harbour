@@ -5,7 +5,6 @@
 
 import path from "path";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _providers: any = null;
 
 async function getProviders() {

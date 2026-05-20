@@ -8,6 +8,7 @@ export type RunnerConfig = {
   cli: string;
   model: string | null;
   thinking: string | null;
+  eager?: boolean;
   url: string;
 };
 

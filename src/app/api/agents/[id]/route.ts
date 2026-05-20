@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { getAgentById, updateAgent, deleteAgent } from "@/lib/db/queries";
 import { removeRunnerConfig, loadRunners, saveRunnerConfig } from "@/lib/runners";
@@ -18,13 +18,14 @@ export const PUT = withAuth(async (req, auth, { params }) => {
   const body = await req.json();
   const updated = updateAgent(id, body);
 
-  // Sync runner config if this is a harbour agent and model/name/thinking changed
-  if (existing.type === "harbour" && (body.model !== undefined || body.name !== undefined || body.thinking !== undefined)) {
+  // Sync runner config if this is a harbour agent and any synced field changed
+  if (existing.type === "harbour" && (body.model !== undefined || body.name !== undefined || body.thinking !== undefined || body.eager !== undefined)) {
     const runner = loadRunners().find(r => r.agentId === id);
     if (runner) {
       if (body.model !== undefined) runner.model = body.model;
       if (body.name !== undefined) runner.name = body.name;
       if (body.thinking !== undefined) runner.thinking = body.thinking || null;
+      if (body.eager !== undefined) runner.eager = !!body.eager;
       saveRunnerConfig(runner);
     }
   }

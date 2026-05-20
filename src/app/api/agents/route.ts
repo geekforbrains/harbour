@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAgents, createAgent } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
@@ -10,7 +10,7 @@ export const GET = withAuth(async (req) => {
 
 export const POST = withUserAuth(async (req) => {
   const body = await req.json();
-  const { name, description, type, cli, model, thinking, remote } = body;
+  const { name, description, type, cli, model, thinking, remote, eager } = body;
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
@@ -20,7 +20,7 @@ export const POST = withUserAuth(async (req) => {
     }
   }
 
-  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking, remote: !!remote } : undefined);
+  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking, remote: !!remote, eager: !!eager } : undefined);
 
   // For harbour agents running on the same machine as the server, save runner
   // config locally so the CLI can poll. Remote agents are expected to be
@@ -34,6 +34,7 @@ export const POST = withUserAuth(async (req) => {
       cli: cli,
       model: model || null,
       thinking: thinking || null,
+      eager: !!eager,
       url: baseUrl,
     });
   }

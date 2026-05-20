@@ -90,14 +90,19 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   "run": {
     "id": "uuid",
     "status": "running",
+    "title": "Morning Tweet · 9:00am",
     "activity": [...]
   },
   "job": {
     "id": "uuid",
     "name": "Morning Tweet",
-    "instructions": "Write an engaging tweet about...",
+    "instructions": "Before doing anything else, set a short title ...\n\n---\n\nWrite an engaging tweet about...",
+    "workflow": null,
+    "workflow_only": false,
     "model": null,
-    "thinking": null
+    "thinking": null,
+    "title_format": null,
+    "timeout_minutes": 30
   },
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
@@ -112,20 +117,26 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   },
   "attachments": [
     {
-      "id": "uuid", "kind": "file",
+      "id": "uuid", "run_id": "uuid", "activity_id": null, "kind": "file",
       "filename": "screenshot.png", "mime_type": "image/png", "size_bytes": 124000,
       "url": "https://your-harbour.example.com/api/runs/<run_id>/attachments/<id>/file",
-      "title": null, "uploaded_by_type": "user", "uploaded_by_name": "Gavin"
+      "embed_provider": null, "title": null,
+      "uploaded_by_type": "user", "uploaded_by_name": "Gavin",
+      "created_at": 1700000000
     },
     {
-      "id": "uuid", "kind": "embed", "embed_provider": "loom",
-      "url": "https://www.loom.com/share/...", "title": "Walkthrough",
-      "uploaded_by_type": "user", "uploaded_by_name": "Gavin"
+      "id": "uuid", "run_id": "uuid", "activity_id": null, "kind": "embed",
+      "filename": null, "mime_type": null, "size_bytes": null,
+      "url": "https://www.loom.com/share/...", "embed_provider": "loom",
+      "title": "Walkthrough",
+      "uploaded_by_type": "user", "uploaded_by_name": "Gavin",
+      "created_at": 1700000000
     }
   ],
   "api": {
     "base_url": "https://your-harbour.example.com",
     "endpoints": {
+      "set_title": "PUT https://your-harbour.example.com/api/runs/<run_id>/title",
       "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
       "post_activity": "POST https://your-harbour.example.com/api/runs/<run_id>/activity",
       "upload_attachment": "POST https://your-harbour.example.com/api/runs/<run_id>/attachments",
@@ -138,6 +149,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     },
     "status_options": ["done", "failed", "waiting"],
     "notes": [
+      "Set a short run title via set_title before doing anything else — this is how humans identify the run on the dashboard.",
       "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
       "Post activity messages to log progress — these are visible on the dashboard.",
       "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
@@ -151,7 +163,7 @@ Everything the agent needs is bundled in one response: the run, job instructions
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
-The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the same Bearer token. Embeds carry the source URL (Loom, YouTube, Vimeo) — humans see these as inline iframes on the dashboard.
+The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the same Bearer token. Embeds carry the source URL — recognised providers (`loom`, `youtube`, `vimeo`) render as inline players on the dashboard; anything else is recorded with `embed_provider: "generic"` and shown as a link.
 
 ### Peek (Read-Only Check)
 
@@ -159,9 +171,28 @@ The `attachments` field is the list of files and URL embeds attached to the run.
 GET /api/agents/:id/next?peek=true
 ```
 
-Check if work is available without claiming anything. Useful for cron guards.
+Check if work is available without claiming anything. Useful for cron guards. Returns one of:
+
+- `{"available": false, "reason": "busy"}` — agent already has a `running` run
+- `{"available": false, "reason": "nothing_to_do"}` — no work
+- `{"available": true, "type": "pending_resume", "run_id": "...", "job_name": "..."}` — a `pending` run is ready to resume
+- `{"available": true, "type": "scheduled_run", "run_id": "...", "job_name": "..."}` — a one-off scheduled run is due
+- `{"available": true, "type": "scheduled", "job_id": "...", "job_name": "..."}` — a recurring job is due (run will be created on the next non-peek call)
 
 ## Run Lifecycle
+
+### Set Title
+
+```
+PUT /api/runs/:id/title
+Content-Type: application/json
+
+{ "title": "Issue #1234 — Fix login redirect" }
+```
+
+Each run carries a short human-readable title displayed on the dashboard. Harbour seeds a placeholder (the job name plus the time it fired); you should overwrite it **as the first action on every run** so the title reflects what you actually do.
+
+The `/next` payload prepends a short instruction telling you to do this, and the `api.endpoints.set_title` field gives you the resolved URL. If the job sets a `title_format` (e.g. `"Issue #XXX — short summary"`), follow it; otherwise use a short sentence summarizing the run. Titles are trimmed and capped at 80 characters server-side.
 
 ### Update Status
 
@@ -172,18 +203,20 @@ Content-Type: application/json
 { "status": "waiting" }
 ```
 
-Valid statuses:
-- `scheduled` — created from dashboard, waiting to be picked up
+Valid statuses (the API accepts any of these in the body):
 - `running` — agent is actively working
 - `waiting` — agent needs human input (surfaces on dashboard)
-- `pending` — human has responded, queued for agent pickup (set automatically when a human responds to a waiting run)
+- `pending` — human has responded, queued for agent pickup (also set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run)
 - `done` — completed successfully
 - `failed` — something broke (or timed out)
 - `skipped` — workflow determined nothing to do (exit code 77)
+- `killed` — set by the harbour-agent runner when a kill request was honored; not used by external agents
+
+`scheduled` is a server-managed status (assigned when a run is created from the dashboard or via `POST /api/jobs/:id/trigger`) and cannot be set by an agent.
 
 When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
 
-**Retrying:** Failed and skipped runs can be retried from the dashboard via `POST /api/runs/:id/retry`. The run goes back to `pending` with a system activity note, and the agent picks it up on next poll.
+**Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. The run goes back to `pending` with a system activity note, and the agent picks it up on next poll.
 
 **Timeouts:** Each job has a configurable `timeout_minutes` (default 30). If a run stays in `running` status longer than the timeout with no activity updates, it is automatically failed on the next poll with a system message. This prevents stuck runs from blocking the agent.
 
@@ -196,13 +229,13 @@ Content-Type: application/json
 { "content": "Found 3 new mentions. Processing...", "attachment_ids": ["uuid", ...] }
 ```
 
-Activity entries support markdown. They form the visible record of what happened during the run.
+Activity entries support markdown. They form the visible record of what happened during the run. Returns the created entry with HTTP 201.
 
-`attachment_ids` is optional. To attach files or embeds to a comment, upload them first via `POST /api/runs/:id/attachments`, then pass the returned ids in this field. Comments may have empty `content` if they only carry attachments.
+`attachment_ids` is optional. To attach files or embeds to a comment, upload them first via `POST /api/runs/:id/attachments`, then pass the returned ids in this field. Comments may have empty `content` if they only carry attachments — but a comment with neither `content` nor `attachment_ids` is rejected with 400.
 
 ### Attachments
 
-Attach files (screenshots, PDFs, exports) or video URL embeds (Loom, YouTube, Vimeo) to a run. Both kinds appear in the activity thread on the dashboard and in the `attachments` array of `/next`.
+Attach files (screenshots, PDFs, exports) or URL embeds (Loom, YouTube, Vimeo, or generic links) to a run. Both kinds appear in the activity thread on the dashboard and in the `attachments` array of `/next`.
 
 **Upload a file (multipart/form-data):**
 
@@ -218,7 +251,7 @@ Content-Type: image/png
 --boundary--
 ```
 
-Multiple `file` parts in one request are supported. Per-file limit is set by `HARBOUR_MAX_UPLOAD_MB` (default 100MB). Returns an array of attachment records.
+Multiple `file` parts in one request are supported. Per-file limit is set by `HARBOUR_MAX_UPLOAD_MB` (default 500MB); files larger than the cap fail with HTTP 413. Returns an array of attachment records.
 
 **Attach an embed URL (JSON):**
 
@@ -229,7 +262,7 @@ Content-Type: application/json
 { "url": "https://www.loom.com/share/abc123", "title": "Walkthrough" }
 ```
 
-The provider (`loom`, `youtube`, `vimeo`, `generic`) is detected from the URL.
+`title` is optional. The provider (`loom`, `youtube`, `vimeo`, `generic`) is detected from the URL — only well-formed URLs are accepted (returns 400 otherwise). Returns a single attachment record (201).
 
 **List attachments:** `GET /api/runs/:id/attachments`
 **Delete an attachment:** `DELETE /api/runs/:id/attachments/:aid`
@@ -289,6 +322,8 @@ GET /api/databases/:id/rows?limit=50&offset=0&orderBy=date&order=DESC
 ```
 
 Returns `{ rows: [...], total: 100, limit: 50, offset: 0 }`.
+
+All query params are optional. Defaults: `limit=100`, `offset=0`, `order=DESC`, sorted by `rowid` descending when `orderBy` is omitted. `orderBy` must reference a real column or the request fails with 400.
 
 ### Update a Row
 

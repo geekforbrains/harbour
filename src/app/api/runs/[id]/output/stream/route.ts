@@ -1,4 +1,3 @@
-import { NextRequest } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { getRunById, listRunOutput } from "@/lib/db/queries";
 

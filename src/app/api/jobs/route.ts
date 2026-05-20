@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAllJobs, createJob } from "@/lib/db/queries";
-import { isValidSchedule } from "@/lib/schedule";
+import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
@@ -15,13 +15,14 @@ export const POST = withUserAuth(async (req) => {
   if (!name || !schedule || !workflowCommand) {
     return NextResponse.json({ error: "name, schedule, and workflowCommand are required" }, { status: 400 });
   }
-  if (!isValidSchedule(schedule)) {
+  const normalized = normalizeSchedule(schedule);
+  if (!normalized) {
     return NextResponse.json({ error: "Invalid schedule format. Use {\"every\":N} for intervals or {\"days\":[0-6],\"time\":\"HH:MM\"} for weekly." }, { status: 400 });
   }
   const job = createJob(null, {
     name,
     description,
-    schedule,
+    schedule: normalized,
     workflowCommand,
     workflowOnly: true,
     docIds,

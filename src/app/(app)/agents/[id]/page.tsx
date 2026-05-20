@@ -24,7 +24,7 @@ import { RunStatusIcon } from "@/components/app/run-status";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
-type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; last_polled_at: number | null; created_at: number };
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -53,20 +53,11 @@ export default function AgentDetailPage() {
     refetchInterval: 5000,
   });
 
-  const { data: waitingData = [] } = useQuery({
-    queryKey: ["runs", "waiting"],
+  const { data: agentRunsData = [] } = useQuery({
+    queryKey: ["agents", id, "runs"],
     queryFn: async () => {
-      const res = await fetch("/api/runs?filter=waiting");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
-
-  const { data: recentData = [] } = useQuery({
-    queryKey: ["runs", "recent"],
-    queryFn: async () => {
-      const res = await fetch("/api/runs?filter=recent");
+      // Pull enough that all waiting/pending are likely covered and we have a recent feed.
+      const res = await fetch(`/api/agents/${id}/runs?limit=50`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -75,10 +66,12 @@ export default function AgentDetailPage() {
 
   const agent: Agent | null = agentData ?? null;
   const loading = agentLoading;
-  const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: any) => r.agent_id === id) : [];
-  const waitingRuns = agentWaiting.filter((r: Run) => r.status === "waiting");
-  const pendingRuns = agentWaiting.filter((r: Run) => r.status === "pending");
-  const recentRuns = (Array.isArray(recentData) ? recentData.filter((r: any) => r.agent_id === id) : []).slice(0, 25);
+  const allRuns = Array.isArray(agentRunsData) ? (agentRunsData as Run[]) : [];
+  const waitingRuns = allRuns.filter(r => r.status === "waiting");
+  const pendingRuns = allRuns.filter(r => r.status === "pending");
+  const recentRuns = allRuns
+    .filter(r => r.status !== "waiting" && r.status !== "pending")
+    .slice(0, 10);
 
   // Dialogs
   const [showSettings, setShowSettings] = useState(false);
@@ -86,6 +79,7 @@ export default function AgentDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
+  const [editEager, setEditEager] = useState(false);
   const [showRotateKey, setShowRotateKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -95,10 +89,11 @@ export default function AgentDetailPage() {
   const [connectCopied, setConnectCopied] = useState(false);
 
   async function handleUpdateAgent() {
-    const body: Record<string, string> = { name: editName, description: editDesc };
+    const body: Record<string, string | boolean> = { name: editName, description: editDesc };
     if (agent?.type === "harbour") {
       body.model = editModel;
       body.thinking = editThinking;
+      body.eager = editEager;
     }
     const res = await fetch(`/api/agents/${id}`, {
       method: "PUT",
@@ -194,7 +189,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Wifi className="h-3.5 w-3.5" />
             </Button>
           ) : null}
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setShowSettings(true); }} title="Settings">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -310,17 +305,24 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
         {recentRuns.length === 0 ? (
           <EmptyState>No runs yet.</EmptyState>
         ) : (
-          <div className="space-y-2">
-            {recentRuns.map(run => (
-              <Link key={run.id} href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-                <RunStatusIcon status={run.status} />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium">{run.job_name}</span>
-                </div>
-                <span className="text-xs text-muted-foreground pt-1">{timeAgo(run.completed_at || run.created_at)}</span>
+          <>
+            <div className="space-y-2">
+              {recentRuns.map(run => (
+                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                  <RunStatusIcon status={run.status} />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium">{run.job_name}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground pt-1">{timeAgo(run.completed_at || run.created_at)}</span>
+                </Link>
+              ))}
+            </div>
+            <div className="text-center pt-2">
+              <Link href={`/runs?agentId=${id}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                View all runs for this agent →
               </Link>
-            ))}
-          </div>
+            </div>
+          </>
         )}
       </section>
 
@@ -350,6 +352,24 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 onThinkingChange={setEditThinking}
                 defaultThinkingLabel="Default"
               />
+            )}
+            {agent.type === "harbour" && (
+              <div className="rounded-md border p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editEager}
+                    onChange={e => setEditEager(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="text-sm">
+                    <p className="font-medium">Eager polling</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
+                    </p>
+                  </div>
+                </label>
+              </div>
             )}
           </div>
           <DialogFooter>
@@ -417,7 +437,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 {(() => {
                   if (!agent || !newApiKey) return "";
                   const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
                   const blob = typeof window !== "undefined" ? btoa(JSON.stringify(payload)) : "";
                   return `harbour agent connect ${blob}`;
                 })()}
@@ -429,7 +449,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 <Button variant="outline" onClick={() => {
                   if (!agent || !newApiKey) return;
                   const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
                   const blob = btoa(JSON.stringify(payload));
                   navigator.clipboard.writeText(`harbour agent connect ${blob}`);
                   setConnectCopied(true);

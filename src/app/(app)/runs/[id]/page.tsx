@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image, Trash2, MoreVertical, Copy, Check } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image as ImageIcon, Trash2, MoreVertical, Copy, Check } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
@@ -37,6 +37,7 @@ type Activity = {
 
 type Run = {
   id: string; job_id: string; agent_id: string | null; status: string;
+  title: string | null;
   job_name: string; agent_name: string | null; agent_type: string | null; agent_cli: string | null;
   session_id: string | null; session_cwd: string | null; one_off: number; job_workflow_only: number;
   created_at: number; updated_at: number; completed_at: number | null;
@@ -364,7 +365,7 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             {screenshotsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Image className="h-3 w-3" />
+            <ImageIcon className="h-3 w-3" />
             {processing.screenshot_count} screenshot{processing.screenshot_count !== 1 ? "s" : ""}
           </button>
           {screenshotsOpen && screenshotsData && (
@@ -431,9 +432,10 @@ export default function RunDetailPage() {
 
   // Clear local killing state once the runner finalizes and the run is no
   // longer 'running' — keeps the button honest across refreshes.
+  const runStatus = run?.status;
   useEffect(() => {
-    if (run && run.status !== "running") setKilling(false);
-  }, [run?.status]);
+    if (runStatus && runStatus !== "running") setKilling(false);
+  }, [runStatus]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -532,11 +534,16 @@ export default function RunDetailPage() {
       <BackLink href="/" label="Runs" />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{run.job_name}</h1>
-          <span className="hidden sm:inline-flex">
-            <StatusBadge status={run.status} />
-          </span>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight truncate">{run.title || run.job_name}</h1>
+            <span className="hidden sm:inline-flex">
+              <StatusBadge status={run.status} />
+            </span>
+          </div>
+          <Link href={`/jobs/${run.job_id}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate">
+            {run.job_name}
+          </Link>
         </div>
         <div className="flex items-center justify-between sm:justify-start gap-2">
           <span className="sm:hidden">

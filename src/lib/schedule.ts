@@ -24,7 +24,8 @@ function parseAmPm(hour: number, ampm?: string): number {
 
 // Normalize any supported schedule string to canonical JSON.
 // Returns the canonical JSON string, or null if the input can't be parsed.
-export function normalizeSchedule(input: string): string | null {
+export function normalizeSchedule(input: unknown): string | null {
+  if (typeof input !== "string") return null;
   const s = input.trim();
 
   // 1. Already canonical JSON?
@@ -219,6 +220,6 @@ export function getNextRunTime(schedule: string, from?: Date, timezone?: string)
   return null;
 }
 
-export function isValidSchedule(schedule: string): boolean {
+export function isValidSchedule(schedule: unknown): boolean {
   return normalizeSchedule(schedule) !== null;
 }

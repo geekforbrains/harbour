@@ -13,7 +13,7 @@ import os from "os";
  *   HARBOUR_DB_PATH        — explicit DB file (default <home>/harbour.db)
  *   HARBOUR_UPLOADS_DIR    — explicit uploads dir (default <home>/uploads)
  *   HARBOUR_ENCRYPTION_KEY — encryption key value (otherwise read from <home>/encryption.key)
- *   HARBOUR_MAX_UPLOAD_MB  — per-file upload cap in MB (default 100)
+ *   HARBOUR_MAX_UPLOAD_MB  — per-file upload cap in MB (default 500)
  */
 
 export function harbourHome(): string {

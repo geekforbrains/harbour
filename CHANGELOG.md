@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.16.0 — 2026-05-20
+
+### Runs
+
+- New **Runs** history page with URL-backed filters for date range, agent, job, status, sort order, and optional skipped-run inclusion. The page loads 25 runs at a time with pagination instead of redirecting to the dashboard.
+- Job and Agent detail pages now fetch their own run history through dedicated endpoints (`GET /api/jobs/:id/runs`, `GET /api/agents/:id/runs`) instead of client-filtering the global recent-runs pool. Older per-job/per-agent runs are visible even when they fall outside the dashboard's recent window.
+- Recent/history views now include killed runs as real terminal runs. Skipped workflow-gate runs remain hidden by default, with an explicit history-page toggle.
+- Run rows were extracted into a shared component and now label one-off/manually triggered runs with a **Manual** badge.
+- Runs now have short titles. Harbour seeds a placeholder title at run creation, injects a first-step title-setting preamble into `/next`, and exposes `PUT /api/runs/:id/title` so agents can rename the run before doing work. Run lists and detail headers show the title first with the job name as secondary context.
+- Jobs support a `titleFormat` hint so users can guide how agents name runs. The worker and admin API docs now document the new title endpoint and payload fields.
+
+### Security
+
+- Harbour runner API keys and Bearer tokens are now redacted before run activity and streamed run output are stored. This prevents tool-call logs such as `curl -H "Authorization: Bearer hbr_..."` from exposing live runner credentials in the dashboard or database.
+
+### Fixes
+
+- Running or waiting runs no longer block unrelated future scheduled runs for the same job. Harbour now checks only active `scheduled`, `running`, or `pending` runs when deciding whether a recurring job should enqueue another run.
+- SQLite table-recreate migrations now disable foreign keys around the `CREATE/INSERT/DROP/RENAME` sequence. This prevents migration-time cascades from deleting runs, activity, output, or attachments when parent tables are rebuilt.
+- Claude Code effort options now include `xhigh`, matching the installed CLI's current `--effort` ladder.
+- Lint is clean across the project.
+
+## v1.15.0 — 2026-05-08
+
+### Security
+
+- **Per-agent permission opt-in for Claude Code agents.** Previously every `claude -p` invocation passed `--dangerously-skip-permissions`, bypassing the permission system entirely and making per-agent constraint impossible. Now the runner drops that flag whenever the agent's workspace contains a valid `.claude/settings.json` with a `permissions` object, letting you scope individual agents (deny `sqlite3`/`rm`/`ssh`, deny reads of `.env*` and `~/.ssh`, restrict `WebFetch` to allow-listed domains, add `PreToolUse` hooks for argument-level checks). Detection is hardened against TOCTOU and malformed configs: symlinks-to-`/dev/null`, zero-byte files, and corrupt JSON all fall back to the legacy unrestricted mode rather than silently switching to a half-configured permission system. Agents without a settings file see zero behavior change. Recommended layout: `~/.harbour/workspaces/<agent>/.claude/settings.json` with `permissions.defaultMode: "dontAsk"` so unrecognized tool calls auto-deny instead of blocking on a prompt that has no UI under `-p`.
+- **Job env vars now reach the agent's shell.** `runCliTool` accepts an `extraEnv` map; the runner layers `payload.env` onto the spawned process environment so the agent can write `curl -H "Authorization: Bearer $TOKEN"` without referencing the secret as text in the LLM-emitted Bash command (which `dontAsk` mode auto-denies). For agents without job-linked env vars, `payload.env` is `{}` and the spawn env is unchanged.
+- **Workspace `bin/` on PATH.** If an agent's workspace has a `bin/` directory, the runner prepends it to the spawned PATH so per-agent wrapper scripts (e.g. an `auth-curl` shim that internally reads env vars and execs `curl` with the right headers) resolve as bare command names. The agent's emitted command stays free of `$VAR` references; the wrapper's internal env-var use is invisible to the permission layer.
+
+### Agents
+
+- New **Eager polling** toggle on harbour agents. When on, the runner drains the job queue back-to-back instead of waiting for the next 60s launchd tick — useful for clearing a backlog. The loop continues only on clean outcomes (`done`/`waiting`/`skipped`); `failed` and `killed` runs exit so transient issues (network, rate limits, OOM, timeouts) get a free 60s backoff. Hard cap of 50 iterations per tick. Off by default; enable per-agent in the agent's Settings dialog or at create time. The flag is read live from the `/next` payload, so dashboard toggles take effect on remote runners without reconnecting.
+
+### Documentation
+
+- New `docs/` tree organized into concepts, guides, and reference. Indexed at [docs/README.md](docs/README.md) and linked from a new Documentation section in the top-level README. Every page was validated against a freshly initialized instance — register a user, mint admin and agent keys, exercise every documented endpoint and check payload shapes — before landing.
+- `GUIDE.md` (the worker-agent wire contract served at `/api/guide`) caught up with reality: `/next` job and attachment shapes now list every field the API returns (`workflow_only`, `timeout_minutes`, `run_id`, `embed_provider`, `created_at`, …); the status enum includes `killed`; retry coverage extends to `killed` runs; the five `?peek=true` response shapes are documented; default upload cap corrected to 500MB.
+- `ADMIN_GUIDE.md` (the admin-key wire contract served at `/api/admin-guide`) caught up too: `schedule` must be a JSON string (object form returns 400); `timeout_minutes` is update-only as `timeoutMinutes`; the PUT field is `active`, not `archived`; added `GET /api/env-vars/:id/value`, `DELETE /api/runs/:id`, `POST /api/runs/:id/kill`, and the unlink endpoints.
+- `src/lib/paths.ts` comment fixed: `HARBOUR_MAX_UPLOAD_MB` defaults to 500MB, not 100MB.
+
+### Fixes
+
+- **Codex model dropdown** refreshed to current ChatGPT-tier models: `gpt-5.5` (default) and `gpt-5.4`. Removed `o3` and `gpt-4.1` (no longer accessible on ChatGPT-account logins). Reasoning levels gain `xhigh` to match Codex's current ladder.
+- **Codex CLI 0.128+ and Gemini CLI 0.40+ flag drift** ([#24](https://github.com/geekforbrains/harbour/issues/24), reported and patched in a fork by [@PoliTwit1984](https://github.com/PoliTwit1984)). Both upstream CLIs removed flags Harbour was passing, causing every Codex/Gemini-backed run to fail at argument parsing before the model was invoked. Codex now uses `-c model_reasoning_effort=<level>` instead of the removed `--reasoning-effort`. Gemini drops `--thinking` entirely (reasoning depth is controlled by model selection now) and adds `--skip-trust` for headless runs in non-trusted workspace dirs. The dashboard's thinking selector is now hidden for Gemini agents since the option is no longer wired through. New unit tests in `src/__tests__/providers.test.ts` lock in the argv shape for all three providers so future flag drift is caught in CI.
+- `POST /api/agents/:id/jobs` and `PUT /api/jobs/:id` no longer 500 when the body's `schedule` is a JSON object — `normalizeSchedule()` now type-guards its input and returns `null` for non-strings, so the route's existing 400 path handles it.
+- `POST /api/jobs` (workflow-only) now stores the **canonical** schedule. Previously a valid input like `"hourly"` or `"every 5 minutes"` landed in the column verbatim; the schedule advancer can't read those, so `next_run_at` stayed null and the job never fired. Switched from `isValidSchedule` to `normalizeSchedule` and pass the result to `createJob`.
+
 ## v1.14.0 — 2026-05-05
 
 ### Captain

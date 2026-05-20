@@ -1,92 +1,19 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Terminal, Plus, Zap, Pause, Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { Activity, ArrowRight } from "lucide-react";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
-import { CreateDialog } from "@/components/app/create-dialog";
-import { TriggerDialog } from "@/components/app/trigger-dialog";
-import { timeAgo } from "@/lib/time";
-import { RunStatusIcon } from "@/components/app/run-status";
-import { useProjectFilter } from "@/lib/hooks/use-project-filter";
+import { RunRow, type RunRowData } from "@/components/app/run-row";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
-type Run = {
-  id: string; status: string; job_id: string; job_name: string; job_active: number;
-  agent_name: string | null; job_workflow_command: string | null; job_workflow_only: number;
-  created_at: number; updated_at: number; completed_at: number | null;
-};
-
-function RunRow({ run }: { run: Run }) {
-  const queryClient = useQueryClient();
-  const [triggerOpen, setTriggerOpen] = useState(false);
-  const [toggling, setToggling] = useState(false);
-
-  async function handleToggleActive(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setToggling(true);
-    try {
-      const res = await fetch(`/api/jobs/${run.job_id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: !run.job_active }),
-      });
-      if (!res.ok) { alert("Failed to update job"); return; }
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    } finally {
-      setToggling(false);
-    }
-  }
-
-  return (
-    <>
-      <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-        <RunStatusIcon status={run.status} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{run.job_name}</span>
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
-            {run.job_workflow_only && !run.agent_name ? (
-              <><Terminal className="h-3 w-3" /><span>Workflow</span></>
-            ) : run.job_workflow_command && run.agent_name ? (
-              <><Bot className="h-3 w-3" /><Terminal className="h-3 w-3" /><span>{run.agent_name}</span></>
-            ) : (
-              <><Bot className="h-3 w-3" /><span>{run.agent_name}</span></>
-            )}
-          </div>
-        </div>
-        <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.updated_at)}</span>
-        <div className="flex items-center gap-1 shrink-0">
-          <Button
-            variant="ghost" size="icon" className="h-7 w-7"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTriggerOpen(true); }}
-            title="Trigger run"
-          >
-            <Zap className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost" size="icon" className="h-7 w-7"
-            onClick={handleToggleActive}
-            disabled={toggling}
-            title={run.job_active ? "Pause job" : "Resume job"}
-          >
-            {run.job_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-          </Button>
-        </div>
-      </Link>
-      <TriggerDialog jobId={run.job_id} jobName={run.job_name} open={triggerOpen} onOpenChange={setTriggerOpen} />
-    </>
-  );
-}
+type Run = RunRowData;
 
 export default function RunsPage() {
-  const [showCreate, setShowCreate] = useState(false);
   const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
+  const historyHref = activeProjectId ? `/runs?projectId=${activeProjectId}` : "/runs";
 
   const { data: runsData, isLoading: loading } = useQuery<{
     scheduled?: Run[];
@@ -118,9 +45,6 @@ export default function RunsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
           <p className="text-sm text-muted-foreground mt-1">All run activity.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1.5" /> New Run
-        </Button>
       </div>
 
       {running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
@@ -170,11 +94,16 @@ export default function RunsPage() {
             <div className="space-y-2">
               {recent.map(run => <RunRow key={run.id} run={run} />)}
             </div>
+            {recent.length > 0 && (
+              <div className="mt-3 text-center">
+                <Link href={historyHref} className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1">
+                  View all runs <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
+            )}
           </section>
         </>
       )}
-
-      <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="run" />
     </div>
   );
 }

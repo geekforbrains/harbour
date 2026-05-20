@@ -5,6 +5,7 @@ import { listPinnedDocIds } from "./docs";
 import { listPinnedEnvVarIds } from "./env-vars";
 import { getTimezone } from "./settings";
 import { deleteRunAttachmentsDir } from "./attachments";
+import { defaultRunTitle } from "../run-title";
 
 export function createJob(agentId: string | null, data: {
   name: string;
@@ -15,6 +16,7 @@ export function createJob(agentId: string | null, data: {
   workflowOnly?: boolean;
   model?: string;
   thinking?: string;
+  titleFormat?: string;
   docIds?: string[];
   envVarIds?: string[];
   active?: boolean;
@@ -25,13 +27,14 @@ export function createJob(agentId: string | null, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, workflow_command, workflow_only, model, thinking, active, next_run_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, workflow_command, workflow_only, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
       data.workflowCommand || null, data.workflowOnly ? 1 : 0,
       data.model || null, data.thinking || null,
+      data.titleFormat?.trim() || null,
       data.active !== false ? 1 : 0, nextRunAt
     );
 
@@ -133,6 +136,7 @@ export function updateJob(id: string, data: {
   workflowOnly?: boolean;
   model?: string;
   thinking?: string;
+  titleFormat?: string;
   timeoutMinutes?: number;
   docIds?: string[];
   envVarIds?: string[];
@@ -150,6 +154,7 @@ export function updateJob(id: string, data: {
   if (data.workflowOnly !== undefined) { fields.push("workflow_only = ?"); values.push(data.workflowOnly ? 1 : 0); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
+  if (data.titleFormat !== undefined) { fields.push("title_format = ?"); values.push(data.titleFormat?.trim() || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
 
   if (data.active !== undefined) {
@@ -230,10 +235,11 @@ export function createOneOffRun(agentId: string, data: {
     }
 
     // Create the run immediately with 'scheduled' status
+    const title = defaultRunTitle(data.name, now);
     db.prepare(`
-      INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
-      VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
-    `).run(runId, jobId, agentId, runAt, now, now);
+      INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, title, created_at, updated_at)
+      VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?)
+    `).run(runId, jobId, agentId, runAt, title, now, now);
   });
 
   create();
@@ -242,16 +248,17 @@ export function createOneOffRun(agentId: string, data: {
 
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT id, agent_id, name FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job) return null;
 
   const runId = uuid();
   const now = Math.floor(Date.now() / 1000);
+  const title = defaultRunTitle(job.name, now);
 
   db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, extra_instructions, created_at, updated_at)
-    VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?)
-  `).run(runId, jobId, job.agent_id || null, now, extraInstructions || null, now, now);
+    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
+    VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
+  `).run(runId, jobId, job.agent_id || null, now, extraInstructions || null, title, now, now);
 
   if (extraInstructions) {
     db.prepare(`

@@ -36,13 +36,15 @@ export function ModelThinkingSelect({
           {config.models.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
-      <div className="space-y-2">
-        <Label>{config.thinkingLabel}</Label>
-        <select value={thinking} onChange={e => onThinkingChange(e.target.value)} className={SELECT_CLASS}>
-          {defaultThinkingLabel !== undefined && <option value="">{defaultThinkingLabel}</option>}
-          {config.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
+      {config.thinkingOptions.length > 0 && (
+        <div className="space-y-2">
+          <Label>{config.thinkingLabel}</Label>
+          <select value={thinking} onChange={e => onThinkingChange(e.target.value)} className={SELECT_CLASS}>
+            {defaultThinkingLabel !== undefined && <option value="">{defaultThinkingLabel}</option>}
+            {config.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      )}
     </>
   );
 }

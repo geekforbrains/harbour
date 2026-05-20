@@ -14,7 +14,7 @@ import { AlertCircle, Bot, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, Te
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
-type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null };
+type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null };
 type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
 
@@ -177,6 +177,7 @@ export function CreateDialog({
   const [workflowCommand, setWorkflowCommand] = useState("");
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [workflowEnabled, setWorkflowEnabled] = useState(false);
+  const [titleFormat, setTitleFormat] = useState("");
 
   useEffect(() => {
     if (open) setTab(defaultTab);
@@ -227,6 +228,7 @@ export function CreateDialog({
     setWorkflowCommand("");
     setAgentEnabled(true);
     setWorkflowEnabled(false);
+    setTitleFormat("");
     setLoaded(false);
   }
 
@@ -321,6 +323,7 @@ export function CreateDialog({
         workflowOnly: isWorkflowOnly ? true : undefined,
         model: agentEnabled ? (model || undefined) : undefined,
         thinking: agentEnabled ? (thinking || undefined) : undefined,
+        titleFormat: agentEnabled ? (titleFormat.trim() || undefined) : undefined,
         docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
       }),
@@ -408,11 +411,13 @@ export function CreateDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{tab === "run" ? "New Run" : "New Job"}</DialogTitle>
+            <DialogTitle>New Job</DialogTitle>
           </DialogHeader>
 
           <Tabs value={tab} onValueChange={v => setTab(v as "run" | "job")}>
-            <TabsList className="w-full">
+            {/* Run/Job switcher hidden — one-off runs are no longer surfaced in the UI.
+                The Run tab plumbing is retained so it can be re-enabled later. */}
+            <TabsList className="w-full hidden">
               <TabsTrigger value="run" className="flex-1">Run</TabsTrigger>
               <TabsTrigger value="job" className="flex-1">Job</TabsTrigger>
             </TabsList>
@@ -532,6 +537,15 @@ export function CreateDialog({
                     <div className="space-y-2">
                       <Label>Instructions</Label>
                       <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Title Format</Label>
+                      <Input
+                        value={titleFormat}
+                        onChange={e => setTitleFormat(e.target.value)}
+                        placeholder={`e.g. "Issue #XXX — short summary"`}
+                      />
+                      <p className="text-xs text-muted-foreground">Optional. Each run sets its own title — this is the format guide passed to the agent.</p>
                     </div>
                     {modelThinkingFields}
                   </>

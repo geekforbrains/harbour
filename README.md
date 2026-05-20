@@ -120,6 +120,40 @@ The runner injects the Harbour API credentials and endpoints into each prompt, s
 
 Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
 
+#### Eager polling
+
+By default the runner pauses 60 seconds between runs, even when there's a backlog of pending work. Toggle **Eager polling** on a harbour agent to drain the queue without that pause: when a run finishes cleanly (`done`, `waiting`, or `skipped`), the runner immediately polls for another run instead of waiting for the next launchd tick. As soon as the queue empties, the agent falls back to the normal 60s cadence.
+
+A failed or killed run breaks the eager loop — failures are most often transient (network, rate limits, timeouts), so the 60s gap acts as a free backoff. Eager mode trades latency for cost: stacking many LLM-driven runs back-to-back burns budget faster than the natural pacing. Off by default; enable per-agent in the agent's settings.
+
+#### Per-agent permissions (Claude Code)
+
+By default Harbour invokes Claude Code with `--dangerously-skip-permissions`, which bypasses the permission system entirely — necessary for non-interactive runs in the general case (no UI to handle approval prompts), but it also means a compromised agent (e.g. one fooled by prompt injection via untrusted user input) has the full surface of the host machine.
+
+Drop a `.claude/settings.json` into a Claude-Code agent's workspace and Harbour switches that agent over to the permission system. Other agents are unaffected. With per-agent constraint you can:
+
+- Deny dangerous binaries (`sqlite3`, `rm`, `ssh`, `scp`, `chmod`, `sudo`, …)
+- Deny reads of secret files (encryption keys, `.env*`, `~/.ssh/`, …)
+- Restrict `WebFetch` to allow-listed domains
+- Add `PreToolUse` hooks for argument-level checks the static patterns can't express (e.g. URL allow-listing for `curl` when `-H "Authorization: ..."` precedes the URL)
+
+Recommended layout:
+
+```
+~/.harbour/workspaces/<agent>/.claude/settings.json
+~/.harbour/workspaces/<agent>/.claude/hooks/<hook>.sh
+~/.harbour/workspaces/<agent>/bin/<wrapper>          # optional
+```
+
+A few things worth knowing:
+
+- Set `permissions.defaultMode` to `"dontAsk"` so unrecognized tool calls are auto-denied. The default `"default"` mode would block waiting for an interactive prompt that has no UI under `-p`.
+- Deny rules win over allow rules — make deny-list mistakes safe.
+- `Bash(...)` patterns match the literal command string, so URL filtering inside `curl` is fragile; do that in a hook instead.
+- Job-linked env vars are now layered onto the agent's shell environment, so prompts can use `$VAR` directly without leaking the secret as text in the LLM-emitted Bash command. The workspace's `bin/` directory (if present) is prepended to PATH so per-agent wrapper scripts resolve as bare command names.
+
+Detection is conservative: a regular `settings.json` with a parseable `permissions` object is required. Symlinks to `/dev/null`, zero-byte files, and corrupt JSON all fall back to the legacy `--dangerously-skip-permissions` mode rather than silently switching to a half-configured permission system.
+
 #### Running the runner on a different machine
 
 Sometimes a job needs to run on a specific machine — iOS/Xcode builds on a Mac, GPU work on a workstation — while the harbour server lives elsewhere. Harbour supports this by letting you mark an agent as **remote**: harbour won't install a local runner for it, and you run the runner on the target machine instead.
@@ -180,7 +214,7 @@ POST /api/runs/:id/activity         — add to the run's activity log
 POST /api/runs/:id/retry            — retry a failed/skipped/killed run
 POST /api/runs/:id/kill             — kill a running harbour-agent run
 DELETE /api/runs/:id                — delete a run and its attachments
-POST /api/runs/:id/attachments      — upload a file (multipart) or attach a video embed URL (JSON)
+POST /api/runs/:id/attachments      — upload a file or attach an embed URL
 GET  /api/runs/:id/attachments/:aid/file — download an uploaded file
 POST /api/docs                      — create a doc
 PUT  /api/docs/:id                  — update a doc
@@ -259,6 +293,16 @@ Projects are an optional way to organize your work. They're a view layer — a b
 - **Settings** — system timezone, signup control, project management, Captain configuration, and admin API keys.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
+
+## Documentation
+
+Long-form docs live in [`docs/`](docs/). The index ([docs/README.md](docs/README.md)) groups them into:
+
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs and runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
+- **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
+- **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API overview](docs/reference/api.md)
+
+The two wire-contract documents are [GUIDE.md](GUIDE.md) (agent-facing, served at `/api/guide`) and [ADMIN_GUIDE.md](ADMIN_GUIDE.md) (admin-agent-facing, served at `/api/admin-guide`). Those are the source of truth for what's on the wire.
 
 ## Tech Stack
 

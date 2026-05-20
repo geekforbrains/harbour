@@ -28,6 +28,7 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 const KILL_POLL_INTERVAL_MS = 10_000;
 
 function buildApiPrompt(api, apiKey) {
+  const setTitleUrl = api.endpoints.set_title?.replace("PUT ", "") || "";
   const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
   const activityUrl = api.endpoints.post_activity.replace("POST ", "");
   const uploadUrl = api.endpoints.upload_attachment?.replace("POST ", "") || "";
@@ -36,6 +37,9 @@ function buildApiPrompt(api, apiKey) {
   return `## Harbour API
 
 Your output will be posted as a comment on this run. Write a clear, concise summary.
+
+Before doing anything else, set a short title for this run (max 80 chars) so humans can identify it on the dashboard:
+  curl -X PUT ${setTitleUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"title":"your short title"}'
 
 You MUST set a final run status when finished. If you don't, the run will be marked as failed.
 Use these curl commands with the provided API key:
@@ -258,7 +262,44 @@ function runWorkflow(command, payloadJson, cwd, opts = {}) {
   });
 }
 
-async function runSingleAgent(runner) {
+// Cap on consecutive eager iterations within a single launchd tick.
+// Guards against a bug in getAgentNextRun ever returning non-null in a loop.
+// 50 is plenty for any realistic backlog; launchd respawns us next minute anyway.
+export const EAGER_MAX_ITERATIONS = 50;
+
+/**
+ * Decide whether the eager loop should continue after one run finishes.
+ * Pure function — exposed for unit testing. Encodes:
+ *   - "no-work" / "poll-error": always exit (nothing to do or transient issue)
+ *   - eager off: never loop (single shot per tick)
+ *   - failed / killed: exit (let the 60s gap absorb transient errors;
+ *                            kill = user said stop)
+ *   - done / waiting / skipped: continue draining
+ *
+ * @param {string} outcome - one of: no-work, poll-error, done, waiting, skipped, failed, killed, running
+ * @param {boolean} eager - the agent's eager flag (live from /next payload)
+ * @returns {boolean}
+ */
+export function shouldContinueEagerLoop(outcome, eager) {
+  if (outcome === "no-work" || outcome === "poll-error") return false;
+  if (!eager) return false;
+  return outcome === "done" || outcome === "waiting" || outcome === "skipped";
+}
+
+/**
+ * Process at most one run for this runner.
+ * Returns { outcome, eager } where outcome is:
+ *   'no-work'    — poll returned null (no queued/scheduled/due work)
+ *   'poll-error' — fetch threw (network/server error)
+ *   'done'       — run finished normally
+ *   'waiting'    — run paused for human input
+ *   'skipped'    — workflow gate exited 77, or run skipped
+ *   'failed'     — CLI/workflow error, agent didn't set status, etc.
+ *   'killed'     — user requested kill mid-run
+ * `eager` reflects the live `agent.eager` flag from the /next payload (or the
+ * cached runner config if the payload didn't include one).
+ */
+async function processNextRun(runner) {
   const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
   const provider = getProvider(cli);
   const sessions = loadSessions();
@@ -271,13 +312,16 @@ async function runSingleAgent(runner) {
     payload = await apiCall(`${url}/api/agents/${agentId}/next`, apiKey);
   } catch (err) {
     console.error(`  [${agentName}] Poll failed: ${err.message}`);
-    return;
+    return { outcome: "poll-error", eager: false };
   }
 
   if (!payload || !payload.run) {
     console.log(`  [${agentName}] Nothing to do.`);
-    return;
+    return { outcome: "no-work", eager: false };
   }
+
+  // Live eager flag from server, falling back to cached runner config
+  const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
 
   const runId = payload.run.id;
   const existingSession = sessions[runId];
@@ -334,7 +378,7 @@ async function runSingleAgent(runner) {
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
         } catch { /* best effort */ }
-        return;
+        return { outcome: "killed", eager };
       }
 
       if (wfResult.code === 77) {
@@ -348,7 +392,7 @@ async function runSingleAgent(runner) {
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
         } catch { /* best effort */ }
-        return;
+        return { outcome: "skipped", eager };
       }
 
       if (wfResult.code !== 0) {
@@ -359,7 +403,7 @@ async function runSingleAgent(runner) {
           await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
         } catch { /* best effort */ }
-        return;
+        return { outcome: "failed", eager };
       }
 
       // Exit 0 — success
@@ -375,7 +419,7 @@ async function runSingleAgent(runner) {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
         } catch { /* best effort */ }
         console.log(`  [${agentName}] Workflow-only run ${runId} completed.`);
-        return;
+        return { outcome: "done", eager };
       }
 
       // Workflow + agent: capture output for prompt context
@@ -387,7 +431,7 @@ async function runSingleAgent(runner) {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
-      return;
+      return { outcome: "failed", eager };
     }
   }
 
@@ -397,7 +441,7 @@ async function runSingleAgent(runner) {
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
-    return;
+    return { outcome: "failed", eager };
   }
 
   // Build prompt — append workflow output as additional context
@@ -505,6 +549,7 @@ async function runSingleAgent(runner) {
       timeoutMs,
       onLine,
       signal: killController.signal,
+      extraEnv: payload.env || {},
     });
   } catch (err) {
     clearInterval(killPollTimer);
@@ -515,7 +560,7 @@ async function runSingleAgent(runner) {
       });
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
-    return;
+    return { outcome: "failed", eager };
   }
 
   clearInterval(killPollTimer);
@@ -554,7 +599,10 @@ async function runSingleAgent(runner) {
         delete sessions[runId];
         saveSessions(sessions);
       }
-      return;
+      // Race: agent finished before kill landed — report the actual final
+      // status so eager mode can decide correctly (done/waiting/skipped → continue,
+      // failed → exit).
+      return { outcome: statusAtKill, eager };
     } else {
       const parsedOnKill = provider.parseResult(result.stdout, sessionId);
       const killSessionId = parsedOnKill.sessionId || sessionId;
@@ -574,7 +622,7 @@ async function runSingleAgent(runner) {
         console.error(`  [${agentName}] Failed to finalize kill: ${err.message}`);
       }
       console.log(`  [${agentName}] Run ${runId} killed.`);
-      return;
+      return { outcome: "killed", eager };
     }
   }
 
@@ -628,7 +676,7 @@ async function runSingleAgent(runner) {
 
     delete sessions[runId];
     saveSessions(sessions);
-    return;
+    return { outcome: "failed", eager };
   }
 
   // Post output as activity (high-level summary)
@@ -671,6 +719,22 @@ async function runSingleAgent(runner) {
   }
 
   console.log(`  [${agentName}] Run ${runId} completed with status: ${currentStatus}`);
+  return { outcome: currentStatus, eager };
+}
+
+/**
+ * Top-level driver for a single runner. Polls /next once per iteration; if the
+ * agent has eager polling enabled and the run finished cleanly (done/waiting/
+ * skipped), immediately polls again instead of waiting for the next launchd
+ * tick. Bails on no-work, poll errors, kills, and failures.
+ */
+async function runSingleAgent(runner) {
+  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
+    const { outcome, eager } = await processNextRun(runner);
+    if (!shouldContinueEagerLoop(outcome, eager)) return;
+    console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
+  }
+  console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
 }
 
 async function runAgentlessWorkflows(url, apiKey) {

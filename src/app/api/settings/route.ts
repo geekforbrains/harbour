@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { getAllSettings, setSetting, isSensitiveSetting, maskSettingValue } from "@/lib/db/queries";
 

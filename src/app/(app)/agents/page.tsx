@@ -62,6 +62,7 @@ export default function AgentsPage() {
   const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; type: string; remote?: boolean; cli?: string | null; model?: string | null; thinking?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
   const [remoteAgent, setRemoteAgent] = useState(false);
+  const [eagerAgent, setEagerAgent] = useState(false);
 
   // Type selection
   const [agentType, setAgentType] = useState<"harbour" | "external" | null>(null);
@@ -110,6 +111,7 @@ export default function AgentsPage() {
         if (selectedThinking) body.thinking = selectedThinking;
       }
       if (remoteAgent) body.remote = true;
+      if (eagerAgent) body.eager = true;
     }
 
     const res = await fetch("/api/agents", {
@@ -181,6 +183,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     setSelectedThinking("");
     setCliTools([]);
     setRemoteAgent(false);
+    setEagerAgent(false);
   }
 
   function getConnectBlob() {
@@ -194,6 +197,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
       cli: newAgent.cli,
       model: newAgent.model,
       thinking: newAgent.thinking,
+      eager: !!eagerAgent,
     };
     if (typeof window === "undefined") return "";
     return btoa(JSON.stringify(payload));
@@ -433,6 +437,24 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                       <p className="font-medium">Run on a different machine</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Skip local runner setup. You&apos;ll get a connect command to paste on the remote machine (e.g. a Mac for iOS builds).
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
+              {agentType === "harbour" && (
+                <div className="rounded-md border p-3 space-y-2">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={eagerAgent}
+                      onChange={e => setEagerAgent(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <div className="text-sm">
+                      <p className="font-medium">Eager polling</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
                       </p>
                     </div>
                   </label>

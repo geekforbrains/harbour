@@ -45,14 +45,14 @@ Content-Type: application/json
 }
 ```
 
-Type is `external` (default) or `harbour` (requires `cli`, `model`, `thinking` fields).
+Type is `external` (default) or `harbour` (requires `cli`, `model`, `thinking` fields). Harbour agents also accept an optional `eager` boolean — when true, the local runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 
 Response includes `apiKey` — save it, shown only once. Give this key and the agent's invite text to the worker agent.
 
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "New Name", "description": "..." }
+PUT    /api/agents/:id    { "name": "New Name", "description": "...", "eager": true }
 DELETE /api/agents/:id
 ```
 
@@ -83,12 +83,13 @@ Content-Type: application/json
 {
   "name": "Morning Tweet",
   "instructions": "Write an engaging tweet about...",
-  "schedule": {"every": 60},
-  "timeout_minutes": 30
+  "schedule": "{\"every\":60}"
 }
 ```
 
-Optional fields: `workflowCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `workflowOnly` (boolean — if true, no agent runs).
+`schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"`.
+
+Optional fields: `workflowCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `workflowOnly` (boolean — if true, no agent runs), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
 ### Create a Workflow-Only Job (No Agent)
 ```
@@ -98,7 +99,7 @@ Content-Type: application/json
 {
   "name": "Health Check",
   "description": "Check API health every hour",
-  "schedule": {"every": 60},
+  "schedule": "{\"every\":60}",
   "workflowCommand": "python3 check_health.py"
 }
 ```
@@ -107,41 +108,55 @@ Workflow-only jobs don't belong to an agent. The runner executes the command in 
 
 ### Schedule Format
 
+The `schedule` field is always a **string**. It can be canonical JSON (string-encoded) or a human-readable phrase — both are normalized to canonical JSON when stored.
+
 **Interval** — run every N minutes:
 ```json
-{"every": 5}
+"schedule": "{\"every\": 5}"
 ```
 
 **Weekly** — run on specific days at a specific time:
 ```json
-{"days": [1, 2, 3, 4, 5], "time": "09:00"}
+"schedule": "{\"days\": [1, 2, 3, 4, 5], \"time\": \"09:00\"}"
 ```
 
 Days are 0 (Sunday) through 6 (Saturday). Time is 24-hour `HH:MM`.
 
 Human-readable strings are also accepted:
-- `every 5 minutes` → `{"every": 5}`
-- `daily at 9am` → `{"days": [0,1,2,3,4,5,6], "time": "09:00"}`
-- `weekly on friday at 9am` → `{"days": [5], "time": "09:00"}`
+- `"every 5 minutes"` → `{"every": 5}`
+- `"hourly"` → `{"every": 60}`
+- `"daily at 9am"` → `{"days": [0,1,2,3,4,5,6], "time": "09:00"}`
+- `"weekly on friday at 9am"` → `{"days": [5], "time": "09:00"}`
+- A 5-field cron expression (`*/N * * * *`, `M H * * DOW`, etc.)
+
+Passing the schedule as a JSON object (not a string) returns a 500.
 
 ### Get / Update / Delete a Job
 ```
 GET    /api/jobs/:id
-PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": {...}, "archived": false }
+PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...", "active": true, "timeoutMinutes": 30 }
 DELETE /api/jobs/:id
 ```
+
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `workflowCommand`, `workflowOnly`, `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```
 POST /api/jobs/:id/trigger
+Content-Type: application/json
+
+{ "instructions": "Optional extra instructions for this run" }
 ```
-Creates and queues a run immediately, regardless of schedule.
+Creates and queues a run immediately, regardless of schedule. Body is optional. Returns `{ "jobId": "...", "runId": "..." }` with status 201.
 
 ### Link Resources to a Job
 ```
-POST /api/jobs/:id/docs       { "docId": "uuid" }
-POST /api/jobs/:id/env-vars   { "envVarId": "uuid" }
-POST /api/jobs/:id/data       { "databaseId": "uuid" }
+POST   /api/jobs/:id/docs                  { "docId": "uuid" }
+POST   /api/jobs/:id/env-vars              { "envVarId": "uuid" }
+POST   /api/jobs/:id/data                  { "databaseId": "uuid" }
+DELETE /api/jobs/:id/docs/:docId
+DELETE /api/jobs/:id/env-vars/:envVarId
+DELETE /api/jobs/:id/data/:dataId
 ```
 
 ## Runs
@@ -191,10 +206,23 @@ Content-Type: application/json
 
 Use this to respond to runs in `waiting` status. The run automatically transitions to `pending` when you post a response. `attachment_ids` is optional — upload attachments first, then reference them here.
 
-### Retry a Failed/Skipped Run
+### Retry a Failed/Skipped/Killed Run
 ```
 POST /api/runs/:id/retry
 ```
+Only works for runs whose status is `failed`, `skipped`, or `killed` — other statuses return 400. The run transitions back to `pending` for the agent to pick up.
+
+### Kill a Running Harbour-Agent Run
+```
+POST /api/runs/:id/kill
+```
+Only works for `harbour`-type agent runs in `running` status. External-agent runs and non-running statuses return 400/409. The runner polls for the kill flag and exits its CLI session; commenting on a killed run resumes the session where it left off.
+
+### Delete a Run
+```
+DELETE /api/runs/:id
+```
+Removes the run and its attachments.
 
 ### Attachments
 
@@ -223,7 +251,7 @@ DELETE /api/runs/:id/attachments/:aid
 GET    /api/runs/:id/attachments/:aid/file
 ```
 
-Per-file size cap is set by the server's `HARBOUR_MAX_UPLOAD_MB` (default 100MB).
+Per-file size cap is set by the server's `HARBOUR_MAX_UPLOAD_MB` (default 500MB).
 
 ## Docs
 
@@ -336,6 +364,14 @@ GET    /api/env-vars/:id
 PUT    /api/env-vars/:id    { "name": "...", "value": "..." }
 DELETE /api/env-vars/:id
 ```
+
+`GET /api/env-vars/:id` does not include the value. Both list and detail responses only return metadata.
+
+### Read the Decrypted Value
+```
+GET /api/env-vars/:id/value
+```
+Returns `{ "value": "..." }`. Requires user-level auth — agent API keys are rejected with 403.
 
 ### Pin/Unpin an Env Var
 ```
