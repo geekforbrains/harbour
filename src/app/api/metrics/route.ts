@@ -4,27 +4,29 @@ import { getDb } from "@/lib/db/schema";
 import { getSetting } from "@/lib/db/settings";
 import os from "os";
 
+type CountRow = { n: number };
+
 function getRunCounts() {
   const db = getDb();
-  const running = (db.prepare("SELECT COUNT(*) as n FROM runs WHERE status = 'running'").get() as any)?.n ?? 0;
-  const pending = (db.prepare("SELECT COUNT(*) as n FROM runs WHERE status = 'pending'").get() as any)?.n ?? 0;
+  const running = (db.prepare("SELECT COUNT(*) as n FROM runs WHERE status = 'running'").get() as CountRow | undefined)?.n ?? 0;
+  const pending = (db.prepare("SELECT COUNT(*) as n FROM runs WHERE status = 'pending'").get() as CountRow | undefined)?.n ?? 0;
   const done24h = (db.prepare(
     "SELECT COUNT(*) as n FROM runs WHERE status = 'done' AND completed_at > unixepoch() - 86400"
-  ).get() as any)?.n ?? 0;
+  ).get() as CountRow | undefined)?.n ?? 0;
   const failed24h = (db.prepare(
     "SELECT COUNT(*) as n FROM runs WHERE status = 'failed' AND completed_at > unixepoch() - 86400"
-  ).get() as any)?.n ?? 0;
+  ).get() as CountRow | undefined)?.n ?? 0;
   return { running, pending, done24h, failed24h };
 }
 
 function getAgentCount() {
   const db = getDb();
-  return (db.prepare("SELECT COUNT(*) as n FROM agents").get() as any)?.n ?? 0;
+  return (db.prepare("SELECT COUNT(*) as n FROM agents").get() as CountRow | undefined)?.n ?? 0;
 }
 
 function getJobCount() {
   const db = getDb();
-  return (db.prepare("SELECT COUNT(*) as n FROM jobs WHERE disabled = 0").get() as any)?.n ?? 0;
+  return (db.prepare("SELECT COUNT(*) as n FROM jobs WHERE active = 1").get() as CountRow | undefined)?.n ?? 0;
 }
 
 function getSystemMetrics() {
@@ -69,7 +71,7 @@ export const GET = withAuth(async () => {
   const system = getSystemMetrics();
 
   const freellmEnabled = getSetting("freellm_enabled") === "true";
-  const freellmBase = getSetting("freellm_base_url") || "http://localhost:3001/v1";
+  const freellmBase = getSetting("freellm_base_url") || "http://localhost:3011/v1";
   const freellmKey = getSetting("freellm_api_key") || "";
   const freellm = freellmEnabled
     ? await getFreeLLMStatus(freellmBase, freellmKey)

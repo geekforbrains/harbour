@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
-import { normalizeSchedule } from "../schedule";
+import { getNextRunTime, normalizeSchedule } from "../schedule";
 import { encrypt } from "../encryption";
 import { dbPath, harbourHome, ensureDir } from "../paths";
 
@@ -417,9 +417,6 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
     CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(scope_type, workspace_id, project_id);
-    CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, owner_workspace, owner_project, status);
-    CREATE INDEX IF NOT EXISTS idx_skill_proposals_status ON skill_proposals(status);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)
@@ -749,6 +746,12 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(scope_type, workspace_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, owner_workspace, owner_project, status);
+    CREATE INDEX IF NOT EXISTS idx_skill_proposals_status ON skill_proposals(status);
+  `);
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
 
@@ -759,4 +762,35 @@ export function initializeSchema(db: Database.Database) {
     db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("timezone", systemTz);
   }
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("signup_enabled", "true");
+
+  const timezone = (db.prepare(`SELECT value FROM settings WHERE key = 'timezone'`).get() as { value: string } | undefined)?.value
+    || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const toolkitSchedule = normalizeSchedule("daily at 7am") || JSON.stringify({ days: [0, 1, 2, 3, 4, 5, 6], time: "07:00" });
+  const toolkitNextRunAt = getNextRunTime(toolkitSchedule, undefined, timezone);
+  db.prepare(`
+    INSERT INTO jobs (
+      id, agent_id, name, description, instructions, schedule, workflow_command,
+      workflow_only, timeout_minutes, one_off, active, next_run_at
+    ) VALUES (?, NULL, ?, ?, ?, ?, ?, 1, 10, 0, 1, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      description = excluded.description,
+      instructions = excluded.instructions,
+      schedule = excluded.schedule,
+      workflow_command = excluded.workflow_command,
+      workflow_only = 1,
+      timeout_minutes = 10,
+      one_off = 0,
+      active = 1,
+      next_run_at = COALESCE(jobs.next_run_at, excluded.next_run_at),
+      updated_at = unixepoch()
+  `).run(
+    "harbour-toolkit-library-sync-7am",
+    "Toolkit Library Sync",
+    "Refreshes BORG skills, plugins, and sub-agent library manifests for OpenCLaw, Hermes, all Harbour agents, and Orgo client VMs.",
+    "Daily 7am maintenance job. Imports SKILLS into Harbour, snapshots plugin/sub-agent manifests, and marks all agents updated so OpenCLaw/Hermes next spawns read the latest scoped toolkit packet.",
+    toolkitSchedule,
+    "node '/Users/davidk/Documents/Borg Interface/harbour/scripts/sync-toolkit-libraries.mjs'",
+    toolkitNextRunAt,
+  );
 }

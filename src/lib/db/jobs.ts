@@ -6,6 +6,36 @@ import { listPinnedEnvVarIds } from "./env-vars";
 import { getTimezone } from "./settings";
 import { deleteRunAttachmentsDir } from "./attachments";
 
+type DbValue = string | number | null;
+type JobDetailRow = {
+  id: string;
+  agent_id: string | null;
+  name: string;
+  description: string | null;
+  instructions: string | null;
+  schedule: string;
+  workflow_command: string | null;
+  workflow_only: number;
+  active: number;
+  next_run_at: number | null;
+  agent_name?: string | null;
+};
+type LinkedDocRow = { id: string; title: string };
+type LinkedDatabaseRow = { id: string; name: string; table_name: string };
+type LinkedEnvVarRow = { id: string; name: string };
+type JobWithRelations = JobDetailRow & {
+  docs: LinkedDocRow[];
+  databases: LinkedDatabaseRow[];
+  envVars: LinkedEnvVarRow[];
+};
+type JobAgentRow = {
+  id: string;
+  agent_id: string | null;
+};
+type JobScheduleRow = {
+  schedule: string | null;
+};
+
 export function createJob(agentId: string | null, data: {
   name: string;
   description?: string;
@@ -52,33 +82,33 @@ export function createJob(agentId: string | null, data: {
   return getJobById(id);
 }
 
-export function getJobById(id: string) {
+export function getJobById(id: string): JobWithRelations | null {
   const db = getDb();
   const job = db.prepare(`
     SELECT j.*, a.name as agent_name
-    FROM jobs j
-    LEFT JOIN agents a ON j.agent_id = a.id
-    WHERE j.id = ?
-  `).get(id) as any;
+      FROM jobs j
+      LEFT JOIN agents a ON j.agent_id = a.id
+      WHERE j.id = ?
+  `).get(id) as JobDetailRow | undefined;
   if (!job) return null;
 
   const docs = db.prepare(`
     SELECT d.id, d.title FROM job_docs jd
     JOIN docs d ON jd.doc_id = d.id
     WHERE jd.job_id = ?
-  `).all(id);
+  `).all(id) as LinkedDocRow[];
 
   const databases = db.prepare(`
     SELECT d.id, d.name, d.table_name FROM job_databases jd
     JOIN databases d ON jd.database_id = d.id
     WHERE jd.job_id = ?
-  `).all(id);
+  `).all(id) as LinkedDatabaseRow[];
 
   const envVars = db.prepare(`
     SELECT ev.id, ev.name FROM job_env_vars jev
     JOIN env_vars ev ON jev.env_var_id = ev.id
     WHERE jev.job_id = ?
-  `).all(id);
+  `).all(id) as LinkedEnvVarRow[];
 
   return { ...job, docs, databases, envVars };
 }
@@ -107,6 +137,7 @@ export function listAllJobs(projectId?: string, workspaceId?: string) {
       FROM jobs j
       LEFT JOIN agents a ON j.agent_id = a.id
       WHERE j.one_off = 0
+      AND j.id != 'harbour-toolkit-library-sync-7am'
       AND j.id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)
       ORDER BY j.name
     `).all(projectId);
@@ -121,6 +152,7 @@ export function listAllJobs(projectId?: string, workspaceId?: string) {
       FROM jobs j
       LEFT JOIN agents a ON j.agent_id = a.id
       WHERE j.one_off = 0
+      AND j.id != 'harbour-toolkit-library-sync-7am'
       AND j.id IN (
         SELECT pj.job_id
         FROM project_jobs pj
@@ -139,6 +171,7 @@ export function listAllJobs(projectId?: string, workspaceId?: string) {
     FROM jobs j
     LEFT JOIN agents a ON j.agent_id = a.id
     WHERE j.one_off = 0
+    AND j.id != 'harbour-toolkit-library-sync-7am'
     ORDER BY j.name
   `).all();
 }
@@ -160,7 +193,7 @@ export function updateJob(id: string, data: {
 }) {
   const db = getDb();
   const fields: string[] = [];
-  const values: any[] = [];
+  const values: DbValue[] = [];
   if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
   if (data.description !== undefined) { fields.push("description = ?"); values.push(data.description); }
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
@@ -175,7 +208,7 @@ export function updateJob(id: string, data: {
     fields.push("active = ?"); values.push(data.active ? 1 : 0);
     // When activating a job that has no next_run_at, compute it from the schedule
     if (data.active && data.nextRunAt === undefined) {
-      const job = db.prepare(`SELECT schedule, next_run_at FROM jobs WHERE id = ?`).get(id) as any;
+      const job = db.prepare(`SELECT schedule, next_run_at FROM jobs WHERE id = ?`).get(id) as Pick<JobDetailRow, "schedule" | "next_run_at"> | undefined;
       if (job && !job.next_run_at && job.schedule) {
         const schedule = data.schedule || job.schedule;
         const nextRunAt = getNextRunTime(schedule, undefined, getTimezone());
@@ -261,7 +294,7 @@ export function createOneOffRun(agentId: string, data: {
 
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as JobAgentRow | undefined;
   if (!job) return null;
 
   const runId = uuid();
@@ -303,7 +336,7 @@ export function touchJobRan(id: string) {
 // Called after a run completes (done/failed/skipped).
 export function advanceJobSchedule(jobId: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as JobScheduleRow | undefined;
   if (!job?.schedule) return;
 
   const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());

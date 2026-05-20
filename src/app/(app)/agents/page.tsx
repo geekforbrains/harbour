@@ -62,6 +62,14 @@ export default function AgentsPage() {
     },
     refetchInterval: 5000,
   });
+  const { data: settings = {} } = useQuery<Record<string, string>>({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings");
+      if (!res.ok) return {};
+      return res.json();
+    },
+  });
 
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -115,9 +123,8 @@ export default function AgentsPage() {
 
   function handleCliSelect(cliId: string) {
     setSelectedCli(cliId);
-    const config = CLI_CONFIG[cliId];
-    setSelectedModel(config?.models[0] || "");
-    setSelectedThinking("");
+    setSelectedModel(settings[`agent_default_model_${cliId}`] || "");
+    setSelectedThinking(settings[`agent_default_thinking_${cliId}`] || "");
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -262,6 +269,23 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
         workspaceId: scopeType === "workspace" ? scopeWorkspaceId : null,
         projectId: scopeType === "project" ? scopeProjectId : null,
       },
+      toolkitLibraries: {
+        endpoint: `${base}/api/toolkit-libraries`,
+        vmRoot: "/opt/borg/toolkit-libraries",
+        mountMode: "read-only",
+        searchOnFirstSpawnFor: ["openclaw", "hermes"],
+        scopeRules: {
+          global: "Available to every client VM and every Harbour workspace.",
+          workspace: "Available only when the VM or agent belongs to the matching business/workspace.",
+          project: "Available only when the VM or agent belongs to the matching project.",
+          brandKit: "Available only for matching workspace/project voice, design, and asset work.",
+        },
+        manifests: {
+          skills: "/opt/borg/toolkit-libraries/skills/registry.yaml",
+          plugins: "/opt/borg/toolkit-libraries/plugins/registry.yaml",
+          subAgents: "/opt/borg/toolkit-libraries/sub-agents/registry.yaml",
+        },
+      },
       composio: {
         cliEnabled: composioCliEnabled,
         mcpEnabled: composioMcpEnabled,
@@ -284,8 +308,9 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
       bootstrap: [
         "Install the selected runtime CLI and Harbour runner.",
         "Install or link Composio if enabled: composio login; composio --install-skill composio-cli openclaw",
+        "Fetch /api/toolkit-libraries with this Harbour API key and mirror allowed manifests under /opt/borg/toolkit-libraries.",
         "Poll Harbour with the included agent credentials.",
-        "Fetch resolved Harbour skills before spawning work.",
+        "Before first spawn, search skills, plugins, and sub-agents by task intent and scope.",
       ],
     }, null, 2);
   }
@@ -541,6 +566,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   thinking={selectedThinking}
                   onModelChange={setSelectedModel}
                   onThinkingChange={setSelectedThinking}
+                  defaultModelLabel={selectedCli === "openclaw" || selectedCli === "hermes" ? "Free local default (configured)" : "Default"}
                   defaultThinkingLabel="Default"
                 />
               )}

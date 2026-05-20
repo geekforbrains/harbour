@@ -26,7 +26,7 @@ import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
-type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
+type Run = { id: string; agent_id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
 export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -75,10 +75,10 @@ export default function AgentDetailPage() {
 
   const agent: Agent | null = agentData ?? null;
   const loading = agentLoading;
-  const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: any) => r.agent_id === id) : [];
+  const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: Run) => r.agent_id === id) : [];
   const waitingRuns = agentWaiting.filter((r: Run) => r.status === "waiting");
   const pendingRuns = agentWaiting.filter((r: Run) => r.status === "pending");
-  const recentRuns = (Array.isArray(recentData) ? recentData.filter((r: any) => r.agent_id === id) : []).slice(0, 25);
+  const recentRuns = (Array.isArray(recentData) ? recentData.filter((r: Run) => r.agent_id === id) : []).slice(0, 25);
 
   // Dialogs
   const [showSettings, setShowSettings] = useState(false);
@@ -350,6 +350,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 thinking={editThinking}
                 onModelChange={setEditModel}
                 onThinkingChange={setEditThinking}
+                defaultModelLabel={agent.cli === "openclaw" || agent.cli === "hermes" ? "Free local default (configured)" : "Default"}
                 defaultThinkingLabel="Default"
               />
             )}

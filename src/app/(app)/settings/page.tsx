@@ -41,6 +41,13 @@ type Metrics = {
 
 type Tab = "general" | "captain" | "usage";
 
+type AdminApiKey = {
+  id: string;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+};
+
 // ── Metric bar helper ──────────────────────────────────────────────────────────
 function MetricBar({ pct, color = "bg-primary" }: { pct: number; color?: string }) {
   return (
@@ -68,7 +75,7 @@ function StatCard({ label, value, sub, icon: Icon, warn }: {
 
 // ── Usage tab ─────────────────────────────────────────────────────────────────
 function UsageTab({ settings, updateSetting }: { settings: Settings; updateSetting: (k: string, v: string) => Promise<void> }) {
-  const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [lastRefresh, setLastRefresh] = useState(() => Date.now());
 
   const { data: metrics, isFetching } = useQuery<Metrics>({
     queryKey: ["metrics", lastRefresh],
@@ -347,7 +354,7 @@ export default function SettingsPage() {
     },
   });
 
-  const { data: adminKeys = [] } = useQuery<any[]>({
+  const { data: adminKeys = [] } = useQuery<AdminApiKey[]>({
     queryKey: ["admin-api-keys"],
     queryFn: async () => {
       const res = await fetch("/api/admin-api-keys");
@@ -503,7 +510,7 @@ export default function SettingsPage() {
             </div>
             {adminKeys.length > 0 && (
               <div className="space-y-2">
-                {adminKeys.map((key: any) => (
+                {adminKeys.map((key) => (
                   <div key={key.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">{key.name}</p>
@@ -548,6 +555,8 @@ export default function SettingsPage() {
                 {(!settings?.captain_cli || settings?.captain_cli === "claude") && "Claude CLI — requires ANTHROPIC_API_KEY."}
                 {settings?.captain_cli === "codex" && "OpenAI Codex — requires OPENAI_API_KEY."}
                 {settings?.captain_cli === "gemini" && "Gemini CLI — requires GEMINI_API_KEY."}
+                {settings?.captain_cli === "openclaw" && "OpenClaw uses free local models by default; choose FreeLLM auto, cheaper open-source, or frontier models when needed."}
+                {settings?.captain_cli === "hermes" && "Hermes uses free local models by default; choose FreeLLM auto, cheaper open-source, or frontier models when needed."}
               </p>
             </div>
             <ModelThinkingSelect
@@ -570,6 +579,39 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          <div className="rounded-lg border p-4 space-y-4">
+            <div>
+              <Label className="text-base font-medium">Agent Runtime Defaults</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Defaults used when creating new OpenClaw or Hermes agents. Existing agents can still be changed from their settings.</p>
+            </div>
+            <div className="space-y-4">
+              <div className="rounded-md border p-3 space-y-3">
+                <Label>OpenClaw default</Label>
+                <ModelThinkingSelect
+                  cli="openclaw"
+                  model={settings?.agent_default_model_openclaw || ""}
+                  thinking={settings?.agent_default_thinking_openclaw || ""}
+                  onModelChange={v => updateSetting("agent_default_model_openclaw", v)}
+                  onThinkingChange={v => updateSetting("agent_default_thinking_openclaw", v)}
+                  defaultModelLabel="Free local default (configured)"
+                  defaultThinkingLabel="Default"
+                />
+              </div>
+              <div className="rounded-md border p-3 space-y-3">
+                <Label>Hermes default</Label>
+                <ModelThinkingSelect
+                  cli="hermes"
+                  model={settings?.agent_default_model_hermes || ""}
+                  thinking={settings?.agent_default_thinking_hermes || ""}
+                  onModelChange={v => updateSetting("agent_default_model_hermes", v)}
+                  onThinkingChange={v => updateSetting("agent_default_thinking_hermes", v)}
+                  defaultModelLabel="Free local default (configured)"
+                  defaultThinkingLabel="Default"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* FreeLLM routing config in Captain tab */}
           <div className="rounded-lg border p-4 space-y-4">
             <div>
@@ -587,7 +629,7 @@ export default function SettingsPage() {
               </button>
             </div>
             <div className="space-y-1.5 text-xs text-muted-foreground rounded-md bg-muted/50 px-3 py-2 font-mono">
-              <p>Base URL: {settings?.freellm_base_url || "http://localhost:3001/v1"}</p>
+              <p>Base URL: {settings?.freellm_base_url || "http://localhost:3011/v1"}</p>
               <p>Start: <span className="text-foreground">bash &quot;/Users/davidk/Documents/Borg Interface/harbour/freellmapi/start.sh&quot;</span></p>
               <p>Model routing: <span className="text-foreground">model: &quot;auto&quot;</span> lets router pick best free model</p>
             </div>

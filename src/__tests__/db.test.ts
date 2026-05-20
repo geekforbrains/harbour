@@ -977,19 +977,19 @@ describe("Trigger Job Run", () => {
     expect(result!.runId).toBeDefined();
 
     const run = getRunById(result!.runId);
-    expect(run.status).toBe("scheduled");
+    expect(run!.status).toBe("scheduled");
   });
 
   it("should create a run without extra instructions", () => {
     const result = triggerJobRun(jobId);
     const run = getRunById(result!.runId);
-    expect(run.extra_instructions).toBeNull();
+    expect(run!.extra_instructions).toBeNull();
   });
 
   it("should store extra instructions on the run", () => {
     const result = triggerJobRun(jobId, "Focus on error handling");
     const run = getRunById(result!.runId);
-    expect(run.extra_instructions).toBe("Focus on error handling");
+    expect(run!.extra_instructions).toBe("Focus on error handling");
   });
 
   it("should return null for non-existent job", () => {

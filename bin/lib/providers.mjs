@@ -11,7 +11,14 @@ function resolveBinary(name) {
     try {
       binaryPathCache[name] = execSync(`which ${name}`, { encoding: "utf-8" }).trim();
     } catch {
-      binaryPathCache[name] = name; // fallback to bare name
+      const candidates = [
+        path.join(os.homedir(), ".local", "bin", name),
+        path.join(os.homedir(), ".npm-global", "bin", name),
+        path.join(os.homedir(), ".composio", name),
+        path.join("/opt/homebrew/bin", name),
+        path.join("/usr/local/bin", name),
+      ];
+      binaryPathCache[name] = candidates.find(candidate => fs.existsSync(candidate)) || name;
     }
   }
   return binaryPathCache[name];
@@ -329,7 +336,7 @@ const PROVIDERS = {
   },
 
   gemini: {
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
+    buildCommand(prompt, model, workingDir, sessionId) {
       // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
       // by model selection) and requires --skip-trust for headless mode in
       // non-trusted workspace dirs (otherwise exits code 55).
@@ -526,7 +533,7 @@ PROVIDERS.pi = {
 // Docs: https://opencode.ai/docs/cli/
 // ---------------------------------------------------------------------------
 PROVIDERS.opencode = {
-  buildCommand(prompt, model, workingDir, sessionId, isNewSession, _thinking) {
+  buildCommand(prompt, model, workingDir, sessionId, isNewSession) {
     const args = ["run", "--format", "json", "--dangerously-skip-permissions"];
     if (model) args.push("--model", model);
     if (sessionId && !isNewSession) args.push("--session", sessionId);
@@ -640,22 +647,49 @@ function plainJsonProvider(binaryName, argsForPrompt) {
 }
 
 PROVIDERS.openclaw = plainJsonProvider("openclaw", (prompt, model, sessionId, isNewSession, thinking) => {
-  const args = ["run", "--json"];
-  if (model) args.push("--model", model);
+  const args = ["agent", "--local", "--json"];
+  if (model && model !== "default") args.push("--model", model);
   if (thinking) args.push("--thinking", thinking);
-  if (sessionId && !isNewSession) args.push("--resume", sessionId);
-  args.push("--prompt", prompt);
+  if (sessionId) args.push("--session-id", sessionId);
+  args.push("--message", prompt);
   return args;
 });
+PROVIDERS.openclaw.generateSessionId = () => crypto.randomUUID();
+PROVIDERS.openclaw.parseLine = () => ({ events: [] });
+PROVIDERS.openclaw.parseResult = (stdout) => {
+  try {
+    const obj = JSON.parse(stdout);
+    const content = Array.isArray(obj.payloads)
+      ? obj.payloads.map(p => p?.text).filter(Boolean).join("\n\n")
+      : "";
+    const sessionId = obj.meta?.agentMeta?.sessionId || null;
+    return { content: content.trim() || stdout.trim(), sessionId };
+  } catch {
+    return { content: stdout.trim(), sessionId: null };
+  }
+};
 
 PROVIDERS.hermes = plainJsonProvider("hermes", (prompt, model, sessionId, isNewSession, thinking) => {
-  const args = ["run", "--json"];
-  if (model) args.push("--model", model);
-  if (thinking) args.push("--thinking", thinking);
+  const args = ["chat", "--query", prompt, "--quiet", "--source", "harbour"];
+  if (model && model !== "default") args.push("--model", model);
+  if (thinking) args.push("--max-turns", thinking === "high" || thinking === "xhigh" ? "120" : "60");
   if (sessionId && !isNewSession) args.push("--resume", sessionId);
-  args.push(prompt);
   return args;
 });
+PROVIDERS.hermes.parseResult = (stdout) => {
+  const lines = stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  let sessionId = null;
+  const contentLines = [];
+  for (const line of lines) {
+    const match = line.match(/^session_id:\s*(.+)$/);
+    if (match) {
+      sessionId = match[1].trim();
+    } else {
+      contentLines.push(line);
+    }
+  }
+  return { content: contentLines.join("\n").trim() || stdout.trim(), sessionId };
+};
 
 export function getProvider(cli) {
   const provider = PROVIDERS[cli];

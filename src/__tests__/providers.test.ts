@@ -116,3 +116,41 @@ describe("gemini provider (issue #24)", () => {
     expect(cmd.args[rIdx + 1]).toBe("session-uuid");
   });
 });
+
+describe("openclaw provider", () => {
+  const openclaw = getProvider("openclaw");
+
+  it("uses local agent mode and omits the model for the local default", () => {
+    const cmd = openclaw.buildCommand(PROMPT, null, CWD, "session-uuid", true, "medium");
+    expect(cmd.args.slice(0, 3)).toEqual(["agent", "--local", "--json"]);
+    expect(cmd.args).not.toContain("--model");
+    expect(cmd.args).toContain("--session-id");
+    expect(cmd.args).toContain("--message");
+    expect(cmd.args[cmd.args.indexOf("--message") + 1]).toBe(PROMPT);
+  });
+
+  it("passes explicit budget/frontier model choices", () => {
+    const cmd = openclaw.buildCommand(PROMPT, "auto", CWD, "session-uuid", true, null);
+    expect(cmd.args).toContain("--model");
+    expect(cmd.args[cmd.args.indexOf("--model") + 1]).toBe("auto");
+  });
+});
+
+describe("hermes provider", () => {
+  const hermes = getProvider("hermes");
+
+  it("uses quiet chat mode and omits the model for the local default", () => {
+    const cmd = hermes.buildCommand(PROMPT, null, CWD, null, true, null);
+    expect(cmd.args.slice(0, 2)).toEqual(["chat", "--query"]);
+    expect(cmd.args).toContain("--quiet");
+    expect(cmd.args).toContain("--source");
+    expect(cmd.args).not.toContain("--model");
+    expect(cmd.args[cmd.args.indexOf("--query") + 1]).toBe(PROMPT);
+  });
+
+  it("passes explicit budget/frontier model choices", () => {
+    const cmd = hermes.buildCommand(PROMPT, "auto", CWD, null, true, null);
+    expect(cmd.args).toContain("--model");
+    expect(cmd.args[cmd.args.indexOf("--model") + 1]).toBe("auto");
+  });
+});

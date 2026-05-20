@@ -3,7 +3,57 @@ import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
-import { resolveSkillsForAgent } from "./skills";
+import { importSkillsFromFilesystem, resolveSkillsForAgent } from "./skills";
+import { getToolkitLibraries } from "../toolkit-libraries";
+
+type RunRow = {
+  [key: string]: unknown;
+  id: string;
+  job_id: string;
+  agent_id: string | null;
+  status: string;
+  kill_requested_at?: number | null;
+  extra_instructions?: string | null;
+};
+type RunActivityRow = {
+  id: string;
+  run_id: string;
+  author_type: string;
+  author_id?: string | null;
+  author_name: string;
+  content: string;
+  created_at: number;
+};
+type RunWithActivity = RunRow & { activity: RunActivityRow[] };
+type IdRow = { id: string };
+type OneOffRow = { one_off: number };
+type KillRequestedRow = { kill_requested_at: number | null };
+type ReadyJobRow = { id: string; agent_id: string | null };
+type NamedRunRow = { id: string; job_name: string | null };
+type NamedJobRow = { id: string; name: string };
+type JobPayloadRow = {
+  id: string;
+  name: string;
+  instructions: string | null;
+  workflow_command: string | null;
+  workflow_only: number;
+  model: string | null;
+  thinking: string | null;
+  timeout_minutes: number | null;
+};
+type AgentPayloadRow = {
+  eager: number;
+  composio_cli_enabled: number;
+  composio_mcp_enabled: number;
+  composio_toolkits: string | null;
+  composio_tools: string | null;
+  cli: string | null;
+  scope_type: string | null;
+  workspace_id: string | null;
+  project_id: string | null;
+};
+type DocPayloadRow = { id: string; title: string; content: string | null };
+type TableDataRow = Record<string, unknown>;
 
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
@@ -15,19 +65,19 @@ export function createRun(jobId: string, agentId: string | null) {
   return getRunById(id);
 }
 
-export function getRunById(id: string) {
+export function getRunById(id: string): RunRow | null {
   const db = getDb();
   const run = db.prepare(`
     SELECT r.*, j.name as job_name, j.one_off, j.workflow_only as job_workflow_only, j.agent_id, a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.id = ?
-  `).get(id) as any;
+      LEFT JOIN agents a ON r.agent_id = a.id
+      WHERE r.id = ?
+  `).get(id) as RunRow | undefined;
   return run || null;
 }
 
-export function getRunWithActivity(id: string) {
+export function getRunWithActivity(id: string): RunWithActivity | null {
   const run = getRunById(id);
   if (!run) return null;
   const activity = listRunActivity(id);
@@ -52,7 +102,7 @@ export function updateRunStatus(id: string, status: string) {
     const run = getRunById(id);
     if (run?.job_id) {
       // Deactivate one-off jobs; advance schedule for recurring ones
-      const job = db.prepare(`SELECT one_off FROM jobs WHERE id = ?`).get(run.job_id) as any;
+      const job = db.prepare(`SELECT one_off FROM jobs WHERE id = ?`).get(run.job_id) as OneOffRow | undefined;
       if (job?.one_off) {
         db.prepare(`UPDATE jobs SET active = 0, next_run_at = NULL, updated_at = unixepoch() WHERE id = ?`).run(run.job_id);
       } else {
@@ -90,7 +140,7 @@ export function updateRunSessionId(id: string, sessionId: string, cwd?: string) 
 
 export function isKillRequested(id: string): boolean {
   const db = getDb();
-  const row = db.prepare(`SELECT kill_requested_at FROM runs WHERE id = ?`).get(id) as any;
+  const row = db.prepare(`SELECT kill_requested_at FROM runs WHERE id = ?`).get(id) as KillRequestedRow | undefined;
   return !!row?.kill_requested_at;
 }
 
@@ -210,7 +260,7 @@ export function addRunActivity(runId: string, authorType: string, authorId: stri
 
 export function listRunActivity(runId: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`).all(runId);
+  return db.prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`).all(runId) as RunActivityRow[];
 }
 
 // Run output (streaming events from CLI agents)
@@ -266,7 +316,7 @@ function failStaleRuns(agentId: string) {
     `).run(actId, run.id, `Run timed out after ${run.timeout_minutes} minutes without completion.`);
 
     // Deactivate one-off jobs
-    const job = db.prepare(`SELECT one_off FROM jobs WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).get(run.id) as any;
+    const job = db.prepare(`SELECT one_off FROM jobs WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).get(run.id) as OneOffRow | undefined;
     if (job?.one_off) {
       db.prepare(`UPDATE jobs SET active = 0, next_run_at = NULL, updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(run.id);
     }
@@ -288,7 +338,7 @@ export function getAgentNextRun(agentId: string) {
     // 1. Agent already has a running run? Return nothing (busy)
     const running = db.prepare(`
       SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-    `).get(agentId) as any;
+    `).get(agentId) as IdRow | undefined;
     if (running) return null;
 
     // 2. Pending run? (human responded, ready for agent to resume)
@@ -296,7 +346,7 @@ export function getAgentNextRun(agentId: string) {
       SELECT id FROM runs
       WHERE agent_id = ? AND status = 'pending'
       ORDER BY updated_at ASC LIMIT 1
-    `).get(agentId) as any;
+    `).get(agentId) as IdRow | undefined;
 
     if (pendingRun) {
       db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ?`).run(pendingRun.id);
@@ -310,7 +360,7 @@ export function getAgentNextRun(agentId: string) {
       SELECT id FROM runs
       WHERE agent_id = ? AND status = 'scheduled' AND scheduled_for <= ?
       ORDER BY scheduled_for ASC LIMIT 1
-    `).get(agentId, now) as any;
+    `).get(agentId, now) as IdRow | undefined;
 
     if (scheduledRun) {
       db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
@@ -327,7 +377,7 @@ export function getAgentNextRun(agentId: string) {
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
-    `).get(agentId, now) as any;
+    `).get(agentId, now) as ReadyJobRow | undefined;
 
     if (readyJob) {
       const run = createRun(readyJob.id, agentId);
@@ -378,7 +428,7 @@ export function getNextWorkflowRun() {
       SELECT id FROM runs
       WHERE agent_id IS NULL AND status = 'scheduled' AND scheduled_for <= ?
       ORDER BY scheduled_for ASC LIMIT 1
-    `).get(now) as any;
+    `).get(now) as IdRow | undefined;
 
     if (scheduledRun) {
       db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
@@ -396,7 +446,7 @@ export function getNextWorkflowRun() {
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
-    `).get(now) as any;
+    `).get(now) as IdRow | undefined;
 
     if (readyJob) {
       const run = createRun(readyJob.id, null);
@@ -421,7 +471,7 @@ export function peekAgentNext(agentId: string) {
 
   const running = db.prepare(`
     SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-  `).get(agentId) as any;
+  `).get(agentId) as IdRow | undefined;
   if (running) return { available: false, reason: "busy" };
 
   const pendingRun = db.prepare(`
@@ -429,7 +479,7 @@ export function peekAgentNext(agentId: string) {
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'pending'
     ORDER BY r.updated_at ASC LIMIT 1
-  `).get(agentId) as any;
+  `).get(agentId) as NamedRunRow | undefined;
 
   if (pendingRun) {
     return { available: true, type: "pending_resume", run_id: pendingRun.id, job_name: pendingRun.job_name };
@@ -442,7 +492,7 @@ export function peekAgentNext(agentId: string) {
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'scheduled' AND r.scheduled_for <= ?
     ORDER BY r.scheduled_for ASC LIMIT 1
-  `).get(agentId, now) as any;
+  `).get(agentId, now) as NamedRunRow | undefined;
 
   if (scheduledRun) {
     return { available: true, type: "scheduled_run", run_id: scheduledRun.id, job_name: scheduledRun.job_name };
@@ -454,7 +504,7 @@ export function peekAgentNext(agentId: string) {
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
     AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending'))
     ORDER BY j.next_run_at ASC LIMIT 1
-  `).get(agentId, now) as any;
+  `).get(agentId, now) as NamedJobRow | undefined;
 
   if (readyJob) {
     return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
@@ -468,7 +518,8 @@ function buildRunPayload(runId: string) {
   const run = getRunWithActivity(runId);
   if (!run) return null;
 
-  const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(run.job_id) as any;
+  const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(run.job_id) as JobPayloadRow | undefined;
+  if (!job) return null;
 
   // Get referenced docs
   const docs = db.prepare(`
@@ -478,7 +529,7 @@ function buildRunPayload(runId: string) {
     LEFT JOIN doc_revisions dr ON dr.doc_id = d.id
     AND dr.created_at = (SELECT MAX(created_at) FROM doc_revisions WHERE doc_id = d.id)
     WHERE jd.job_id = ?
-  `).all(run.job_id);
+  `).all(run.job_id) as DocPayloadRow[];
 
   // Get referenced databases (recent rows from each linked table)
   const linkedDbs = db.prepare(`
@@ -488,11 +539,11 @@ function buildRunPayload(runId: string) {
     WHERE jd.job_id = ?
   `).all(run.job_id) as { name: string; table_name: string }[];
 
-  const data: Record<string, any> = {};
+  const data: Record<string, TableDataRow[]> = {};
   for (const d of linkedDbs) {
     data[d.name] = db.prepare(
       `SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`
-    ).all();
+    ).all() as TableDataRow[];
   }
 
   // Decrypt env vars for this job
@@ -516,7 +567,7 @@ function buildRunPayload(runId: string) {
       SELECT eager, composio_cli_enabled, composio_mcp_enabled, composio_toolkits, composio_tools, cli,
         scope_type, workspace_id, project_id
       FROM agents WHERE id = ?
-    `).get(run.agent_id) as any
+    `).get(run.agent_id) as AgentPayloadRow | undefined
     : undefined;
   const parseList = (value: string | null | undefined) => {
     if (!value) return [];
@@ -541,8 +592,36 @@ function buildRunPayload(runId: string) {
       tools: parseList(agentRow.composio_tools),
     },
   } : undefined;
+
+  let effectiveProjectId = agentRow?.project_id || null;
+  let effectiveWorkspaceId = agentRow?.workspace_id || null;
+  if (effectiveProjectId && !effectiveWorkspaceId) {
+    const project = db.prepare(`SELECT workspace_id FROM projects WHERE id = ?`).get(effectiveProjectId) as { workspace_id: string | null } | undefined;
+    effectiveWorkspaceId = project?.workspace_id || null;
+  }
+  if (!effectiveProjectId) {
+    const linkedProject = db.prepare(`
+      SELECT p.id, p.workspace_id
+      FROM project_jobs pj
+      JOIN projects p ON p.id = pj.project_id
+      WHERE pj.job_id = ?
+      LIMIT 1
+    `).get(run.job_id) as { id: string; workspace_id: string | null } | undefined;
+    effectiveProjectId = linkedProject?.id || null;
+    effectiveWorkspaceId = effectiveWorkspaceId || linkedProject?.workspace_id || null;
+  }
+
+  const shouldSyncToolkit = agentRow?.cli === "openclaw" || agentRow?.cli === "hermes";
+  if (shouldSyncToolkit) {
+    importSkillsFromFilesystem();
+  }
+
   const skillQuery = [job.name, instructions].filter(Boolean).join("\n\n");
   const skills = run.agent_id ? resolveSkillsForAgent(run.agent_id, skillQuery) : [];
+  const toolkitLibraries = shouldSyncToolkit ? getToolkitLibraries({
+    workspaceId: effectiveWorkspaceId,
+    projectId: effectiveProjectId,
+  }) : undefined;
 
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
@@ -561,6 +640,7 @@ function buildRunPayload(runId: string) {
     data,
     env,
     skills,
+    ...(toolkitLibraries ? { toolkit_libraries: toolkitLibraries } : {}),
     attachments,
   };
 }

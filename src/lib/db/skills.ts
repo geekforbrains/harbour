@@ -136,11 +136,12 @@ function parseRegistryYaml(text: string): SkillInput[] {
       return raw.replace(/^["']|["']$/g, "");
     };
     const relPath = get("path");
-    const fullPath = relPath ? path.join(SKILLS_ROOT, relPath) : null;
+    const fullPath = relPath ? (path.isAbsolute(relPath) ? relPath : path.join(SKILLS_ROOT, relPath)) : null;
     const content = fullPath && fs.existsSync(fullPath) ? fs.readFileSync(fullPath, "utf-8") : null;
     return {
       id,
       name: get("name") || id,
+      description: get("description"),
       scope: ((get("scope") || "global") as SkillScope),
       owner_workspace: get("owner_workspace"),
       owner_project: get("owner_project"),
@@ -148,6 +149,10 @@ function parseRegistryYaml(text: string): SkillInput[] {
       status: ((get("status") || "active") as "active"),
       path: relPath,
       provenance: get("provenance") || "Imported from SKILLS/registry.yaml.",
+      version: get("version"),
+      dependencies: get("dependencies"),
+      tags: get("tags"),
+      triggers: get("triggers"),
       digest: content ? digestSkill(content) : null,
       content,
     };

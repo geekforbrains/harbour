@@ -27,6 +27,25 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 // ~750ms; this catches long silent stretches.
 const KILL_POLL_INTERVAL_MS = 10_000;
 
+function isFreeRouterModel(model) {
+  return model === "auto" || model === "freellm/auto";
+}
+
+function shouldRetryWithLocalDefault(result) {
+  const text = `${result.stdout || ""}\n${result.stderr || ""}`.toLowerCase();
+  return result.code !== 0 && (
+    text.includes("429") ||
+    text.includes("rate limit") ||
+    text.includes("rate-limited") ||
+    text.includes("quota") ||
+    text.includes("exhaust") ||
+    text.includes("all models") ||
+    text.includes("model_not_found") ||
+    text.includes("provider_error") ||
+    text.includes("no route")
+  );
+}
+
 function buildApiPrompt(api, apiKey) {
   const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
   const activityUrl = api.endpoints.post_activity.replace("POST ", "");
@@ -94,6 +113,57 @@ function renderAttachmentList(atts, indent = "") {
   return lines.join("\n");
 }
 
+function shouldRunToolkitSearch(payload, isResume) {
+  if (isResume) return false;
+  const cli = payload.agent?.cli;
+  return cli === "openclaw" || cli === "hermes";
+}
+
+function buildToolkitSearchPrompt() {
+  return `## First-Spawn Toolkit Search
+
+Before acting, search BORG's evolving toolkit libraries and load only the entries that match this run. Harbour refreshes and scopes these manifests immediately before OpenCLaw/Hermes spawn:
+
+- Skills: /Users/davidk/Documents/Borg Interface/SKILLS/registry.yaml
+- Plugins: /Users/davidk/Documents/Borg Interface/AGENT RESEARCH/agentops/libraries/plugins/registry.yaml
+- Sub-agents: /Users/davidk/Documents/Borg Interface/AGENT RESEARCH/agentops/libraries/sub-agents/registry.yaml
+- Policy: /Users/davidk/Documents/Borg Interface/AGENT RESEARCH/agentops/libraries/spawn-toolkit-search.md
+
+Use active global skills plus matching workspace/project/brand-kit skills. Select plugins only when the task, scope, and credential gates match. Search sub-agents only when delegation is explicitly requested or clearly useful for a control-plane workflow. Do not auto-install tools, spend money, deploy, send messages, or make destructive changes unless this run asks for that capability and the relevant approval gate is satisfied.
+
+Mention the toolkit entries you selected in your final run summary.\n\n`;
+}
+
+function renderToolkitLibraryPacket(toolkit) {
+  if (!toolkit?.libraries?.length) return "";
+  let out = `## Fresh Toolkit Library Packet\n\n`;
+  out += `Generated: ${toolkit.generated_at || "unknown"}\n`;
+  out += `Orgo VM root: ${toolkit.orgo?.vm_root || "/opt/borg/toolkit-libraries"} (${toolkit.orgo?.mount_mode || "read-only"})\n\n`;
+  for (const library of toolkit.libraries) {
+    const entries = Array.isArray(library.entries) ? library.entries : [];
+    out += `### ${library.label || library.id} (${entries.length})\n`;
+    out += `Manifest: ${library.path || "unknown"}\n`;
+    out += `VM mirror: ${library.vmPath || "unknown"}\n`;
+    for (const entry of entries) {
+      const scopes = entry.scope ? [entry.scope] : (entry.allowed_scopes || []);
+      const meta = [
+        entry.status && `status=${entry.status}`,
+        entry.category && `category=${entry.category}`,
+        scopes.length ? `scopes=${scopes.join("/")}` : null,
+        entry.credential_status && `creds=${entry.credential_status}`,
+        entry.load_policy && `load=${entry.load_policy}`,
+        entry.risk_level && `risk=${entry.risk_level}`,
+        entry.human_gate && `gate=${entry.human_gate}`,
+      ].filter(Boolean).join("; ");
+      const desc = (entry.description || entry.handoff_contract || "").replace(/\s+/g, " ").slice(0, 220);
+      const triggers = Array.isArray(entry.triggers) && entry.triggers.length ? ` Triggers: ${entry.triggers.slice(0, 6).join(", ")}.` : "";
+      out += `- ${entry.id}: ${entry.name}${meta ? ` [${meta}]` : ""}${desc ? ` — ${desc}` : ""}${triggers}\n`;
+    }
+    out += "\n";
+  }
+  return out;
+}
+
 function buildPrompt(payload, apiKey, isResume) {
   const apiPrompt = payload.api ? buildApiPrompt(payload.api, apiKey) : "";
   const allAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
@@ -144,6 +214,11 @@ function buildPrompt(payload, apiKey, isResume) {
   }
 
   let prompt = "";
+
+  if (shouldRunToolkitSearch(payload, isResume)) {
+    prompt += buildToolkitSearchPrompt();
+    prompt += renderToolkitLibraryPacket(payload.toolkit_libraries);
+  }
 
   if (payload.job?.name) {
     prompt += `# Job: ${payload.job.name}\n\n`;
@@ -487,7 +562,7 @@ async function processNextRun(runner) {
   // Build CLI command — job-level model/thinking override agent defaults
   const model = payload.job?.model || agentModel;
   const thinking = payload.job?.thinking || agentThinking;
-  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
+  let cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
 
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
@@ -577,14 +652,34 @@ async function processNextRun(runner) {
   // Execute CLI tool with streaming (use per-job timeout, fallback to 30 min)
   const timeoutMinutes = payload.job?.timeout_minutes || 30;
   const timeoutMs = timeoutMinutes * 60 * 1000;
+  const startupTimeoutMs = ["hermes", "openclaw"].includes(cli)
+    ? Math.min(timeoutMs, 5 * 60 * 1000)
+    : undefined;
   let result;
   try {
     result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
       timeoutMs,
+      startupTimeoutMs,
       onLine,
       signal: killController.signal,
       extraEnv: payload.env || {},
     });
+    if (!killed && isFreeRouterModel(model) && shouldRetryWithLocalDefault(result)) {
+      await flushEvents();
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: "Free API router was unavailable or exhausted. Retrying once with the configured free local default model.",
+        });
+      } catch { /* best effort */ }
+      cmd = provider.buildCommand(prompt, null, workingDir, sessionId, isNewSession, thinking);
+      result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
+        timeoutMs,
+        startupTimeoutMs,
+        onLine,
+        signal: killController.signal,
+        extraEnv: payload.env || {},
+      });
+    }
   } catch (err) {
     clearInterval(killPollTimer);
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
