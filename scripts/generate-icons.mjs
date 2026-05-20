@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync } from "fs";
 import { join } from "path";
 
 const PRIMARY = "#5043a3";

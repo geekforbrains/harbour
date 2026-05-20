@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, getActorFromAuth } from "@/lib/auth";
 import { getDocById, updateDoc, renameDoc, deleteDoc } from "@/lib/db/queries";
 

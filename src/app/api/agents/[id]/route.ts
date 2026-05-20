@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
 import { getAgentById, updateAgent, deleteAgent } from "@/lib/db/queries";
 import { removeRunnerConfig, loadRunners, saveRunnerConfig } from "@/lib/runners";

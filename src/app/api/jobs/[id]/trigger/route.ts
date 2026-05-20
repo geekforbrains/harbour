@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { getJobById, triggerJobRun } from "@/lib/db/queries";
 

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getRunById, addRunOutput, listRunOutput, isKillRequested } from "@/lib/db/queries";
 
