@@ -9,11 +9,13 @@
 - Added OpenClaw/Hermes runtime coverage checks before CLI spawn, with unknown future providers failing closed until mapped to SAGE-native or wrapper coverage.
 - Added `runtime_security` metadata to `/api/toolkit-libraries` and OpenClaw/Hermes run payloads.
 - Excluded nested `deer-flow` and `freellmapi` workspaces from Harbour Vitest so `npm run test` covers Harbour's own test suite cleanly.
+- Upgraded Next.js to `16.2.6` and pinned PostCSS resolution to `8.5.15`, clearing the Docker/npm audit baseline to zero known vulnerabilities.
 
 ### Deploy
 
 - Prepared the current Harbour packet for deployment after clearing full lint to zero warnings and re-verifying TypeScript, production build, whitespace checks, and browser smoke.
 - Fixed the Docker standalone runtime packaging by copying Next 16/Turbopack server chunks and hashed external native modules into the runtime image.
+- Rebuilt the Docker deployment after the dependency security patch so the running image no longer reports the previous Next/PostCSS audit findings.
 
 ### Toolkit Libraries
 
@@ -58,6 +60,10 @@
 ### AgentOps Sync
 
 - AgentOps-synced Harbour jobs now compute `next_run_at` when an active default job is imported from the toolkit sync, so scheduled agents such as `github-trend-intelligence-daily` are actually due inside Harbour after sync.
+- Synced `yt-pipeline-full` from AgentOps as the project-scoped **YouTube Scraper Agent — Full Pipeline** Harbour agent.
+- Added the inactive on-demand `yt-pipeline-full-on-demand` job and local runner config without scheduling or creating any YouTube runs.
+- Guarded the job instructions so safe checks default to dry-run discovery and execution requires explicit channel/video scope.
+- Linked AgentOps-synced default jobs into their project scope so project-filtered Harbour job views include imported agent jobs.
 
 ### Deployment
 
