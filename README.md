@@ -104,6 +104,8 @@ Built-in support for running agents via [Claude Code](https://claude.ai/claude-c
 2. Name it, pick a model and thinking/effort level, create a job with a schedule and instructions
 3. Install the runner:
 
+> **Docker deployments — create via API.** If you're running Harbour as a Docker container, the dashboard's CLI selector for "Harbour Agent" detects available binaries inside the container, not on the host. Since Claude Code / Codex / Gemini CLI run on the host (via the runner), they appear unavailable in the UI. Workaround: create Harbour Agents via the API instead — `POST /api/agents` with `type: "harbour"`, `cli: "claude"` (or `codex` / `gemini`), and `remote: true`. Use the dashboard for everything else (pinning docs, creating jobs, viewing runs).
+
 ```bash
 npm run harbour -- agent install
 ```
