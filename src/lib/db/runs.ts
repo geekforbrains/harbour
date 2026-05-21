@@ -8,6 +8,7 @@ import { importSkillsFromFilesystem, resolveSkillsForAgent } from "./skills";
 import { getToolkitLibraries, RUNTIME_SECURITY } from "../toolkit-libraries";
 import { redactSecrets } from "../redaction";
 import { ingestNotificationsForRun } from "./notifications";
+import { defaultRunTitle } from "../run-title";
 
 type RunRow = {
   [key: string]: unknown;
@@ -43,6 +44,7 @@ type JobPayloadRow = {
   model: string | null;
   thinking: string | null;
   credential_profile_id: string | null;
+  title_format: string | null;
   timeout_minutes: number | null;
 };
 type AgentPayloadRow = {
@@ -59,13 +61,28 @@ type AgentPayloadRow = {
 type DocPayloadRow = { id: string; title: string; content: string | null };
 type TableDataRow = Record<string, unknown>;
 
+const RUN_HISTORY_STATUSES = new Set(["scheduled", "running", "waiting", "pending", "done", "failed", "skipped", "killed"]);
+
+export type RunsHistoryFilters = {
+  statuses?: string[];
+  includeSkipped?: boolean;
+  agentId?: string;
+  jobId?: string;
+  projectId?: string;
+  from?: number;
+  to?: number;
+  sort?: "newest" | "oldest";
+};
+
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
+  const job = db.prepare(`SELECT name FROM jobs WHERE id = ?`).get(jobId) as NamedJobRow | undefined;
+  const title = job ? defaultRunTitle(job.name, Math.floor(Date.now() / 1000)) : null;
   db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, claimed_at)
-    VALUES (?, ?, ?, 'running', unixepoch())
-  `).run(id, jobId, agentId || null);
+    INSERT INTO runs (id, job_id, agent_id, status, claimed_at, title)
+    VALUES (?, ?, ?, 'running', unixepoch(), ?)
+  `).run(id, jobId, agentId || null, title);
   return getRunById(id);
 }
 
@@ -134,6 +151,15 @@ export function requestKillRun(id: string): boolean {
   return true;
 }
 
+export function setRunTitle(id: string, title: string) {
+  const db = getDb();
+  const result = db.prepare(
+    `UPDATE runs SET title = ?, updated_at = unixepoch() WHERE id = ?`
+  ).run(title, id);
+  if (result.changes === 0) return null;
+  return getRunById(id);
+}
+
 export function updateRunSessionId(id: string, sessionId: string, cwd?: string) {
   const db = getDb();
   if (cwd) {
@@ -155,26 +181,38 @@ export function deleteRun(id: string) {
   deleteRunAttachmentsDir(id);
 }
 
-export function listRunsByJob(jobId: string, limit = 50) {
+export function listRunsByJob(jobId: string, limit = 50, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.job_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(jobId, limit);
+    WHERE r.job_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(jobId, limit, offset);
 }
 
-export function listRunsByAgent(agentId: string, limit = 50) {
+export function listRunsByAgent(agentId: string, limit = 50, opts: { includeSkipped?: boolean; offset?: number } = {}) {
   const db = getDb();
+  const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
+  const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.active as job_active,
+           j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only,
+           a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.agent_id = ? ORDER BY r.created_at DESC LIMIT ?
-  `).all(agentId, limit);
+    WHERE r.agent_id = ? ${skipFilter}
+    ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(agentId, limit, offset);
 }
 
 function runScopeFilter(projectId?: string, workspaceId?: string) {
@@ -248,9 +286,68 @@ export function listRecentRuns(limit = 10, projectId?: string, workspaceId?: str
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed') ${scope.sql}
+    WHERE r.status IN ('done', 'failed', 'killed') ${scope.sql}
     ORDER BY r.completed_at DESC LIMIT ?
   `).all(...scope.values, limit);
+}
+
+export function listRunsHistory(filters: RunsHistoryFilters = {}, limit = 25, offset = 0) {
+  const db = getDb();
+  const safeLimit = Math.min(Math.max(Math.floor(limit) || 25, 1), 100);
+  const safeOffset = Math.max(Math.floor(offset) || 0, 0);
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  const statuses = (filters.statuses?.length
+    ? filters.statuses
+    : ["running", "waiting", "pending", "done", "failed", "killed"]
+  ).filter(status => RUN_HISTORY_STATUSES.has(status));
+
+  if (statuses.length) {
+    clauses.push(`r.status IN (${statuses.map(() => "?").join(", ")})`);
+    values.push(...statuses);
+  } else if (!filters.includeSkipped) {
+    clauses.push(`r.status != 'skipped'`);
+  }
+  if (!filters.includeSkipped && !statuses.includes("skipped")) {
+    clauses.push(`r.status != 'skipped'`);
+  }
+  if (filters.agentId) {
+    clauses.push(`r.agent_id = ?`);
+    values.push(filters.agentId);
+  }
+  if (filters.jobId) {
+    clauses.push(`r.job_id = ?`);
+    values.push(filters.jobId);
+  }
+  if (filters.projectId) {
+    clauses.push(`r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)`);
+    values.push(filters.projectId);
+  }
+  if (Number.isFinite(filters.from)) {
+    clauses.push(`COALESCE(r.completed_at, r.updated_at, r.created_at) >= ?`);
+    values.push(filters.from);
+  }
+  if (Number.isFinite(filters.to)) {
+    clauses.push(`COALESCE(r.completed_at, r.updated_at, r.created_at) <= ?`);
+    values.push(filters.to);
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const direction = filters.sort === "oldest" ? "ASC" : "DESC";
+  const rows = db.prepare(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    ${where}
+    ORDER BY COALESCE(r.completed_at, r.updated_at, r.created_at) ${direction}, r.created_at ${direction}
+    LIMIT ? OFFSET ?
+  `).all(...values, safeLimit + 1, safeOffset);
+
+  return {
+    runs: rows.slice(0, safeLimit),
+    hasMore: rows.length > safeLimit,
+  };
 }
 
 // Activity log
@@ -653,6 +750,7 @@ function buildRunPayload(runId: string) {
       model: job.model || null,
       thinking: job.thinking || null,
       credential_profile_id: job.credential_profile_id || null,
+      title_format: job.title_format || null,
       timeout_minutes: job.timeout_minutes ?? 30,
     },
     ...(agent ? { agent } : {}),

@@ -48,6 +48,7 @@ function shouldRetryWithLocalDefault(result) {
 }
 
 function buildApiPrompt(api, apiKey) {
+  const setTitleUrl = api.endpoints.set_title?.replace("PUT ", "") || "";
   const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
   const activityUrl = api.endpoints.post_activity.replace("POST ", "");
   const uploadUrl = api.endpoints.upload_attachment?.replace("POST ", "") || "";
@@ -56,6 +57,9 @@ function buildApiPrompt(api, apiKey) {
   return `## Harbour API
 
 Your output will be posted as a comment on this run. Write a clear, concise summary.
+
+Before doing anything else, set a short title for this run (max 80 chars) so humans can identify it on the dashboard:
+  curl -X PUT ${setTitleUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"title":"your short title"}'
 
 You MUST set a final run status when finished. If you don't, the run will be marked as failed.
 Use these curl commands with the provided API key:

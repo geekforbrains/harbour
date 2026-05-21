@@ -11,6 +11,7 @@ function buildApiSection(req: NextRequest, runId: string) {
   return {
     base_url: base,
     endpoints: {
+      set_title: `PUT ${base}/api/runs/${runId}/title`,
       update_status: `PUT ${base}/api/runs/${runId}/status`,
       post_activity: `POST ${base}/api/runs/${runId}/activity`,
       upload_attachment: `POST ${base}/api/runs/${runId}/attachments`,
@@ -23,6 +24,7 @@ function buildApiSection(req: NextRequest, runId: string) {
     },
     status_options: ["done", "failed", "waiting"],
     notes: [
+      "Set a short run title via set_title before doing anything else — this is how humans identify the run on the dashboard.",
       "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
       "Post activity messages to log progress — these are visible on the dashboard.",
       "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",

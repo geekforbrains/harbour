@@ -54,6 +54,15 @@ export function resetDb() {
   _db = null;
 }
 
+function withForeignKeysDisabled(db: Database.Database, fn: () => void) {
+  db.pragma("foreign_keys = OFF");
+  try {
+    fn();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
 export function initializeSchema(db: Database.Database) {
   db.exec(`
     -- Users: human accounts for dashboard auth
@@ -101,7 +110,10 @@ export function initializeSchema(db: Database.Database) {
       schedule TEXT NOT NULL,
       workflow_command TEXT,
       workflow_only INTEGER NOT NULL DEFAULT 0,
-
+      model TEXT,
+      thinking TEXT,
+      credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL,
+      title_format TEXT,
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       one_off INTEGER NOT NULL DEFAULT 0,
       active INTEGER NOT NULL DEFAULT 1,
@@ -121,6 +133,10 @@ export function initializeSchema(db: Database.Database) {
       claimed_at INTEGER,
       completed_at INTEGER,
       kill_requested_at INTEGER,
+      extra_instructions TEXT,
+      session_id TEXT,
+      session_cwd TEXT,
+      title TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -492,6 +508,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck?.sql && !runCheck.sql.includes("pending")) {
     db.exec(`
+      PRAGMA foreign_keys = OFF;
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -509,6 +526,7 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+      PRAGMA foreign_keys = ON;
     `);
   }
 
@@ -525,6 +543,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
     db.exec(`
+      PRAGMA foreign_keys = OFF;
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -544,6 +563,7 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+      PRAGMA foreign_keys = ON;
     `);
   }
 
@@ -551,6 +571,7 @@ export function initializeSchema(db: Database.Database) {
   const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
     db.exec(`
+      PRAGMA foreign_keys = OFF;
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -571,6 +592,7 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+      PRAGMA foreign_keys = ON;
     `);
   }
 
@@ -700,7 +722,7 @@ export function initializeSchema(db: Database.Database) {
     db.exec(`ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
   }
 
-  // Migrations: add model and thinking columns to jobs table
+  // Migrations: add model, thinking, credential profile, and title format columns to jobs table
   const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[];
   if (!jobCols2.some((c) => c.name === "model")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
@@ -710,6 +732,9 @@ export function initializeSchema(db: Database.Database) {
   }
   if (!jobCols2.some((c) => c.name === "credential_profile_id")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL`);
+  }
+  if (!jobCols2.some((c) => c.name === "title_format")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN title_format TEXT`);
   }
 
   // Migrations: admin API keys table
@@ -728,7 +753,7 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
-  // Migrations: add extra_instructions, session_id, session_cwd columns to runs
+  // Migrations: add extra_instructions, session_id, session_cwd, and title columns to runs
   const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as TableInfoRow[];
   if (!runCols.some((c) => c.name === "extra_instructions")) {
     db.exec(`ALTER TABLE runs ADD COLUMN extra_instructions TEXT`);
@@ -738,6 +763,9 @@ export function initializeSchema(db: Database.Database) {
   }
   if (!runCols.some((c) => c.name === "session_cwd")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
+  }
+  if (!runCols.some((c) => c.name === "title")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN title TEXT`);
   }
 
   // Migrations: rename check_command → workflow_command, add workflow_only
@@ -753,7 +781,8 @@ export function initializeSchema(db: Database.Database) {
   const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as TableInfoRow[])
     .find((c) => c.name === "agent_id");
   if (jobAgentCol?.notnull === 1) {
-    db.exec(`
+    withForeignKeysDisabled(db, () => db.exec(`
+      DROP TABLE IF EXISTS jobs_new;
       CREATE TABLE jobs_new (
         id TEXT PRIMARY KEY,
         agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
@@ -772,30 +801,32 @@ export function initializeSchema(db: Database.Database) {
         model TEXT,
         thinking TEXT,
         workflow_only INTEGER NOT NULL DEFAULT 0,
-        credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL
+        credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL,
+        title_format TEXT
       );
       INSERT INTO jobs_new (
         id, agent_id, name, description, instructions, schedule, workflow_command,
         active, last_run_at, next_run_at, created_at, updated_at, one_off,
-        timeout_minutes, model, thinking, workflow_only, credential_profile_id
+        timeout_minutes, model, thinking, workflow_only, credential_profile_id, title_format
       )
       SELECT
         id, agent_id, name, description, instructions, schedule, workflow_command,
         active, last_run_at, next_run_at, created_at, updated_at, one_off,
-        timeout_minutes, model, thinking, workflow_only, credential_profile_id
+        timeout_minutes, model, thinking, workflow_only, credential_profile_id, title_format
       FROM jobs;
       DROP TABLE jobs;
       ALTER TABLE jobs_new RENAME TO jobs;
       CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
-    `);
+    `));
   }
 
   // Migration: make agent_id nullable on runs (for agentless workflow runs)
   const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as TableInfoRow[])
     .find((c) => c.name === "agent_id");
   if (runAgentCol?.notnull === 1) {
-    db.exec(`
+    withForeignKeysDisabled(db, () => db.exec(`
+      DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -809,15 +840,25 @@ export function initializeSchema(db: Database.Database) {
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         extra_instructions TEXT,
         session_id TEXT,
-        session_cwd TEXT
+        session_cwd TEXT,
+        title TEXT
       );
-      INSERT INTO runs_new SELECT * FROM runs;
+      INSERT INTO runs_new (
+        id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at,
+        kill_requested_at, created_at, updated_at, extra_instructions,
+        session_id, session_cwd, title
+      )
+      SELECT
+        id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at,
+        kill_requested_at, created_at, updated_at, extra_instructions,
+        session_id, session_cwd, title
+      FROM runs;
       DROP TABLE runs;
       ALTER TABLE runs_new RENAME TO runs;
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-    `);
+    `));
   }
 
   db.exec(`
@@ -856,6 +897,9 @@ export function initializeSchema(db: Database.Database) {
     || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const toolkitSchedule = normalizeSchedule("daily at 7am") || JSON.stringify({ days: [0, 1, 2, 3, 4, 5, 6], time: "07:00" });
   const toolkitNextRunAt = getNextRunTime(toolkitSchedule, undefined, timezone);
+  const existingJobCount = (db.prepare(`SELECT COUNT(*) as n FROM jobs`).get() as { n: number }).n;
+  const hasToolkitJob = db.prepare(`SELECT 1 FROM jobs WHERE id = ?`).get("harbour-toolkit-library-sync-7am");
+  if (existingJobCount === 0 || hasToolkitJob) {
   db.prepare(`
     INSERT INTO jobs (
       id, agent_id, name, description, instructions, schedule, workflow_command,
@@ -882,4 +926,5 @@ export function initializeSchema(db: Database.Database) {
     "node '/Users/davidk/Documents/Borg Interface/harbour/scripts/sync-toolkit-libraries.mjs'",
     toolkitNextRunAt,
   );
+  }
 }
