@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { runAgents } from "./lib/runner.mjs";
-import { installRunner, uninstallRunner } from "./lib/install.mjs";
+import { installRunner, printRunnerStatus, repairRunner, uninstallRunner } from "./lib/install.mjs";
 import { listRunners } from "./lib/config.mjs";
 import { connectAgent } from "./lib/connect.mjs";
 
@@ -22,9 +22,12 @@ Usage:
   harbour dev                Start the server (development)
   harbour agent list         List configured harbour agents
   harbour agent run          Poll all harbour agents once
+  harbour agent status       Inspect local launchd runner health
+  harbour agent repair       Repair stale local launchd runner paths
   harbour agent connect <blob>   Register a remote agent (paste the blob from
                                  harbour's "Connect remote runner" panel)
-  harbour agent install      Install cron job for automatic polling
+  harbour agent install      Install launchd polling
+  harbour agent install --repair  Reinstall/repair launchd polling
   harbour agent uninstall    Remove the cron job
   `.trim());
 }
@@ -49,11 +52,17 @@ async function main() {
         case "run":
           await runAgents();
           break;
+        case "status":
+          printRunnerStatus();
+          break;
+        case "repair":
+          repairRunner();
+          break;
         case "connect":
           await connectAgent(rest[0]);
           break;
         case "install":
-          installRunner();
+          installRunner({ repair: rest.includes("--repair") });
           break;
         case "uninstall":
           uninstallRunner();
