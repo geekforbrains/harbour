@@ -8,7 +8,7 @@ export type Project = { id: string; workspace_id?: string | null; name: string; 
 
 export type AppContextType = {
   user: User | null;
-  waitingCount: number;
+  notificationCount: number;
   timezone: string;
   workspaces: Workspace[];
   projects: Project[];
@@ -20,7 +20,7 @@ export type AppContextType = {
 
 export const AppContext = createContext<AppContextType>({
   user: null,
-  waitingCount: 0,
+  notificationCount: 0,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   workspaces: [],
   projects: [],

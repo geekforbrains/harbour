@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/schema";
 import { getToolkitLibraries } from "@/lib/toolkit-libraries";
 
 type AgentScope = {
+  cli?: string | null;
   workspace_id?: string | null;
   project_id?: string | null;
 };
@@ -24,14 +25,16 @@ export const GET = withAuth(async (req, auth) => {
     return NextResponse.json(getToolkitLibraries({
       workspaceId: resolveAgentWorkspace(agent),
       projectId: agent?.project_id || null,
+      agentCli: agent?.cli || null,
     }));
   }
 
   const workspaceId = req.nextUrl.searchParams.get("workspaceId");
   const projectId = req.nextUrl.searchParams.get("projectId");
+  const agentCli = req.nextUrl.searchParams.get("agentCli");
   const scoped = workspaceId || projectId;
   return NextResponse.json(getToolkitLibraries(scoped
-    ? { workspaceId, projectId }
-    : { includeAll: true }
+    ? { workspaceId, projectId, agentCli }
+    : { includeAll: true, agentCli }
   ));
 });

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Bot, Terminal, Plus, Zap, Pause, Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { CreateDialog } from "@/components/app/create-dialog";
@@ -13,6 +13,7 @@ import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { useProjectFilter } from "@/lib/hooks/use-project-filter";
+import { cn } from "@/lib/utils";
 
 type Run = {
   id: string; status: string; job_id: string; job_name: string; job_active: number;
@@ -86,11 +87,19 @@ function RunRow({ run }: { run: Run }) {
 }
 
 const STATUS_META: Record<string, { title: string; description: string }> = {
-  waiting:   { title: "Inbox",     description: "Runs waiting for execution." },
+  waiting:   { title: "Waiting",   description: "Runs waiting for human input or pickup." },
   running:   { title: "Running",   description: "Runs currently in progress." },
   scheduled: { title: "Scheduled", description: "Runs scheduled for the future." },
-  recent:    { title: "Archive",   description: "Recently completed runs." },
+  recent:    { title: "Recent",    description: "Recently completed runs." },
 };
+
+const FILTERS = [
+  { href: "/", label: "All", value: null },
+  { href: "/?status=waiting", label: "Waiting", value: "waiting" },
+  { href: "/?status=running", label: "Running", value: "running" },
+  { href: "/?status=scheduled", label: "Scheduled", value: "scheduled" },
+  { href: "/?status=recent", label: "Recent", value: "recent" },
+];
 
 export default function RunsPage() {
   const [showCreate, setShowCreate] = useState(false);
@@ -130,12 +139,27 @@ export default function RunsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{meta?.title ?? "Runs"}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{meta?.description ?? "All run activity."}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">All Runs</h1>
+          <p className="text-sm text-muted-foreground mt-1">{meta?.description ?? "All scheduled, active, waiting, and recent run activity."}</p>
         </div>
         <Button onClick={() => setShowCreate(true)} size="sm">
           <Plus className="h-4 w-4 mr-1.5" /> New Run
         </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/20 p-1">
+        {FILTERS.map(filter => {
+          const active = (statusFilter || null) === filter.value;
+          return (
+            <Link
+              key={filter.label}
+              href={filter.href}
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-8", active && "bg-background shadow-sm")}
+            >
+              {filter.label}
+            </Link>
+          );
+        })}
       </div>
 
       {running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (

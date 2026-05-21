@@ -35,7 +35,10 @@ export function ProjectLinkDialog({
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
     Promise.all([
       // Fetch ALL items (no project filter)
       fetch(fetchAllUrl).then(r => r.json()),
@@ -48,6 +51,9 @@ export function ProjectLinkDialog({
       setLinkedItems(linkedArr.map((i: any) => ({ id: i.id, name: i.name || i.title || i.name })));
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [open, fetchAllUrl, projectId]);
 
   const linkedIds = new Set(linkedItems.map(i => i.id));

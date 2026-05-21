@@ -5,6 +5,9 @@ node_modules
 .claude
 .playwright-cli
 .worktreeinclude
+deer-flow
+freellmapi
+graphify-out
 coverage
 out
 build
@@ -19,6 +22,7 @@ Dockerfile
 docker-compose*.yml
 deploy
 data
+data-remote
 harbour.db
 harbour.db-wal
 harbour.db-shm

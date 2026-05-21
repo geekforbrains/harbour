@@ -12,31 +12,31 @@ import {
   Bot,
   FileText,
   Database,
-  KeyRound,
-  Users,
+  Radar,
   Settings,
   MoreHorizontal,
   MessageSquare,
+  Inbox,
 } from "lucide-react";
 
 export function MobileBottomNav() {
   const pathname = usePathname();
-  const { waitingCount } = useApp();
+  const { notificationCount } = useApp();
   const [moreOpen, setMoreOpen] = useState(false);
   const router = useRouter();
 
   const tabs = [
     { href: "/captain", label: "Captain", icon: MessageSquare, match: (p: string) => p.startsWith("/captain") },
-    { href: "/", label: "Runs", icon: Activity, badge: waitingCount, match: (p: string) => p === "/" || p.startsWith("/runs") },
-    { href: "/jobs", label: "Jobs", icon: Briefcase, match: (p: string) => p.startsWith("/jobs") },
+    { href: "/inbox", label: "Inbox", icon: Inbox, badge: notificationCount, match: (p: string) => p.startsWith("/inbox") },
+    { href: "/", label: "Runs", icon: Activity, match: (p: string) => p === "/" || p.startsWith("/runs") },
+    { href: "/jobs", label: "Goals", icon: Briefcase, match: (p: string) => p.startsWith("/jobs") },
     { href: "/agents", label: "Agents", icon: Bot, match: (p: string) => p.startsWith("/agents") },
   ];
 
   const moreLinks = [
     { href: "/docs", label: "Docs", icon: FileText },
+    { href: "/social", label: "Social", icon: Radar },
     { href: "/databases", label: "Databases", icon: Database },
-    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
-    { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
@@ -44,7 +44,7 @@ export function MobileBottomNav() {
 
   return (
     <>
-      <div className="shrink-0 border-t bg-card safe-bottom md:hidden">
+      <div className="safe-bottom shrink-0 border-t border-[#ededed] bg-white/90 backdrop-blur md:hidden">
         <nav className="flex items-center justify-around px-2">
           {tabs.map((tab) => {
             const isActive = tab.match(pathname);
@@ -52,8 +52,8 @@ export function MobileBottomNav() {
               <Link
                 key={tab.href}
                 href={tab.href}
-                className={`relative flex flex-col items-center gap-0.5 px-3 py-2.5 text-[11px] font-medium transition-colors ${
-                  isActive ? "text-primary" : "text-muted-foreground"
+                className={`relative flex flex-col items-center gap-0.5 rounded-xl px-3 py-2.5 text-[11px] font-medium transition-all ${
+                  isActive ? "bg-[#202020] text-white" : "text-muted-foreground"
                 }`}
               >
                 <tab.icon className="h-5 w-5" />
@@ -68,8 +68,8 @@ export function MobileBottomNav() {
           })}
           <button
             onClick={() => setMoreOpen(true)}
-            className={`flex flex-col items-center gap-0.5 px-3 py-2.5 text-[11px] font-medium transition-colors ${
-              isMoreActive ? "text-primary" : "text-muted-foreground"
+            className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-2.5 text-[11px] font-medium transition-all ${
+              isMoreActive ? "bg-[#202020] text-white" : "text-muted-foreground"
             }`}
           >
             <MoreHorizontal className="h-5 w-5" />
@@ -79,7 +79,7 @@ export function MobileBottomNav() {
       </div>
 
       <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
-        <SheetContent side="bottom" className="rounded-t-2xl px-2 pb-8">
+        <SheetContent side="bottom" className="rounded-t-[28px] px-2 pb-8">
           <nav className="grid grid-cols-3 gap-1 pt-2">
             {moreLinks.map((link) => {
               const isActive = pathname.startsWith(link.href);
@@ -91,7 +91,7 @@ export function MobileBottomNav() {
                     router.push(link.href);
                   }}
                   className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-4 text-sm font-medium transition-colors ${
-                    isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent"
+                    isActive ? "bg-[#202020] text-white" : "text-muted-foreground hover:bg-white"
                   }`}
                 >
                   <link.icon className="h-5 w-5" />

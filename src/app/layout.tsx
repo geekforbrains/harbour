@@ -12,13 +12,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
+
 export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
-  title: "Harbour",
-  description: "Project management for AI agents",
+  metadataBase: new URL(appUrl),
+  title: "BORG Interface",
+  description: "Operator interface and control plane for AI agents",
   manifest: "/manifest.json",
   icons: {
     icon: [
@@ -30,11 +33,11 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Harbour",
+    title: "BORG Interface",
   },
   openGraph: {
-    title: "Harbour",
-    description: "Project management for AI agents",
+    title: "BORG Interface",
+    description: "Operator interface and control plane for AI agents",
     images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
 };
@@ -55,7 +58,7 @@ export default function RootLayout({
         <script
           suppressHydrationWarning
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("harbour_theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme:dark)").matches);document.documentElement.classList.toggle("dark",d);document.querySelector('meta[name="theme-color"]').setAttribute("content",d?"#111118":"#ffffff")}catch(e){}})()`,
+            __html: `(function(){try{var t=localStorage.getItem("harbour_theme")||"light";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme:dark)").matches);document.documentElement.classList.toggle("dark",d);document.querySelector('meta[name="theme-color"]').setAttribute("content",d?"#111118":"#ffffff")}catch(e){}})()`,
           }}
         />
       </head>

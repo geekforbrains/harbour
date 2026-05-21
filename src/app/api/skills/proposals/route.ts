@@ -23,6 +23,7 @@ export const POST = withAuth(async (req, auth) => {
     provenance: body.provenance || `Proposed through Harbour by ${auth.type}.`,
     version: body.version || null,
     dependencies: body.dependencies || null,
+    agent_compatibility: body.agentCompatibility || body.agent_compatibility || ["openclaw", "hermes"],
     tags: body.tags || null,
     triggers: body.triggers || null,
     digest: body.digest || null,

@@ -30,7 +30,6 @@ type ProcessManager = {
 const GLOBAL_KEY = "__harbour_captain_pm__";
 
 function getManager(): ProcessManager {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = { active: new Map() };

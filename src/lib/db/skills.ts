@@ -20,6 +20,7 @@ export type SkillRecord = {
   provenance: string | null;
   version: string | null;
   dependencies: string | null;
+  agent_compatibility: string | null;
   tags: string | null;
   triggers: string | null;
   digest: string | null;
@@ -35,6 +36,7 @@ type SkillProposalRecord = Omit<SkillRecord, "status"> & {
 
 type AgentScopeRow = {
   id: string;
+  cli: string | null;
   scope_type: SkillScope | "global" | "workspace" | "project";
   workspace_id: string | null;
   project_id: string | null;
@@ -53,6 +55,7 @@ type SkillInput = {
   provenance?: string | string[] | null;
   version?: string | null;
   dependencies?: string[] | string | null;
+  agent_compatibility?: string[] | string | null;
   tags?: string[] | string | null;
   triggers?: string[] | string | null;
   digest?: string | null;
@@ -66,7 +69,9 @@ function slugify(value: string) {
 function encodeList(value?: string[] | string | null) {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
   if (typeof value === "string" && value.trim()) {
-    return JSON.stringify(value.split(",").map(v => v.trim()).filter(Boolean));
+    const trimmed = value.trim();
+    const raw = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+    return JSON.stringify(raw.split(",").map(v => v.trim().replace(/^["']|["']$/g, "")).filter(Boolean));
   }
   return null;
 }
@@ -115,6 +120,7 @@ function parseSkillMarkdown(content: string, fallbackPath?: string): SkillInput 
     path: fallbackPath || null,
     provenance: meta.provenance || "Imported into Harbour skill library.",
     version: meta.version || null,
+    agent_compatibility: meta.agent_compatibility || "openclaw, hermes",
     tags: meta.tags || null,
     triggers: meta.triggers || null,
     digest: digestSkill(content),
@@ -151,6 +157,7 @@ function parseRegistryYaml(text: string): SkillInput[] {
       provenance: get("provenance") || "Imported from SKILLS/registry.yaml.",
       version: get("version"),
       dependencies: get("dependencies"),
+      agent_compatibility: get("agent_compatibility") || "openclaw, hermes",
       tags: get("tags"),
       triggers: get("triggers"),
       digest: content ? digestSkill(content) : null,
@@ -165,8 +172,8 @@ export function upsertSkill(input: SkillInput) {
   db.prepare(`
     INSERT INTO skills (
       id, name, description, scope, owner_workspace, owner_project, source_agent, status,
-      path, provenance, version, dependencies, tags, triggers, digest, content, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+      path, provenance, version, dependencies, agent_compatibility, tags, triggers, digest, content, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       description = excluded.description,
@@ -179,6 +186,7 @@ export function upsertSkill(input: SkillInput) {
       provenance = excluded.provenance,
       version = excluded.version,
       dependencies = excluded.dependencies,
+      agent_compatibility = excluded.agent_compatibility,
       tags = excluded.tags,
       triggers = excluded.triggers,
       digest = excluded.digest,
@@ -197,6 +205,7 @@ export function upsertSkill(input: SkillInput) {
     encodeText(input.provenance),
     input.version || null,
     encodeList(input.dependencies),
+    encodeList(input.agent_compatibility || ["openclaw", "hermes"]),
     encodeList(input.tags),
     encodeList(input.triggers),
     input.digest || null,
@@ -245,8 +254,8 @@ export function createSkillProposal(input: SkillInput & { content: string }) {
   db.prepare(`
     INSERT INTO skill_proposals (
       id, name, description, scope, owner_workspace, owner_project, source_agent,
-      path, provenance, version, dependencies, tags, triggers, digest, content, status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', unixepoch())
+      path, provenance, version, dependencies, agent_compatibility, tags, triggers, digest, content, status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', unixepoch())
   `).run(
     id,
     input.name,
@@ -259,6 +268,7 @@ export function createSkillProposal(input: SkillInput & { content: string }) {
     encodeText(input.provenance),
     input.version || null,
     encodeList(input.dependencies),
+    encodeList(input.agent_compatibility || ["openclaw", "hermes"]),
     encodeList(input.tags),
     encodeList(input.triggers),
     input.digest || digestSkill(input.content),
@@ -294,6 +304,7 @@ export function promoteSkillProposal(id: string) {
     provenance: proposal.provenance,
     version: proposal.version,
     dependencies: proposal.dependencies,
+    agent_compatibility: proposal.agent_compatibility,
     tags: proposal.tags,
     triggers: proposal.triggers,
     digest: proposal.digest,
@@ -335,7 +346,9 @@ function decodeList(value: string | null) {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
-    return value.split(",").map(v => v.trim()).filter(Boolean);
+    const trimmed = value.trim();
+    const raw = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+    return raw.split(",").map(v => v.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
   }
 }
 
@@ -351,9 +364,16 @@ function skillMatchesRun(skill: SkillRecord, queryText?: string) {
   return fallback.split(/\s+/).some(token => token.length > 4 && query.includes(token));
 }
 
+function skillCompatibleWithAgent(skill: SkillRecord, agentCli?: string | null) {
+  if (agentCli !== "openclaw" && agentCli !== "hermes") return true;
+  const compatibility = decodeList(skill.agent_compatibility).map(item => item.toLowerCase());
+  if (compatibility.length === 0) return true;
+  return compatibility.includes(agentCli);
+}
+
 export function resolveSkillsForAgent(agentId: string, queryText?: string) {
   const db = getDb();
-  const agent = db.prepare(`SELECT id, scope_type, workspace_id, project_id FROM agents WHERE id = ?`).get(agentId) as AgentScopeRow | undefined;
+  const agent = db.prepare(`SELECT id, cli, scope_type, workspace_id, project_id FROM agents WHERE id = ?`).get(agentId) as AgentScopeRow | undefined;
   if (!agent) return [];
 
   let workspaceId = agent.workspace_id as string | null;
@@ -380,6 +400,7 @@ export function resolveSkillsForAgent(agentId: string, queryText?: string) {
   const byId = new Map(
     scoped
       .filter(s => !excluded.has(s.id))
+      .filter(s => skillCompatibleWithAgent(s, agent.cli))
       .filter(s => skillMatchesRun(s, queryText))
       .map(s => [s.id, s])
   );

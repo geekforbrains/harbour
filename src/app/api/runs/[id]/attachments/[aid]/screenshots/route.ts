@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getRunById, getProcessingByAttachment, runHasCredentialProfile } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { publicBaseUrl } from "@/lib/request-url";
 
@@ -15,6 +15,11 @@ export const GET = withAuth(async (req, auth, { params }) => {
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
+  if (runHasCredentialProfile(id)) {
+    return NextResponse.json({
+      error: "Video screenshots are disabled for credential-profile runs to avoid exposing screenshots of secrets.",
+    }, { status: 403 });
+  }
 
   const processing = getProcessingByAttachment(aid);
   if (!processing || !processing.screenshots_dir) {

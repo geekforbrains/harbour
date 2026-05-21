@@ -98,19 +98,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   });
 
-  // Poll waiting runs count (project/workspace filtered)
-  const waitingScopeParam = activeProjectId
-    ? `&projectId=${activeProjectId}`
-    : activeWorkspaceId ? `&workspaceId=${activeWorkspaceId}` : "";
-  const { data: waitingCount = 0 } = useQuery({
-    queryKey: ["runs", "waiting-count", activeProjectId, activeWorkspaceId],
+  const { data: notificationCount = 0 } = useQuery({
+    queryKey: ["notifications", "unread-count"],
     queryFn: async () => {
-      const res = await fetch(`/api/runs?filter=waiting${waitingScopeParam}`);
+      const res = await fetch("/api/notifications?filter=unread-count");
       if (!res.ok) return 0;
       const data = await res.json();
-      return Array.isArray(data) ? data.length : 0;
+      return typeof data.count === "number" ? data.count : 0;
     },
-    refetchInterval: 5000,
+    refetchInterval: 10000,
     enabled: !!user,
   });
 
@@ -123,14 +119,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Pages that need edge-to-edge layout (no max-w-5xl centering)
   const isFullBleed = pathname.startsWith("/captain");
+  const isWidePage = pathname.startsWith("/social");
 
   const sidebar = (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2.5 px-4 py-4">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
-          <span className="text-base leading-none">👽</span>
-        </div>
-        <span className="text-lg font-semibold tracking-tight">BORG Interface</span>
+      <div className="flex items-center gap-3 px-4 py-4">
+        <span className="borg-brand-mark">B</span>
+        <span className="font-heading text-lg font-normal tracking-normal text-[#202020]">BORG Interface</span>
       </div>
 
       <Separator />
@@ -152,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="p-3 space-y-2">
         <ThemeToggle />
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground truncate">
+          <span className="truncate text-sm font-medium text-muted-foreground">
             {user?.displayName}
           </span>
           <Button variant="ghost" size="icon" onClick={handleLogout} className="h-8 w-8">
@@ -165,38 +160,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount, timezone, workspaces, projects, activeWorkspaceId, setActiveWorkspaceId, activeProjectId, setActiveProjectId }}>
-      <div className="flex h-dvh standalone:h-screen">
-        <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
-          {sidebar}
-        </aside>
+    <AppContext.Provider value={{ user, notificationCount, timezone, workspaces, projects, activeWorkspaceId, setActiveWorkspaceId, activeProjectId, setActiveProjectId }}>
+      <div className="borg-app-root h-dvh standalone:h-screen md:p-4 lg:p-6">
+        <div className="relative z-10 flex h-full w-full min-w-0">
+          <aside className="borg-sidebar hidden w-[220px] shrink-0 overflow-hidden border md:block md:rounded-[32px]">
+            {sidebar}
+          </aside>
 
-        <div className="flex flex-1 flex-col min-w-0">
-          {/* Mobile Header */}
-          <div className="fixed top-0 left-0 right-0 z-40 flex items-center gap-2 border-b bg-card/95 backdrop-blur-lg px-3 py-2 pt-[calc(0.5rem+env(safe-area-inset-top))] md:hidden">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shrink-0">
-              <span className="text-base leading-none">👽</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <ProjectSwitcher variant="mobile" />
-            </div>
-            <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={handleLogout}>
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <main className="flex-1 overflow-auto min-h-0">
-            {isFullBleed ? (
-              children
-            ) : (
-              <div className="mx-auto max-w-5xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top))] md:px-8 md:pb-8 md:pt-8">
-                {children}
+          <div className="flex min-w-0 flex-1 flex-col md:pl-4 lg:pl-6">
+            {/* Mobile Header */}
+            <div className="fixed top-0 left-0 right-0 z-40 flex items-center gap-2 border-b border-[#ededed] bg-white/90 px-3 py-2 pt-[calc(0.5rem+env(safe-area-inset-top))] backdrop-blur-lg md:hidden">
+              <span className="borg-brand-mark h-8 w-8 shrink-0">B</span>
+              <div className="flex-1 min-w-0">
+                <ProjectSwitcher variant="mobile" />
               </div>
-            )}
-          </main>
+              <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={handleLogout}>
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
 
-          <TokenStatusBar />
-          <MobileBottomNav />
+            <main className="borg-main-stage flex-1 min-h-0 overflow-hidden border-0 md:rounded-[42px] md:border-2 md:p-1">
+              <div className="borg-main-surface h-full overflow-auto md:rounded-[40px]">
+                {isFullBleed ? (
+                  children
+                ) : (
+                  <div className={`borg-page-frame mx-auto px-4 pb-24 pt-[calc(4.5rem+env(safe-area-inset-top))] md:px-8 md:pb-8 md:pt-8 lg:px-10 lg:pt-10 ${isWidePage ? "max-w-[1280px]" : "max-w-5xl"}`}>
+                    {children}
+                  </div>
+                )}
+              </div>
+            </main>
+
+            <TokenStatusBar />
+            <MobileBottomNav />
+          </div>
         </div>
       </div>
     </AppContext.Provider>

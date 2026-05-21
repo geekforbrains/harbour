@@ -372,7 +372,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   )}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" /> {agent.job_count} jobs</span>
+                  <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" /> {agent.job_count} goals</span>
                   {agent.last_activity && <span>Active {timeAgo(agent.last_activity)}</span>}
                 </div>
               </div>
@@ -407,7 +407,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                     {getConnectCommand()}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    The command contains the agent API key. Treat it like a password. If you add workflow gates to this agent&apos;s jobs, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
+                    The command contains the agent API key. Treat it like a password. If you add workflow gates to this agent&apos;s goals, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
                   </p>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getOrgoPayload()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
@@ -422,7 +422,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
-                    <strong>{newAgent.name}</strong> is ready. Create a job for this agent and it will start picking up work automatically.
+                    <strong>{newAgent.name}</strong> is ready. Create a goal for this agent and it will start picking up work automatically.
                   </p>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getOrgoPayload()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
@@ -511,7 +511,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   >
                     <div className="flex-1">
                       <p className="text-sm font-medium">None (Workflow Only)</p>
-                      <p className="text-xs text-muted-foreground">Jobs use workflow commands, no LLM</p>
+                      <p className="text-xs text-muted-foreground">Goals use workflow commands, no LLM</p>
                     </div>
                   </button>
                 </div>

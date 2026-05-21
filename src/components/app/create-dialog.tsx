@@ -178,10 +178,6 @@ export function CreateDialog({
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [workflowEnabled, setWorkflowEnabled] = useState(false);
 
-  useEffect(() => {
-    if (open) setTab(defaultTab);
-  }, [open, defaultTab]);
-
   // Load data + auto-select pinned items when dialog opens
   useEffect(() => {
     if (!open || loaded) return;
@@ -408,13 +404,13 @@ export function CreateDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{tab === "run" ? "New Run" : "New Job"}</DialogTitle>
+            <DialogTitle>{tab === "run" ? "New Run" : "New Goal"}</DialogTitle>
           </DialogHeader>
 
           <Tabs value={tab} onValueChange={v => setTab(v as "run" | "job")}>
             <TabsList className="w-full">
               <TabsTrigger value="run" className="flex-1">Run</TabsTrigger>
-              <TabsTrigger value="job" className="flex-1">Job</TabsTrigger>
+              <TabsTrigger value="job" className="flex-1">Goal</TabsTrigger>
             </TabsList>
 
             {/* --- Run tab --- */}
@@ -478,7 +474,7 @@ export function CreateDialog({
                   <Button type="button" variant="ghost" onClick={() => handleClose(false)} disabled={submitting}>Cancel</Button>
                   <Button type="submit" disabled={submitting}>
                     {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-                    {submitting && stagedFilesRef.current.length > 0 ? "Uploading..." : "Create Run"}
+                    {submitting && stagedFiles.some(item => !item.error) ? "Uploading..." : "Create Run"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -541,7 +537,7 @@ export function CreateDialog({
 
                 <DialogFooter>
                   <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
-                  <Button type="submit">Create Job</Button>
+                  <Button type="submit">Create Goal</Button>
                 </DialogFooter>
               </form>
             </TabsContent>

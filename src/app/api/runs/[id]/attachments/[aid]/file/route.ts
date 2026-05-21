@@ -3,8 +3,9 @@ import path from "path";
 import { Readable } from "stream";
 import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getAttachmentById } from "@/lib/db/queries";
+import { getRunById, getAttachmentById, runHasCredentialProfile } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
+import { isVisualArtifactMime } from "@/lib/redaction";
 
 export const runtime = "nodejs";
 
@@ -33,8 +34,14 @@ export const GET = withAuth(async (_req, auth, { params }) => {
     return NextResponse.json({ error: "File missing on disk" }, { status: 404 });
   }
 
-  const stat = fs.statSync(abs);
   const mime = att.mime_type || "application/octet-stream";
+  if (runHasCredentialProfile(id) && isVisualArtifactMime(mime)) {
+    return NextResponse.json({
+      error: "Visual attachments are quarantined for credential-profile runs to avoid exposing screenshots of secrets.",
+    }, { status: 403 });
+  }
+
+  const stat = fs.statSync(abs);
   const dispositionType = isInline(mime) ? "inline" : "attachment";
   const safeFilename = (att.filename || "file").replace(/"/g, "");
 

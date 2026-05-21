@@ -340,7 +340,7 @@ function ChatView({
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 border-t bg-card px-4 py-3">
+      <div className="shrink-0 border-t border-[#ededed] bg-white/70 px-4 py-3 backdrop-blur">
         <div className="max-w-3xl mx-auto flex gap-2 items-end">
           <Textarea
             ref={textareaRef}
@@ -437,10 +437,10 @@ export default function CaptainPage() {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-4.5rem-env(safe-area-inset-top)-3.5rem)] md:h-[calc(100dvh)] overflow-hidden">
+    <div className="flex h-[calc(100dvh-4.5rem-env(safe-area-inset-top)-3.5rem)] overflow-hidden md:h-full">
       {/* Conversation sidebar — desktop */}
       {sidebarOpen && (
-        <div className="hidden md:flex w-64 shrink-0 border-r flex-col bg-card">
+        <div className="hidden w-64 shrink-0 flex-col border-r border-[#ededed] bg-white/70 md:flex">
           <ConversationList
             conversations={conversations}
             activeId={effectiveConversationId}
@@ -454,7 +454,7 @@ export default function CaptainPage() {
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Chat header */}
-        <div className="shrink-0 flex items-center gap-2 border-b px-3 py-2">
+        <div className="shrink-0 flex items-center gap-2 border-b border-[#ededed] bg-white/55 px-3 py-2 backdrop-blur">
           <Button
             variant="ghost"
             size="icon"

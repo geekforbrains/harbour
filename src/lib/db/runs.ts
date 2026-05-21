@@ -1,10 +1,13 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
+import { getCredentialBrokerEnvForJob, getSecretValuesForRun } from "./credential-profiles";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 import { importSkillsFromFilesystem, resolveSkillsForAgent } from "./skills";
-import { getToolkitLibraries } from "../toolkit-libraries";
+import { getToolkitLibraries, RUNTIME_SECURITY } from "../toolkit-libraries";
+import { redactSecrets } from "../redaction";
+import { ingestNotificationsForRun } from "./notifications";
 
 type RunRow = {
   [key: string]: unknown;
@@ -39,6 +42,7 @@ type JobPayloadRow = {
   workflow_only: number;
   model: string | null;
   thinking: string | null;
+  credential_profile_id: string | null;
   timeout_minutes: number | null;
 };
 type AgentPayloadRow = {
@@ -109,6 +113,7 @@ export function updateRunStatus(id: string, status: string) {
         advanceJobSchedule(run.job_id);
       }
     }
+    ingestNotificationsForRun(id, status);
   }
 
   return getRunById(id);
@@ -250,12 +255,13 @@ export function listRecentRuns(limit = 10, projectId?: string, workspaceId?: str
 export function addRunActivity(runId: string, authorType: string, authorId: string | null, authorName: string, content: string) {
   const db = getDb();
   const id = uuid();
+  const safeContent = redactSecrets(content, getSecretValuesForRun(runId));
   db.prepare(`
     INSERT INTO run_activity (id, run_id, author_type, author_id, author_name, content)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, runId, authorType, authorId, authorName, content);
+  `).run(id, runId, authorType, authorId, authorName, safeContent);
   db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
-  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content, created_at: Math.floor(Date.now() / 1000) };
+  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content: safeContent, created_at: Math.floor(Date.now() / 1000) };
 }
 
 export function listRunActivity(runId: string) {
@@ -276,13 +282,19 @@ export type RunOutputEvent = {
 
 export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id" | "id" | "created_at">[]) {
   const db = getDb();
+  const secretValues = getSecretValuesForRun(runId);
   const stmt = db.prepare(`
     INSERT INTO run_output (run_id, event_type, content, tool_name)
     VALUES (?, ?, ?, ?)
   `);
   const insertMany = db.transaction((evts: typeof events) => {
     for (const e of evts) {
-      stmt.run(runId, e.event_type, e.content || null, e.tool_name || null);
+      stmt.run(
+        runId,
+        e.event_type,
+        e.content ? redactSecrets(e.content, secretValues) : null,
+        e.tool_name ? redactSecrets(e.tool_name, secretValues) : null,
+      );
     }
   });
   insertMany(events);
@@ -547,7 +559,10 @@ function buildRunPayload(runId: string) {
   }
 
   // Decrypt env vars for this job
-  const env = getDecryptedEnvVarsForJob(run.job_id);
+  const env = {
+    ...getDecryptedEnvVarsForJob(run.job_id),
+    ...getCredentialBrokerEnvForJob(run.job_id),
+  };
 
   // Run attachments (raw rows; the route serializer adds absolute URLs)
   const attachments = listAttachmentsByRun(run.id);
@@ -621,6 +636,7 @@ function buildRunPayload(runId: string) {
   const toolkitLibraries = shouldSyncToolkit ? getToolkitLibraries({
     workspaceId: effectiveWorkspaceId,
     projectId: effectiveProjectId,
+    agentCli: agentRow?.cli || null,
   }) : undefined;
 
   return {
@@ -633,6 +649,7 @@ function buildRunPayload(runId: string) {
       workflow_only: !!job.workflow_only,
       model: job.model || null,
       thinking: job.thinking || null,
+      credential_profile_id: job.credential_profile_id || null,
       timeout_minutes: job.timeout_minutes ?? 30,
     },
     ...(agent ? { agent } : {}),
@@ -641,6 +658,7 @@ function buildRunPayload(runId: string) {
     env,
     skills,
     ...(toolkitLibraries ? { toolkit_libraries: toolkitLibraries } : {}),
+    ...(shouldSyncToolkit ? { runtime_security: RUNTIME_SECURITY } : {}),
     attachments,
   };
 }

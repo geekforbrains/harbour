@@ -766,8 +766,10 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
 
     // Kill the process if no stdout arrives within the startup window.
     // Catches auth prompts, interactive login hangs, etc.
+    let startupTimedOut = false;
     const startupTimer = setTimeout(() => {
       if (!gotOutput) {
+        startupTimedOut = true;
         child.kill("SIGTERM");
         // Give it a moment to exit, then force kill
         setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
@@ -824,7 +826,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
         try { child.stderr?.destroy(); } catch {}
       }, POST_EXIT_GRACE_MS);
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signalName) => {
       closeFired = true;
       clearTimeout(startupTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
@@ -834,7 +836,14 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       if (onLine && lineBuffer.trim()) {
         onLine(lineBuffer.trim());
       }
-      resolve({ code, stdout, stderr, aborted });
+      const normalizedCode = code ?? signalToExitCode(signalName);
+      resolve({ code: normalizedCode, rawCode: code, signal: signalName || null, stdout, stderr, aborted, startupTimedOut });
     });
   });
+}
+
+function signalToExitCode(signalName) {
+  if (signalName === "SIGTERM") return 143;
+  if (signalName === "SIGKILL") return 137;
+  return signalName ? 1 : 0;
 }

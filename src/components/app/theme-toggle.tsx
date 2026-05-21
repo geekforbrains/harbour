@@ -12,24 +12,25 @@ export function applyTheme(theme: Theme) {
 }
 
 export function ThemeToggle() {
-  const [theme, setThemeState] = useState<Theme>("system");
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("harbour_theme") as Theme) || "light";
+  });
 
   useEffect(() => {
-    const saved = (localStorage.getItem("harbour_theme") as Theme) || "system";
-    setThemeState(saved);
+    applyTheme(theme);
 
-    if (saved === "system") {
+    if (theme === "system") {
       const mq = matchMedia("(prefers-color-scheme: dark)");
       const handler = () => applyTheme("system");
       mq.addEventListener("change", handler);
       return () => mq.removeEventListener("change", handler);
     }
-  }, []);
+  }, [theme]);
 
   function setTheme(t: Theme) {
     setThemeState(t);
     localStorage.setItem("harbour_theme", t);
-    applyTheme(t);
 
     // If switching to system, we need to listen for OS changes going forward.
     // The useEffect above handles this on next render.

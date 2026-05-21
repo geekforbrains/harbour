@@ -16,6 +16,7 @@ type JobDetailRow = {
   schedule: string;
   workflow_command: string | null;
   workflow_only: number;
+  credential_profile_id: string | null;
   active: number;
   next_run_at: number | null;
   agent_name?: string | null;
@@ -47,6 +48,7 @@ export function createJob(agentId: string | null, data: {
   thinking?: string;
   docIds?: string[];
   envVarIds?: string[];
+  credentialProfileId?: string | null;
   active?: boolean;
 }) {
   const db = getDb();
@@ -55,13 +57,16 @@ export function createJob(agentId: string | null, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, workflow_command, workflow_only, model, thinking, active, next_run_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (
+        id, agent_id, name, description, instructions, schedule, workflow_command,
+        workflow_only, model, thinking, credential_profile_id, active, next_run_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
       data.workflowCommand || null, data.workflowOnly ? 1 : 0,
-      data.model || null, data.thinking || null,
+      data.model || null, data.thinking || null, data.credentialProfileId || null,
       data.active !== false ? 1 : 0, nextRunAt
     );
 
@@ -188,6 +193,7 @@ export function updateJob(id: string, data: {
   timeoutMinutes?: number;
   docIds?: string[];
   envVarIds?: string[];
+  credentialProfileId?: string | null;
   active?: boolean;
   nextRunAt?: number;
 }) {
@@ -202,6 +208,7 @@ export function updateJob(id: string, data: {
   if (data.workflowOnly !== undefined) { fields.push("workflow_only = ?"); values.push(data.workflowOnly ? 1 : 0); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
+  if (data.credentialProfileId !== undefined) { fields.push("credential_profile_id = ?"); values.push(data.credentialProfileId || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
 
   if (data.active !== undefined) {
@@ -252,6 +259,7 @@ export function createOneOffRun(agentId: string, data: {
   instructions?: string;
   docIds?: string[];
   envVarIds?: string[];
+  credentialProfileId?: string | null;
   runAt?: number;
 }) {
   const db = getDb();
@@ -263,9 +271,9 @@ export function createOneOffRun(agentId: string, data: {
   const create = db.transaction(() => {
     // Create the backing job (hidden, one_off)
     db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
-      VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
-    `).run(jobId, agentId, data.name, data.instructions || null, runAt);
+      INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at, credential_profile_id)
+      VALUES (?, ?, ?, ?, '{}', 1, 1, ?, ?)
+    `).run(jobId, agentId, data.name, data.instructions || null, runAt, data.credentialProfileId || null);
 
     // Merge explicitly selected docs with pinned docs
     const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);

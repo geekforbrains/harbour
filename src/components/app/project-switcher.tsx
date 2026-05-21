@@ -41,9 +41,9 @@ export function WorkspaceProjectList() {
 
   const workspaceProjects = projects.filter(project => project.workspace_id === activeWorkspaceId);
 
-  if (workspaceProjects.length === 0) {
+    if (workspaceProjects.length === 0) {
     return (
-      <div className="px-3 pb-2 text-xs text-muted-foreground/70">
+      <div className="px-3 pb-2 text-xs font-medium text-muted-foreground/70">
         No projects in this workspace.
       </div>
     );
@@ -51,7 +51,7 @@ export function WorkspaceProjectList() {
 
   return (
     <div className="px-2 pb-2">
-      <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+      <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#a0a0a0]">
         Projects
       </p>
       <div className="space-y-0.5">
@@ -63,10 +63,10 @@ export function WorkspaceProjectList() {
               setActiveProjectId(project.id);
               invalidateScopedLists(queryClient);
             }}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+            className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-xs font-medium transition-all duration-200 ${
               activeProjectId === project.id
-                ? "bg-primary/10 text-primary font-medium"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                ? "bg-[#202020] text-white shadow-[2px_6px_16px_rgba(0,0,0,0.08)]"
+                : "text-[#7c7c7c] hover:bg-white hover:text-[#202020]"
             }`}
           >
             <FolderOpen className="h-3.5 w-3.5 shrink-0" />
@@ -164,8 +164,8 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
     <>
       <DropdownMenu>
         <DropdownMenuTrigger className={variant === "mobile"
-          ? "flex items-center gap-1.5 text-sm font-semibold tracking-tight"
-          : "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          ? "flex items-center gap-1.5 text-sm font-semibold tracking-tight text-[#202020]"
+          : "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[#7c7c7c] transition-all duration-200 hover:bg-white hover:text-[#202020]"
         }>
           {variant === "sidebar" && (activeProject ? <FolderOpen className="h-4 w-4 shrink-0" /> : <Building2 className="h-4 w-4 shrink-0" />)}
           <span className={variant === "mobile" ? "truncate max-w-[200px]" : "flex-1 truncate text-left"}>

@@ -39,6 +39,7 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Agents poll for work via `/api/agents/:id/next`. Agentless workflow jobs are discovered via `/api/workflows/next`. Harbour never calls out to agents.
 - Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`.
 - Failed/skipped runs can be retried (go back to `pending`).
+- AgentOps-declared Harbour agents with `harbour.cli` metadata are synced idempotently by `scripts/sync-toolkit-libraries.mjs`; current global example is `x-com-agent-scraper` / **X.com agent scraper**.
 - The database is a single SQLite file (default `./harbour.db`).
 - Env vars are encrypted with AES-256-GCM. Key at `~/.harbour/encryption.key` (auto-generated on first run).
 - System timezone (configured in Settings) is used for all schedule calculations.

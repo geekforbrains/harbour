@@ -3,7 +3,7 @@ import path from "path";
 import { Readable } from "stream";
 import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getRunById, getProcessingByAttachment, runHasCredentialProfile } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 
 export const runtime = "nodejs";
@@ -15,6 +15,11 @@ export const GET = withAuth(async (_req, auth, { params }) => {
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
+  if (runHasCredentialProfile(id)) {
+    return NextResponse.json({
+      error: "Video screenshots are disabled for credential-profile runs to avoid exposing screenshots of secrets.",
+    }, { status: 403 });
+  }
 
   const processing = getProcessingByAttachment(aid);
   if (!processing || !processing.screenshots_dir) {

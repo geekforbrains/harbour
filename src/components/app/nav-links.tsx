@@ -7,27 +7,25 @@ import {
   Bot,
   FileText,
   Database,
-  KeyRound,
+  Radar,
   Sparkles,
-  Users,
   Settings,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
   const links = [
-    { href: "/jobs", label: "Jobs", icon: Briefcase },
+    { href: "/jobs", label: "Goals", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/social", label: "Social", icon: Radar },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
-    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/skills", label: "Libraries", icon: Sparkles },
-    { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
   return (
-    <nav className="flex flex-col gap-0.5 px-2">
+    <nav className="flex flex-col gap-1 px-2">
       {links.map((link) => {
         const isActive = link.href === "/"
           ? pathname === "/" || pathname.startsWith("/runs")
@@ -37,10 +35,10 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
             key={link.href}
             href={link.href}
             onClick={onClick}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-200 ${
               isActive
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                ? "bg-[#202020] text-white shadow-[2px_6px_16px_rgba(0,0,0,0.08)]"
+                : "text-[#7c7c7c] hover:bg-white hover:text-[#202020]"
             }`}
           >
             <link.icon className="h-4 w-4" />

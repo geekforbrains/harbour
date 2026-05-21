@@ -55,6 +55,20 @@ make run
 
 Visit [http://localhost:3030](http://localhost:3030) and create your first account. All state (DB, uploads, encryption key) lives in `./data` — back up that directory and you have a snapshot of everything.
 
+The Docker stack also starts a Caddy edge service on host ports `80` and `443`, so the dashboard and API are available from the same public origin. The local default serves both HTTP and HTTPS directly:
+
+- Dashboard: `http://localhost` / `https://localhost`
+- API: `http://localhost/api/*` / `https://localhost/api/*`
+- Direct Next.js fallback: `http://localhost:3030`
+
+For a real domain, point DNS at the host and start compose with:
+
+```bash
+HARBOUR_SITE_ADDRESS=harbour.example.com make up
+```
+
+Caddy terminates HTTP/HTTPS and forwards to the internal Harbour service with `X-Forwarded-*` headers, so agent invite URLs and attachment/API links resolve to the public host.
+
 ```bash
 make logs     # follow logs
 make down     # stop the container
@@ -284,13 +298,13 @@ Projects are an optional way to organize your work. They're a view layer — a b
 ## Dashboard
 
 - **Captain** — in-browser chat with a local CLI tool (see above) for managing the harbour.
-- **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
-- **Jobs** — split into Agent Jobs and Workflow Jobs. Shows run/skip counts, schedules, and linked docs/env vars.
-- **Agents** — list of agents with jobs, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
+- **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring goals from a unified dialog.
+- **Goals** — split into Agent Goals and Workflow Goals. Shows run/skip counts, schedules, and linked docs/env vars.
+- **Agents** — list of agents with goals, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
+- **Social** — client-workspace trend intelligence dashboard with Meta/Instagram, YouTube, X.com, TikTok, LinkedIn, and Blotato/Ominsocial distribution sections. Proxies to `SOCIAL_ENGINE_URL` when the external FastAPI social engine is live.
 - **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
-- **Env Vars** — encrypted variables (API keys, tokens) injected at runtime. Pin to auto-attach to all new jobs.
-- **Settings** — system timezone, signup control, project management, Captain configuration, and admin API keys.
+- **Settings** — system timezone, signup control, project management, Captain configuration, admin API keys, users, and env vars.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
 

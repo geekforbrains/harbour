@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { getDatabaseById, addColumn } from "@/lib/db/queries";
 

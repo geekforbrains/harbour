@@ -41,14 +41,11 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-secondary/30 px-4">
-      <Card className="w-full max-w-sm border-0 shadow-lg shadow-primary/5">
+    <div className="borg-auth-shell flex min-h-screen items-center justify-center px-4">
+      <Card className="relative z-10 w-full max-w-sm border border-[#ededed] bg-white/90 shadow-[0_24px_80px_rgba(28,28,42,0.12)] backdrop-blur">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary">
-            <span className="text-2xl leading-none">👽</span>
-          </div>
-          <CardTitle className="text-xl tracking-tight">Tron Brain</CardTitle>
-          <CardDescription>Create your account</CardDescription>
+          <CardTitle className="text-2xl tracking-normal">BORG Interface</CardTitle>
+          <CardDescription>Create your control-plane account</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -61,6 +58,8 @@ export default function SignupPage() {
               <Label htmlFor="displayName">Display Name</Label>
               <Input
                 id="displayName"
+                name="name"
+                autoComplete="name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 required
@@ -71,7 +70,9 @@ export default function SignupPage() {
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
+                name="email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -81,7 +82,9 @@ export default function SignupPage() {
               <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
+                name="new-password"
                 type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

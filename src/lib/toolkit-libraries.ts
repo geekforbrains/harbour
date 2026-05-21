@@ -10,6 +10,16 @@ const LIBRARY_PATHS = {
 
 export type ToolkitLibraryId = "skills" | "plugins" | "subAgents";
 
+export const RUNTIME_SECURITY = {
+  provider: "sage",
+  source_repo: "https://github.com/gendigitalinc/sage.git",
+  version: "0.9.0",
+  enforcement: "hard-gate",
+  required_for: ["openclaw", "hermes", "workflow", "future-agent-cli"],
+  privacy_profile: "local-first",
+  config_path: "~/.sage/config.json",
+} as const;
+
 export type ToolkitEntry = {
   id: string;
   name: string;
@@ -27,6 +37,7 @@ export type ToolkitEntry = {
   path: string | null;
   capsule: string | null;
   handoff_contract: string | null;
+  agent_compatibility: string[];
   tags: string[];
   triggers: string[];
   provenance: string | null;
@@ -44,6 +55,7 @@ type ToolkitScope = {
   includeAll?: boolean;
   workspaceId?: string | null;
   projectId?: string | null;
+  agentCli?: string | null;
 };
 
 function cleanValue(value: string | null | undefined) {
@@ -107,6 +119,7 @@ function parseYamlEntries(text: string, listKey: string): ToolkitEntry[] {
       path: get("path"),
       capsule: get("capsule"),
       handoff_contract: get("handoff_contract"),
+      agent_compatibility: parseListValue(get("agent_compatibility")),
       tags: parseListValue(get("tags")),
       triggers: parseListValue(get("triggers")),
       provenance: get("provenance"),
@@ -116,7 +129,9 @@ function parseYamlEntries(text: string, listKey: string): ToolkitEntry[] {
 
 function readLibrary(id: ToolkitLibraryId, label: string, listKey: string, vmPath: string): ParsedLibrary {
   const path = LIBRARY_PATHS[id];
-  const text = fs.existsSync(path) ? fs.readFileSync(path, "utf-8") : "";
+  const text = fs.existsSync(/*turbopackIgnore: true*/ path)
+    ? fs.readFileSync(/*turbopackIgnore: true*/ path, "utf-8")
+    : "";
   return {
     id,
     label,
@@ -156,6 +171,13 @@ function entryAllowedByScope(entry: ToolkitEntry, scope?: ToolkitScope) {
   return false;
 }
 
+function entryCompatibleWithAgent(entry: ToolkitEntry, scope?: ToolkitScope) {
+  const agentCli = scope?.agentCli;
+  if (agentCli !== "openclaw" && agentCli !== "hermes") return true;
+  if (entry.agent_compatibility.length === 0) return true;
+  return entry.agent_compatibility.map(item => item.toLowerCase()).includes(agentCli);
+}
+
 export function getToolkitLibraries(scope?: ToolkitScope) {
   const libraries = [
     readLibrary("skills", "Skills", "skills", "/opt/borg/toolkit-libraries/skills/registry.yaml"),
@@ -163,7 +185,9 @@ export function getToolkitLibraries(scope?: ToolkitScope) {
     readLibrary("subAgents", "Sub-agents", "sub_agents", "/opt/borg/toolkit-libraries/sub-agents/registry.yaml"),
   ].map(library => ({
     ...library,
-    entries: library.entries.filter(entry => entryAllowedByScope(entry, scope)),
+    entries: library.entries
+      .filter(entry => entryAllowedByScope(entry, scope))
+      .filter(entry => entryCompatibleWithAgent(entry, scope)),
   }));
 
   return {
@@ -183,6 +207,7 @@ export function getToolkitLibraries(scope?: ToolkitScope) {
       scope_modes: ["global", "workspace", "project", "brand-kit"],
       sync_expectation: "Client VMs fetch this endpoint with Harbour credentials, then mirror allowed manifests under vm_root.",
     },
+    runtime_security: RUNTIME_SECURITY,
     libraries,
   };
 }

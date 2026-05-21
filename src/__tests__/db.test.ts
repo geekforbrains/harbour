@@ -63,19 +63,29 @@ import {
   getProjectById,
   createEnvVar,
   listEnvVars,
+  upsertCredentialProfile,
+  getCredentialProfileByEmail,
+  upsertProviderCredential,
+  listProviderCredentials,
+  getCredentialBrokerEnvForProfile,
+  runHasCredentialProfile,
   WorkspaceConflictError,
   linkAgentToProject,
   linkJobToProject,
   linkDocToProject,
   linkEnvVarToProject,
   linkDatabaseToProject,
+  addRunOutput,
+  listRunOutput,
 } from "@/lib/db/queries";
+import { isVisualArtifactMime } from "@/lib/redaction";
 
 type WorkspaceRow = { id: string };
 type ProjectRow = { id: string; workspace_id: string | null };
 type NamedRow = { id: string; name: string };
 type TitledRow = { id: string; title: string };
 type RunRow = { id: string; job_name: string };
+type OutputRow = { content: string | null };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -189,6 +199,158 @@ describe("Workspace / Project Management", () => {
     expect((listDocs(undefined, alphaWorkspace.id) as TitledRow[]).map(r => r.title)).toEqual(["alpha-doc"]);
     expect((listEnvVars(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["ALPHA_TOKEN"]);
     expect((listDatabases(undefined, alphaWorkspace.id) as NamedRow[]).map(r => r.name)).toEqual(["alpha_db"]);
+  });
+});
+
+// ===========================================================================
+// Credential Profiles / Secret Broker
+// ===========================================================================
+
+describe("Credential Profiles / Secret Broker", () => {
+  it("stores the same canonical env name for separate people without env var collisions", () => {
+    const alice = upsertCredentialProfile({ email: "Alice@Example.com", displayName: "Alice" })!;
+    const bob = upsertCredentialProfile({ email: "bob@example.com", displayName: "Bob" })!;
+
+    upsertProviderCredential({
+      profileId: alice.id,
+      provider: "google-ai-studio",
+      envName: "GOOGLE_API_KEY",
+      value: "alice-google-secret-123456",
+      accountEmail: "alice@example.com",
+    });
+    upsertProviderCredential({
+      profileId: bob.id,
+      provider: "google-ai-studio",
+      envName: "GOOGLE_API_KEY",
+      value: "bob-google-secret-abcdef",
+      accountEmail: "bob@example.com",
+    });
+
+    expect(getCredentialProfileByEmail("alice@example.com")!.id).toBe(alice.id);
+    expect(listProviderCredentials(alice.id).map((c: any) => c.env_name)).toEqual(["GOOGLE_API_KEY"]);
+    expect(getCredentialBrokerEnvForProfile(alice.id).GOOGLE_API_KEY).toBe("alice-google-secret-123456");
+    expect(getCredentialBrokerEnvForProfile(bob.id).GOOGLE_API_KEY).toBe("bob-google-secret-abcdef");
+
+    const envNames = (listEnvVars() as NamedRow[]).map(row => row.name);
+    expect(envNames).not.toContain("GOOGLE_API_KEY");
+    expect(new Set(envNames).size).toBe(envNames.length);
+  });
+
+  it("does not expose secret values in credential profile records", () => {
+    const profile = upsertCredentialProfile({ email: "record-view@example.com" })!;
+    upsertProviderCredential({
+      profileId: profile.id,
+      provider: "cerebras",
+      envName: "CEREBRAS_API_KEY",
+      value: "csk-record-view-secret-123456",
+    });
+
+    const records = listProviderCredentials(profile.id);
+    expect(JSON.stringify(records)).not.toContain("csk-record-view-secret-123456");
+    expect(records[0].env_name).toBe("CEREBRAS_API_KEY");
+  });
+
+  it("injects a job credential profile through the broker using canonical names", () => {
+    const profile = upsertCredentialProfile({ email: "provisionee@example.com" })!;
+    upsertProviderCredential({
+      profileId: profile.id,
+      provider: "openrouter",
+      envName: "OPENROUTER_API_KEY",
+      value: "sk-or-v1-profile-secret",
+    });
+
+    const agent = createAgent("profile-broker", undefined, { type: "harbour", cli: "openclaw" });
+    const job = createJob(agent.id, {
+      name: "Profile Key Check",
+      schedule: '{"every":60}',
+      credentialProfileId: profile.id,
+    })!;
+    updateJob(job.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agent.id)!;
+    expect(payload.env.OPENROUTER_API_KEY).toBe("sk-or-v1-profile-secret");
+    expect(payload.job.credential_profile_id).toBe(profile.id);
+  });
+
+  it("rejects non-canonical provider env names", () => {
+    const profile = upsertCredentialProfile({ email: "invalid-env@example.com" })!;
+    expect(() => upsertProviderCredential({
+      profileId: profile.id,
+      provider: "openrouter",
+      envName: "GOOGLE_API_KEY",
+      value: "wrong-provider-secret",
+    })).toThrow(/not valid for provider openrouter/);
+    expect(() => upsertProviderCredential({
+      profileId: profile.id,
+      provider: "unknown-provider",
+      envName: "UNKNOWN_API_KEY",
+      value: "unknown-provider-secret",
+    })).toThrow(/unsupported provider/);
+  });
+
+  it("redacts linked env var and profile broker secrets from activity and output", () => {
+    const agent = seedAgent("redactor");
+    const profile = upsertCredentialProfile({ email: "redact@example.com" })!;
+    upsertProviderCredential({
+      profileId: profile.id,
+      provider: "openrouter",
+      envName: "OPENROUTER_API_KEY",
+      value: "sk-or-v1-redact-profile-secret",
+    });
+    const linked = createEnvVar("LINKED_SECRET", "linked-secret-value-123")!;
+    const job = createJob(agent.id, {
+      name: "Redaction Check",
+      schedule: '{"every":60}',
+      envVarIds: [linked.id],
+      credentialProfileId: profile.id,
+    })!;
+    const run = createRun(job.id, agent.id)!;
+
+    addRunActivity(
+      run.id,
+      "agent",
+      agent.id,
+      agent.name,
+      "linked-secret-value-123 and sk-or-v1-redact-profile-secret should not be stored",
+    );
+    addRunOutput(run.id, [{
+      event_type: "text_delta",
+      content: "stream saw linked-secret-value-123 and sk-or-v1-redact-profile-secret",
+      tool_name: null,
+    }]);
+
+    const activity = listRunActivity(run.id);
+    expect(activity[0].content).not.toContain("linked-secret-value-123");
+    expect(activity[0].content).not.toContain("sk-or-v1-redact-profile-secret");
+    expect(activity[0].content).toContain("[REDACTED_SECRET]");
+
+    const output = listRunOutput(run.id) as OutputRow[];
+    expect(output[0].content).not.toContain("linked-secret-value-123");
+    expect(output[0].content).not.toContain("sk-or-v1-redact-profile-secret");
+    expect(output[0].content).toContain("[REDACTED_SECRET]");
+  });
+
+  it("marks credential-profile runs for visual artifact quarantine", () => {
+    const agent = seedAgent("visual-quarantine");
+    const profile = upsertCredentialProfile({ email: "visual@example.com" })!;
+    const sensitiveJob = createJob(agent.id, {
+      name: "Sensitive Visual Guard",
+      schedule: '{"every":60}',
+      credentialProfileId: profile.id,
+    })!;
+    const normalJob = createJob(agent.id, {
+      name: "Normal Visual Guard",
+      schedule: '{"every":60}',
+    })!;
+    const sensitiveRun = createRun(sensitiveJob.id, agent.id)!;
+    const normalRun = createRun(normalJob.id, agent.id)!;
+
+    expect(runHasCredentialProfile(sensitiveRun.id)).toBe(true);
+    expect(runHasCredentialProfile(normalRun.id)).toBe(false);
+    expect(isVisualArtifactMime("image/png")).toBe(true);
+    expect(isVisualArtifactMime("video/mp4")).toBe(true);
+    expect(isVisualArtifactMime("application/pdf")).toBe(true);
+    expect(isVisualArtifactMime("text/plain")).toBe(false);
   });
 });
 

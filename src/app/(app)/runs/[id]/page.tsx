@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image, Trash2, MoreVertical, Copy, Check } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image as ImageIcon, Trash2, MoreVertical, Copy, Check } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
@@ -364,7 +364,7 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             {screenshotsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Image className="h-3 w-3" />
+            <ImageIcon className="h-3 w-3" aria-hidden="true" />
             {processing.screenshot_count} screenshot{processing.screenshot_count !== 1 ? "s" : ""}
           </button>
           {screenshotsOpen && screenshotsData && (
@@ -428,12 +428,6 @@ export default function RunDetailPage() {
     },
     refetchInterval: 5000,
   });
-
-  // Clear local killing state once the runner finalizes and the run is no
-  // longer 'running' — keeps the button honest across refreshes.
-  useEffect(() => {
-    if (run && run.status !== "running") setKilling(false);
-  }, [run?.status]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -524,7 +518,7 @@ export default function RunDetailPage() {
 
   // Kill button should only be clickable once per run — derive the visible
   // "killing" state from the server flag so it survives page refreshes too.
-  const killInFlight = killing || !!run.kill_requested_at;
+  const killInFlight = (run.status === "running" && killing) || !!run.kill_requested_at;
   const canKill = run.status === "running" && run.agent_type === "harbour";
 
   return (
@@ -562,7 +556,7 @@ export default function RunDetailPage() {
             )}
             {run.job_id && (
               <Link href={`/jobs/${run.job_id}`}>
-                <Button variant="outline" size="sm">View Job</Button>
+                <Button variant="outline" size="sm">View Goal</Button>
               </Link>
             )}
             {MANAGEABLE_STATUSES.includes(run.status) && (

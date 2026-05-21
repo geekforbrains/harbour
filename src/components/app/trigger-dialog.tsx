@@ -51,7 +51,7 @@ export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflowOnly
           <DialogTitle>Trigger &ldquo;{jobName}&rdquo;</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          This will create a new scheduled run for this job immediately.
+          This will create a new scheduled run for this goal immediately.
         </p>
         <div className="space-y-2">
           <Label>{workflowOnly ? "Note (optional)" : "Additional instructions (optional)"}</Label>

@@ -1,5 +1,6 @@
 import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
 import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
+import { ensureSageRuntimeCoverage, evaluateCommandWithSage } from "./sage-guard.mjs";
 import { spawn } from "child_process";
 import { mkdirSync } from "fs";
 import { join } from "path";
@@ -129,9 +130,30 @@ Before acting, search BORG's evolving toolkit libraries and load only the entrie
 - Sub-agents: /Users/davidk/Documents/Borg Interface/AGENT RESEARCH/agentops/libraries/sub-agents/registry.yaml
 - Policy: /Users/davidk/Documents/Borg Interface/AGENT RESEARCH/agentops/libraries/spawn-toolkit-search.md
 
+SAGE runtime security is already enforced by Harbour before this agent runtime starts. Treat the runtime_security metadata as always-on control-plane state, not as an optional skill to load.
+
 Use active global skills plus matching workspace/project/brand-kit skills. Select plugins only when the task, scope, and credential gates match. Search sub-agents only when delegation is explicitly requested or clearly useful for a control-plane workflow. Do not auto-install tools, spend money, deploy, send messages, or make destructive changes unless this run asks for that capability and the relevant approval gate is satisfied.
 
 Mention the toolkit entries you selected in your final run summary.\n\n`;
+}
+
+function renderRuntimeSecurity(runtimeSecurity) {
+  if (!runtimeSecurity?.provider) return "";
+  const requiredFor = Array.isArray(runtimeSecurity.required_for)
+    ? runtimeSecurity.required_for.join(", ")
+    : String(runtimeSecurity.required_for || "");
+  return [
+    "## Runtime Security",
+    "",
+    `Provider: ${runtimeSecurity.provider}`,
+    `Source: ${runtimeSecurity.source_repo || "unknown"}`,
+    `Version: ${runtimeSecurity.version || "unknown"}`,
+    `Enforcement: ${runtimeSecurity.enforcement || "unknown"}`,
+    `Privacy: ${runtimeSecurity.privacy_profile || "unknown"}`,
+    `Config: ${runtimeSecurity.config_path || "unknown"}`,
+    requiredFor ? `Required for: ${requiredFor}` : null,
+    "",
+  ].filter(line => line !== null).join("\n");
 }
 
 function renderToolkitLibraryPacket(toolkit) {
@@ -220,6 +242,10 @@ function buildPrompt(payload, apiKey, isResume) {
     prompt += renderToolkitLibraryPacket(payload.toolkit_libraries);
   }
 
+  if (payload.runtime_security) {
+    prompt += renderRuntimeSecurity(payload.runtime_security);
+  }
+
   if (payload.job?.name) {
     prompt += `# Job: ${payload.job.name}\n\n`;
   }
@@ -257,9 +283,9 @@ function buildPrompt(payload, apiKey, isResume) {
   }
 
   if (payload.env && Object.keys(payload.env).length > 0) {
-    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run. Use them when making API calls or authenticating with services.\n\n`;
-    for (const [key, value] of Object.entries(payload.env)) {
-      prompt += `- \`${key}\`: \`${value}\`\n`;
+    prompt += `## Environment Variables\n\nThese credential names are available in the process environment for this run. Use shell expansion such as \`$VARNAME\` when making API calls, but do not print, log, summarize, or export secret values.\n\n`;
+    for (const key of Object.keys(payload.env)) {
+      prompt += `- \`${key}\`: available in process env\n`;
     }
     prompt += "\n";
   }
@@ -318,9 +344,18 @@ function buildPrompt(payload, apiKey, isResume) {
  * @param {object} opts
  * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow-only)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
+ * @param {string} [opts.sessionId] - run/session id for SAGE audit context
  */
-function runWorkflow(command, payloadJson, cwd, opts = {}) {
+export async function runWorkflow(command, payloadJson, cwd, opts = {}) {
   const { timeoutMs = 30_000, signal } = opts;
+  const sage = await evaluateCommandWithSage(command, {
+    sessionId: opts.sessionId,
+    agentRuntime: "harbour-workflow",
+  });
+  if (!sage.allowed) {
+    throw new Error(`SAGE blocked workflow command before execution:\n${sage.message}`);
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", command], {
       cwd,
@@ -410,7 +445,6 @@ export function shouldContinueEagerLoop(outcome, eager) {
  */
 async function processNextRun(runner) {
   const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
-  const provider = getProvider(cli);
   const sessions = loadSessions();
 
   console.log(`  [${agentName}] Polling...`);
@@ -437,10 +471,43 @@ async function processNextRun(runner) {
   const isResume = !!existingSession;
   let sessionId = existingSession?.sessionId || null;
   const isNewSession = !isResume;
+  const isWorkflowOnly = !!payload.job?.workflow_only;
+
+  let provider = null;
+  if (!isWorkflowOnly) {
+    try {
+      const coverage = await ensureSageRuntimeCoverage(cli);
+      console.log(`  [${agentName}] SAGE runtime security active: ${coverage.detail}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  [${agentName}] ${message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: `SAGE runtime security blocked spawn: ${message}`,
+        });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return { outcome: "failed", eager };
+    }
+
+    try {
+      provider = getProvider(cli);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  [${agentName}] ${message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: `Runner error: CLI provider "${cli}" is not available after SAGE coverage checks: ${message}`,
+        });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return { outcome: "failed", eager };
+    }
+  }
 
   // For Claude, generate a session ID upfront so we can always resume
-  const workingDir = ensureWorkingDir(agentName);
-  if (isNewSession && provider.generateSessionId) {
+  const workingDir = isWorkflowOnly ? null : ensureWorkingDir(agentName);
+  if (!isWorkflowOnly && isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
     // Report pre-generated session ID immediately
     apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
@@ -451,7 +518,6 @@ async function processNextRun(runner) {
 
   // Execute workflow command (if defined)
   let workflowOutput = "";
-  const isWorkflowOnly = !!payload.job?.workflow_only;
   if (!isResume && payload.job?.workflow) {
     const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
     mkdirSync(workflowDir, { recursive: true });
@@ -480,6 +546,7 @@ async function processNextRun(runner) {
       const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
         timeoutMs: workflowTimeoutMs,
         signal: workflowKillController.signal,
+        sessionId: runId,
       });
       clearInterval(workflowKillPoll);
 
@@ -653,7 +720,7 @@ async function processNextRun(runner) {
   const timeoutMinutes = payload.job?.timeout_minutes || 30;
   const timeoutMs = timeoutMinutes * 60 * 1000;
   const startupTimeoutMs = ["hermes", "openclaw"].includes(cli)
-    ? Math.min(timeoutMs, 5 * 60 * 1000)
+    ? Math.min(timeoutMs, 10 * 60 * 1000)
     : undefined;
   let result;
   try {
@@ -766,10 +833,14 @@ async function processNextRun(runner) {
 
     // Build a human-readable error reason
     let reason;
-    if (result.code === 143) {
+    if (result.startupTimedOut) {
+      reason = `Process produced no stdout within the startup window and was stopped. This usually means the CLI is waiting for auth, hanging during model startup, or not emitting output in headless mode.`;
+    } else if (result.code === 143) {
       reason = `Process was killed (SIGTERM) — likely hit the ${timeoutMinutes}-minute timeout before the CLI exited cleanly.`;
     } else if (result.code === 137) {
       reason = `Process was force-killed (SIGKILL) — out of memory or hard timeout.`;
+    } else if (result.rawCode === null && result.signal) {
+      reason = `CLI exited after signal ${result.signal}.`;
     } else {
       reason = `CLI exited with code ${result.code}.`;
     }
@@ -917,6 +988,7 @@ async function runAgentlessWorkflows(url, apiKey) {
     const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
       timeoutMs: workflowTimeoutMs,
       signal: killController.signal,
+      sessionId: runId,
     });
     clearInterval(killPoll);
 

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { BackLink } from "@/components/app/back-link";
-import { KeyRound, Eye, EyeOff, Pin, Pencil, Trash2, Save, X } from "lucide-react";
+import { KeyRound, Eye, EyeOff, Pin, Pencil, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };

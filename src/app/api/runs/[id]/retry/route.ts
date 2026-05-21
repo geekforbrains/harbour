@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withUserAuth } from "@/lib/auth";
 import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 

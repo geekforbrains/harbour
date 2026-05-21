@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getProvider } from "../../bin/lib/providers.mjs";
+import { getProvider, runCliTool } from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
 // They guard against silent flag drift in the upstream CLIs (issue #24 was
@@ -152,5 +152,21 @@ describe("hermes provider", () => {
     const cmd = hermes.buildCommand(PROMPT, "auto", CWD, null, true, null);
     expect(cmd.args).toContain("--model");
     expect(cmd.args[cmd.args.indexOf("--model") + 1]).toBe("auto");
+  });
+});
+
+describe("runCliTool process exits", () => {
+  it("normalizes signal-only startup kills into non-zero exit codes", async () => {
+    const result = await runCliTool(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 10000)"],
+      process.cwd(),
+      { startupTimeoutMs: 25, timeoutMs: 5000 },
+    );
+
+    expect(result.rawCode).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.code).toBe(143);
+    expect(result.startupTimedOut).toBe(true);
   });
 });

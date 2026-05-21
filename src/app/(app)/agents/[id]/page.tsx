@@ -221,7 +221,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
         )}
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
+          <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "goal" : "goals"}</span>
         </div>
         <div className="flex items-center gap-2 text-sm">
           <Activity className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -233,11 +233,11 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
         </div>
       </div>
 
-      {/* Jobs */}
+      {/* Goals */}
       <section>
-        <SectionHeader count={jobs.length}>Jobs</SectionHeader>
+        <SectionHeader count={jobs.length}>Goals</SectionHeader>
         {jobs.length === 0 ? (
-          <EmptyState>No jobs yet.</EmptyState>
+          <EmptyState>No goals yet.</EmptyState>
         ) : (
           <div className="space-y-2">
             {jobs.map(job => (

@@ -204,6 +204,32 @@ export function initializeSchema(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Credential profiles: per-person provider account/key bundles.
+    -- Secrets themselves stay in env_vars and are injected by the broker.
+    CREATE TABLE IF NOT EXISTS credential_profiles (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      notes TEXT,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_credentials (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL REFERENCES credential_profiles(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      env_name TEXT NOT NULL,
+      env_var_id TEXT NOT NULL REFERENCES env_vars(id) ON DELETE CASCADE,
+      account_email TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','waiting','blocked','revoked','failed')),
+      metadata TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(profile_id, provider, env_name)
+    );
+
     -- Job-env linking: which env vars a job references
     CREATE TABLE IF NOT EXISTS job_env_vars (
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -241,6 +267,34 @@ export function initializeSchema(db: Database.Database) {
       content TEXT,
       tool_name TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Notifications: human-facing inbox items produced by agents and workflows
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+      source_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      summary TEXT,
+      status TEXT NOT NULL DEFAULT 'unread' CHECK(status IN ('unread','read','archived')),
+      analysis_status TEXT NOT NULL DEFAULT 'not_started' CHECK(analysis_status IN ('not_started','analysis_pending','analyzed','failed')),
+      analysis_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      analysis_summary TEXT,
+      analysis_score INTEGER,
+      analysis_category TEXT CHECK(analysis_category IN ('adopt','watch','ignore','research','action')),
+      analysis_output_path TEXT,
+      repo_count INTEGER,
+      top_score INTEGER,
+      keywords_json TEXT,
+      categories_json TEXT,
+      payload_json TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      read_at INTEGER,
+      archived_at INTEGER,
+      UNIQUE(source_run_id, source_type)
     );
 
     -- Workspaces: top-level business/operating areas
@@ -309,6 +363,7 @@ export function initializeSchema(db: Database.Database) {
       provenance TEXT,
       version TEXT,
       dependencies TEXT,
+      agent_compatibility TEXT,
       tags TEXT,
       triggers TEXT,
       digest TEXT,
@@ -329,6 +384,7 @@ export function initializeSchema(db: Database.Database) {
       provenance TEXT,
       version TEXT,
       dependencies TEXT,
+      agent_compatibility TEXT,
       tags TEXT,
       triggers TEXT,
       digest TEXT,
@@ -406,6 +462,9 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_notifications_source_run ON notifications(source_run_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_analysis_run ON notifications(analysis_run_id);
 
     CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
@@ -413,6 +472,8 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_provider_credentials_profile ON provider_credentials(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_credentials_env_var ON provider_credentials(env_var_id);
 
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
     CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
@@ -561,6 +622,7 @@ export function initializeSchema(db: Database.Database) {
     ["agentops", "agent-research", "agentops"],
     ["youtube-scraper-agent", "agent-research", "youtube-scraper-agent"],
     ["deceived-rei-agent", "agent-research", "deceived_rei_agent"],
+    ["hermes-x-intelligence-os", "agent-research", "hermes-x-intelligence-os"],
     ["clawdius-website-leads", "agent-research", "CLAWDIUS WEBSITE LEADs"],
     ["ironvision-production-scaffold", "agent-research", "ironvision-production-scaffold"],
     ["trendfinder", "agent-research", "trendFinder"],
@@ -647,6 +709,9 @@ export function initializeSchema(db: Database.Database) {
   if (!jobCols2.some((c) => c.name === "thinking")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
   }
+  if (!jobCols2.some((c) => c.name === "credential_profile_id")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL`);
+  }
 
   // Migrations: admin API keys table
   const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as TableInfoRow[];
@@ -707,9 +772,19 @@ export function initializeSchema(db: Database.Database) {
         timeout_minutes INTEGER NOT NULL DEFAULT 30,
         model TEXT,
         thinking TEXT,
-        workflow_only INTEGER NOT NULL DEFAULT 0
+        workflow_only INTEGER NOT NULL DEFAULT 0,
+        credential_profile_id TEXT REFERENCES credential_profiles(id) ON DELETE SET NULL
       );
-      INSERT INTO jobs_new SELECT * FROM jobs;
+      INSERT INTO jobs_new (
+        id, agent_id, name, description, instructions, schedule, workflow_command,
+        active, last_run_at, next_run_at, created_at, updated_at, one_off,
+        timeout_minutes, model, thinking, workflow_only, credential_profile_id
+      )
+      SELECT
+        id, agent_id, name, description, instructions, schedule, workflow_command,
+        active, last_run_at, next_run_at, created_at, updated_at, one_off,
+        timeout_minutes, model, thinking, workflow_only, credential_profile_id
+      FROM jobs;
       DROP TABLE jobs;
       ALTER TABLE jobs_new RENAME TO jobs;
       CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
@@ -750,7 +825,22 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(scope_type, workspace_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, owner_workspace, owner_project, status);
     CREATE INDEX IF NOT EXISTS idx_skill_proposals_status ON skill_proposals(status);
+    CREATE INDEX IF NOT EXISTS idx_jobs_credential_profile ON jobs(credential_profile_id);
+    CREATE INDEX IF NOT EXISTS idx_credential_profiles_email ON credential_profiles(email);
+    CREATE INDEX IF NOT EXISTS idx_provider_credentials_lookup ON provider_credentials(profile_id, provider, env_name);
+    CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_notifications_source_run ON notifications(source_run_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_analysis_run ON notifications(analysis_run_id);
   `);
+
+  const skillCols = db.prepare(`PRAGMA table_info(skills)`).all() as TableInfoRow[];
+  if (!skillCols.some((c) => c.name === "agent_compatibility")) {
+    db.exec(`ALTER TABLE skills ADD COLUMN agent_compatibility TEXT`);
+  }
+  const skillProposalCols = db.prepare(`PRAGMA table_info(skill_proposals)`).all() as TableInfoRow[];
+  if (!skillProposalCols.some((c) => c.name === "agent_compatibility")) {
+    db.exec(`ALTER TABLE skill_proposals ADD COLUMN agent_compatibility TEXT`);
+  }
 
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
@@ -787,8 +877,8 @@ export function initializeSchema(db: Database.Database) {
   `).run(
     "harbour-toolkit-library-sync-7am",
     "Toolkit Library Sync",
-    "Refreshes BORG skills, plugins, and sub-agent library manifests for OpenCLaw, Hermes, all Harbour agents, and Orgo client VMs.",
-    "Daily 7am maintenance job. Imports SKILLS into Harbour, snapshots plugin/sub-agent manifests, and marks all agents updated so OpenCLaw/Hermes next spawns read the latest scoped toolkit packet.",
+    "Refreshes BORG skills, plugins, sub-agent manifests, and first-class AgentOps agents for OpenCLaw, Hermes, Harbour, and Orgo client VMs.",
+    "Daily 7am maintenance job. Imports SKILLS into Harbour, snapshots plugin/sub-agent manifests, syncs AgentOps-declared Harbour agents/jobs idempotently, preserves X Developer credential-onboarding hooks for the X.com agent scraper, and marks OpenCLaw/Hermes agents updated so their next spawn reads the latest scoped toolkit packet.",
     toolkitSchedule,
     "node '/Users/davidk/Documents/Borg Interface/harbour/scripts/sync-toolkit-libraries.mjs'",
     toolkitNextRunAt,

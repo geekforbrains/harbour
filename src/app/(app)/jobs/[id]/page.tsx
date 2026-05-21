@@ -34,8 +34,6 @@ type Job = {
   databases: { id: string; name: string; table_name: string }[];
   envVars: { id: string; name: string }[];
 };
-type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
-
 const INSTRUCTIONS_CHAR_LIMIT = 400;
 
 function InstructionsBlock({ text }: { text: string }) {

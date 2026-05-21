@@ -4,7 +4,15 @@ import path from 'path';
 export default defineConfig({
   test: {
     globals: true,
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.git/**', '**/.claude/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      '**/.git/**',
+      '**/.claude/**',
+      '**/deer-flow/**',
+      '**/freellmapi/**',
+    ],
   },
   resolve: {
     alias: {

@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -6,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Red Hat Display", "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
-  --font-heading: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: Georgia, "Times New Roman", serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -57,41 +58,49 @@
  *   Teal:    --h: 185;  --c: 0.12;
  */
 :root {
-  --h: 285;
-  --c: 0.15;
+  --h: 274;
+  --c: 0.09;
 
-  --background: oklch(0.99 0.003 var(--h));
-  --foreground: oklch(0.155 0.014 var(--h));
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.155 0.014 var(--h));
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.155 0.014 var(--h));
-  --primary: oklch(0.45 var(--c) var(--h));
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.965 0.006 var(--h));
-  --secondary-foreground: oklch(0.25 0.012 var(--h));
-  --muted: oklch(0.96 0.005 var(--h));
-  --muted-foreground: oklch(0.52 0.012 var(--h));
-  --accent: oklch(0.96 0.008 var(--h));
-  --accent-foreground: oklch(0.25 0.012 var(--h));
+  --background: #f2f2f2;
+  --foreground: #202020;
+  --card: #ffffff;
+  --card-foreground: #202020;
+  --popover: #ffffff;
+  --popover-foreground: #202020;
+  --primary: #202020;
+  --primary-foreground: #ffffff;
+  --secondary: #f7f7f8;
+  --secondary-foreground: #303030;
+  --muted: #f5f5f6;
+  --muted-foreground: #7c7c7c;
+  --accent: #f7f7f8;
+  --accent-foreground: #303030;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0.006 var(--h));
-  --input: oklch(0.91 0.006 var(--h));
-  --ring: oklch(0.45 var(--c) var(--h));
-  --chart-1: oklch(0.55 var(--c) var(--h));
+  --border: #ededed;
+  --input: #ededed;
+  --ring: #866af5;
+  --chart-1: #866af5;
   --chart-2: oklch(0.6 0.12 200);
   --chart-3: oklch(0.55 0.08 150);
   --chart-4: oklch(0.5 0.1 300);
   --chart-5: oklch(0.55 0.12 30);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.975 0.005 var(--h));
-  --sidebar-foreground: oklch(0.155 0.014 var(--h));
-  --sidebar-primary: oklch(0.45 var(--c) var(--h));
-  --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.95 0.01 var(--h));
-  --sidebar-accent-foreground: oklch(0.25 0.012 var(--h));
-  --sidebar-border: oklch(0.91 0.006 var(--h));
-  --sidebar-ring: oklch(0.45 var(--c) var(--h));
+  --radius: 1rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #202020;
+  --sidebar-primary: #202020;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f7f7f8;
+  --sidebar-accent-foreground: #303030;
+  --sidebar-border: #ededed;
+  --sidebar-ring: #866af5;
+  --borg-paper: #f2f2f2;
+  --borg-ink: #202020;
+  --borg-ink-soft: #7c7c7c;
+  --borg-line: #ededed;
+  --borg-violet: #866af5;
+  --borg-violet-soft: #dee3ff;
+  --borg-panel: #fbfbfc;
+  --borg-shadow: 0 0 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
 }
 
 :root.dark {
@@ -136,9 +145,19 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "Red Hat Display", "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 500;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   html {
     @apply font-sans;
+  }
+  h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 }
 
@@ -157,3 +176,167 @@
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+@keyframes borgHeroDrift {
+  0% { transform: translate3d(-50%, 0, 0) scale(1.04); }
+  25% { transform: translate3d(calc(-50% - 1.5%), 0.7%, 0) scale(1.07); }
+  50% { transform: translate3d(calc(-50% + 1%), -0.6%, 0) scale(1.05); }
+  75% { transform: translate3d(calc(-50% - 0.5%), 0.9%, 0) scale(1.08); }
+  100% { transform: translate3d(-50%, 0, 0) scale(1.04); }
+}
+
+@keyframes borgFadeInUnblur {
+  0% { opacity: 0; filter: blur(12px); transform: translateY(16px); }
+  100% { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+.borg-fade-in {
+  animation: borgFadeInUnblur 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.borg-fade-in-d1 { animation-delay: 0.06s; opacity: 0; }
+.borg-fade-in-d2 { animation-delay: 0.12s; opacity: 0; }
+.borg-fade-in-d3 { animation-delay: 0.18s; opacity: 0; }
+
+.borg-app-root,
+.borg-auth-shell {
+  --background: #f2f2f2;
+  --foreground: #202020;
+  --card: #ffffff;
+  --card-foreground: #202020;
+  --popover: #ffffff;
+  --popover-foreground: #202020;
+  --primary: #202020;
+  --primary-foreground: #ffffff;
+  --secondary: #f7f7f8;
+  --secondary-foreground: #303030;
+  --muted: #f5f5f6;
+  --muted-foreground: #7c7c7c;
+  --accent: #f7f7f8;
+  --accent-foreground: #303030;
+  --border: #ededed;
+  --input: #ededed;
+  --ring: #866af5;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #202020;
+  --sidebar-primary: #202020;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f7f7f8;
+  --sidebar-accent-foreground: #303030;
+  --sidebar-border: #ededed;
+  --sidebar-ring: #866af5;
+  position: relative;
+  isolation: isolate;
+  background: var(--borg-paper);
+  color: var(--borg-ink);
+  overflow: hidden;
+}
+
+.borg-app-root::before,
+.borg-auth-shell::before {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  top: -118px;
+  left: 50%;
+  width: min(1500px, 118vw);
+  height: clamp(310px, 33vw, 520px);
+  pointer-events: none;
+  opacity: 0.82;
+  filter: blur(14px);
+  transform-origin: center top;
+  animation: borgHeroDrift 22s ease-in-out infinite;
+  background:
+    linear-gradient(104deg, transparent 0 18%, rgba(255, 255, 255, 0.86) 20%, rgba(225, 211, 239, 0.62) 28%, rgba(160, 123, 225, 0.34) 39%, transparent 57%),
+    linear-gradient(11deg, transparent 0 45%, rgba(248, 187, 214, 0.62) 62%, rgba(245, 140, 178, 0.28) 76%, transparent 93%),
+    radial-gradient(ellipse at 68% 12%, rgba(225, 206, 236, 0.72), transparent 52%),
+    radial-gradient(ellipse at 35% 0%, rgba(210, 195, 235, 0.5), transparent 45%);
+}
+
+.borg-app-root::after,
+.borg-auth-shell::after {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(242,242,242,0) 360px),
+    linear-gradient(180deg, rgba(242,242,242,0) 70%, rgba(242,242,242,0.78) 100%);
+}
+
+.borg-sidebar {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(237, 237, 237, 0.96);
+  box-shadow: 0 18px 48px rgba(28, 28, 42, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.borg-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  background: #202020;
+  color: #ffffff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  line-height: 1;
+  box-shadow: 0 10px 24px rgba(32, 32, 32, 0.12);
+}
+
+.borg-main-stage {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: var(--borg-line);
+  box-shadow: 0 24px 80px rgba(28, 28, 42, 0.08);
+}
+
+.borg-main-surface {
+  background:
+    linear-gradient(130deg, rgba(246, 243, 247, 0.56) 4%, rgb(251, 251, 252) 35%, rgb(244, 246, 248) 100%);
+}
+
+.borg-page-frame {
+  color: var(--borg-ink);
+}
+
+.borg-page-frame > div {
+  animation: borgFadeInUnblur 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+[data-slot="card"] {
+  border-color: var(--borg-line);
+  box-shadow: var(--borg-shadow);
+}
+
+[data-slot="button"] {
+  box-shadow: none;
+}
+
+[data-slot="button"]:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+[data-slot="input"],
+[data-slot="textarea"] {
+  box-shadow: 0 1px 2px rgba(255,255,255,0.9) inset, 0 10px 24px rgba(28,28,42,0.04);
+}
+
+@media (max-width: 768px) {
+  .borg-app-root::before,
+  .borg-auth-shell::before {
+    top: -128px;
+    width: 138vw;
+    height: 340px;
+    opacity: 0.68;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .borg-app-root::before,
+  .borg-auth-shell::before,
+  .borg-fade-in,
+  .borg-page-frame > div {
+    animation: none;
+  }
+}

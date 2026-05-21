@@ -12,6 +12,22 @@ services:
     volumes:
       - ./data:/data
 
+  harbour-edge:
+    image: caddy:2-alpine
+    container_name: harbour-edge
+    restart: unless-stopped
+    depends_on:
+      - harbour
+    ports:
+      - "${HARBOUR_HTTP_PORT:-80}:80"
+      - "${HARBOUR_HTTPS_PORT:-443}:443"
+    environment:
+      HARBOUR_SITE_ADDRESS: ${HARBOUR_SITE_ADDRESS:-http://localhost, https://localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - harbour-caddy-data:/data
+      - harbour-caddy-config:/config
+
   # Simulated remote worker — same repo, different entrypoint. Exists so the
   # remote-runner flow can be validated without a second physical machine.
   # In production, you'd run `harbour agent run` directly on the remote box.
@@ -29,3 +45,7 @@ services:
     volumes:
       - ./data-remote:/data
     profiles: ["remote"]
+
+volumes:
+  harbour-caddy-data:
+  harbour-caddy-config:

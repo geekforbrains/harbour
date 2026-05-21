@@ -23,6 +23,11 @@ ENV NODE_ENV=production \
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
+# Next 16/Turbopack standalone tracing does not currently include the server
+# runtime chunks required by App Router pages and route handlers.
+COPY --from=build /app/.next/server/chunks ./.next/server/chunks
+# Turbopack also externalizes some native packages under hashed module names.
+COPY --from=build /app/.next/node_modules ./.next/node_modules
 
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node

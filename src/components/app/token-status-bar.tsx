@@ -41,7 +41,7 @@ export function TokenStatusBar() {
   const memWarn = metrics.system.memPct > 85;
 
   return (
-    <div className="hidden md:flex items-center gap-4 px-4 py-1.5 border-t bg-muted/30 text-xs text-muted-foreground shrink-0">
+    <div className="hidden shrink-0 items-center gap-4 border-t border-[#ededed] bg-white/55 px-4 py-1.5 text-xs text-muted-foreground backdrop-blur md:flex">
       {/* FreeLLM status */}
       {freellmEnabled && (
         <span className="flex items-center gap-1.5">

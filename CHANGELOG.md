@@ -2,6 +2,77 @@
 
 ## Unreleased — 2026-05-20
 
+### Runtime Security
+
+- Added SAGE runtime security with `@gendigital/sage-core@0.9.0` and `@gendigital/sage-openclaw@0.9.0`.
+- Added the Harbour SAGE guard, Hermes `pre_tool_call` hook, setup script, and workflow `bash -c` preflight so `deny` and `ask` verdicts fail before execution.
+- Added OpenClaw/Hermes runtime coverage checks before CLI spawn, with unknown future providers failing closed until mapped to SAGE-native or wrapper coverage.
+- Added `runtime_security` metadata to `/api/toolkit-libraries` and OpenClaw/Hermes run payloads.
+- Excluded nested `deer-flow` and `freellmapi` workspaces from Harbour Vitest so `npm run test` covers Harbour's own test suite cleanly.
+
+### Deploy
+
+- Prepared the current Harbour packet for deployment after clearing full lint to zero warnings and re-verifying TypeScript, production build, whitespace checks, and browser smoke.
+- Fixed the Docker standalone runtime packaging by copying Next 16/Turbopack server chunks and hashed external native modules into the runtime image.
+
+### Toolkit Libraries
+
+- Added `agent_compatibility` storage and filtering for imported skills, skill proposals, OpenCLaw/Hermes run payloads, and `/api/toolkit-libraries`.
+- Added OpenCLaw/Hermes compatibility badges and filters to the Libraries UI.
+- Synced the new daily `openclaw-skill-scout` AgentOps agent/job so OpenCLaw can scan and promote vetted community skill wrappers after the morning toolkit sync.
+
+### Interface
+
+- Rethemed Harbour around the NeoClaw reference visual system: Red Hat Display UI type, Georgia headings, paper-gray background, soft white panels, black primary actions, rounded app frames, and blur-in motion.
+- Updated the shared shell, mobile navigation, auth screens, Captain, buttons, cards, dialogs, inputs, textareas, empty states, and status bar so every route inherits the BORG Interface look.
+
+### Notifications
+
+- Added a Harbour notifications inbox backed by a `notifications` table, unread/read/archive lifecycle, unread badge count, and expandable intelligence brief cards.
+- Moved the old Inbox meaning out of the sidebar: waiting/running/scheduled/recent runs now live under All Runs page filters.
+- Added run-completion ingestion for GitHub Trend Intelligence `harbour-notification-json` payloads, creating one Inbox notification per daily brief.
+- Added archive-triggered BORG Synergy Analyst runs; archiving a notification marks analysis pending, queues a one-off analysis run, and updates the notification when structured synergy JSON is emitted.
+- Hardened notification archiving to be idempotent, mark archived notifications read, and expose archived notification history from the Inbox page.
+- Fixed GitHub Intelligence local execution setup by syncing AgentOps-declared local agents into `~/.harbour/runners.json` and normalizing signal-only CLI exits so failed starts finalize instead of leaving runs stuck.
+- Increased the Hermes/OpenClaw startup watchdog window for large Harbour prompts so daily intelligence jobs are not killed before first output during legitimate long startup.
+- Fixed production build warnings by adding a stable metadata base and marking external toolkit registry reads as Turbopack trace-ignored, preventing standalone traces from pulling in generated data, nested workspaces, and graph artifacts.
+
+### Social Intelligence
+
+- Kept the operator-facing Social nav surface aligned with stable `/social` routes and API names.
+- Added a first-class Social section with platform pages for overview, Meta/Instagram, YouTube, X.com, TikTok, LinkedIn, and distribution.
+- Added platform-specific dashboard sections for Instagram/Reels, YouTube Shorts/long-form analytics, X.com conversations, and Blotato/Ominsocial distribution state.
+- Added authenticated `/api/social/*` proxy/fallback routes that can hand off to `SOCIAL_ENGINE_URL` or return local scaffold data until the external FastAPI engine is live.
+- Added shared Social source-adapter, access-policy, MCP tool, worker-partition, and distribution-provider contracts.
+
+### Navigation
+
+- Renamed Jobs to Goals in the operator navigation and primary list/create surfaces while keeping the existing `/jobs` route and data model stable.
+- Moved Users and Env Vars out of the primary navigation and into Settings tabs to reduce sidebar and mobile More menu clutter.
+
+### Lint
+
+- Cleared the full Harbour ESLint error baseline by documenting the current dynamic SQLite/API row typing policy, fixing React Compiler state/ref violations in run, create, and project-link surfaces, and preserving remaining lint output as warnings only.
+- Removed the remaining warnings so `npm run lint` now exits with zero errors and zero warnings.
+
+### AgentOps Sync
+
+- AgentOps-synced Harbour jobs now compute `next_run_at` when an active default job is imported from the toolkit sync, so scheduled agents such as `github-trend-intelligence-daily` are actually due inside Harbour after sync.
+
+### Deployment
+
+- Added a Caddy edge service to the Docker stack so the Harbour dashboard and `/api/*` routes can be served on host ports `80` and `443`, while keeping `3030` as a direct Next.js fallback.
+- Added `deploy/Caddyfile` so generated agent, attachment, and API links can use Caddy's forwarded public dashboard origin behind the proxy.
+- Trimmed nested workspaces and generated graph output from the Docker build context so production image builds stay focused on Harbour.
+
+### Credential Profiles
+
+- Added per-person credential profiles and provider credential records backed by encrypted env vars.
+- Added broker injection so profile-linked provider secrets are exposed to runs only as canonical env names such as `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, and `GITHUB_MODELS_API_KEY`.
+- Redacted linked env var and credential-profile broker secrets from run activity and stored run output.
+- Added authenticated credential profile API routes for profile and provider credential management.
+- Added visual-artifact quarantine for credential-profile runs and a dry-run-by-default provider smoke harness for read-only auth checks.
+
 ### BORG Interface Workspaces
 
 - Added first-class workspaces above projects so businesses and operating areas can own nested projects.

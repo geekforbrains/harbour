@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment } from "@/lib/db/queries";
+import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment, runHasCredentialProfile } from "@/lib/db/queries";
 import { serializeAttachment, SerializedAttachment } from "@/lib/attachments-serialize";
 import { publicBaseUrl } from "@/lib/request-url";
 import { isVideoFile, readTranscript, readStoryboard, TRANSCRIPT_CAP } from "@/lib/video-processing";
+import { isVisualArtifactMime } from "@/lib/redaction";
 
 function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
@@ -52,7 +53,10 @@ export const GET = withAuth(async (req, auth, { params }) => {
   }
 
   const base = publicBaseUrl(req);
-  const serialized = (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base));
+  const sensitiveRun = runHasCredentialProfile(payload.run.id);
+  const serialized = (payload.attachments as RunAttachment[])
+    .filter(a => !(sensitiveRun && isVisualArtifactMime(a.mime_type)))
+    .map(a => serializeAttachment(a, base));
 
   const enriched = serialized.map((att: SerializedAttachment) => {
     if (!isVideoFile(att.mime_type, att.filename)) return att;

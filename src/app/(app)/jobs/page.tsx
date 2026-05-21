@@ -86,8 +86,8 @@ export default function JobsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-          <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Goals</h1>
+          <p className="text-sm text-muted-foreground mt-1">Recurring outcomes and responsibilities across all agents.</p>
         </div>
         <div className="flex gap-2">
           {activeProjectId && (
@@ -96,19 +96,19 @@ export default function JobsPage() {
             </Button>
           )}
           <Button onClick={() => setShowCreate(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1.5" /> New Job
+            <Plus className="h-4 w-4 mr-1.5" /> New Goal
           </Button>
         </div>
       </div>
 
       {jobs.length === 0 ? (
         <EmptyState large icon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}>
-          No jobs yet. Create one to get started.
+          No goals yet. Create one to get started.
         </EmptyState>
       ) : (
         <>
-          {renderJobSection("Agent Jobs", jobs.filter(j => !j.workflow_only))}
-          {renderJobSection("Workflow Jobs", jobs.filter(j => !!j.workflow_only))}
+          {renderJobSection("Agent Goals", jobs.filter(j => !j.workflow_only))}
+          {renderJobSection("Workflow Goals", jobs.filter(j => !!j.workflow_only))}
         </>
       )}
 
@@ -123,7 +123,7 @@ export default function JobsPage() {
           queryKey="jobs"
           fetchAllUrl="/api/jobs"
           icon={Briefcase}
-          title="Add Existing Job"
+          title="Add Existing Goal"
         />
       )}
     </div>

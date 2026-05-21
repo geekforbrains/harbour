@@ -1,10 +1,12 @@
 .PHONY: run up down logs restart rebuild shell clean
 
-URL := http://localhost:3030
+URL := http://localhost
+DIRECT_URL := http://localhost:3030
 
 run: up
 	@echo ""
 	@echo "Harbour is running at $(URL)"
+	@echo "Direct Next.js fallback: $(DIRECT_URL)"
 	@echo "Data is persisted in ./data (DB, uploads, encryption key)"
 	@echo ""
 	@echo "  make logs     follow logs"
@@ -18,7 +20,7 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f harbour
+	docker compose logs -f harbour harbour-edge
 
 restart:
 	docker compose restart harbour

@@ -1,16 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useApp } from "./app-context";
 import { cn } from "@/lib/utils";
 import {
   Inbox,
   LayoutList,
-  Archive,
-  Play,
-  Clock,
-  CalendarClock,
   MessageSquare,
   Rabbit,
   ExternalLink,
@@ -20,7 +16,7 @@ import {
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <p className="mt-4 mb-0.5 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50 select-none">
+    <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-[#a0a0a0] select-none">
       {label}
     </p>
   );
@@ -43,11 +39,11 @@ function NavItem({ href, label, icon: Icon, badge, size = "default", active, onC
       href={href}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2.5 rounded-md transition-colors",
+        "flex items-center gap-2.5 rounded-xl transition-all duration-200",
         isSmall ? "px-2 py-1 text-xs" : "px-2 py-1.5 text-sm",
         active
-          ? "bg-primary/10 text-primary font-medium"
-          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+          ? "bg-[#202020] text-white font-medium shadow-[2px_6px_16px_rgba(0,0,0,0.08)]"
+          : "text-[#7c7c7c] hover:bg-white hover:text-[#202020]"
       )}
     >
       {Icon && <Icon className={cn("shrink-0", isSmall ? "h-3.5 w-3.5" : "h-4 w-4")} />}
@@ -70,9 +66,9 @@ function ExternalNavItem({ href, label, icon: Icon, size = "default" }: Omit<Nav
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "flex items-center gap-2.5 rounded-md transition-colors",
+        "flex items-center gap-2.5 rounded-xl transition-all duration-200",
         isSmall ? "px-2 py-1 text-xs" : "px-2 py-1.5 text-sm",
-        "text-muted-foreground hover:bg-accent hover:text-foreground"
+        "text-[#7c7c7c] hover:bg-white hover:text-[#202020]"
       )}
     >
       {Icon && <Icon className={cn("shrink-0", isSmall ? "h-3.5 w-3.5" : "h-4 w-4")} />}
@@ -86,13 +82,7 @@ function ExternalNavItem({ href, label, icon: Icon, size = "default" }: Omit<Nav
 
 export function WorkspaceNav({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const { waitingCount } = useApp();
-
-  const currentStatus = searchParams.get("status");
-
-  const isRunsActive = (status: string | null) =>
-    (pathname === "/" || pathname.startsWith("/runs")) && currentStatus === status;
+  const { notificationCount } = useApp();
 
   return (
     <nav className="flex flex-col gap-0 px-2">
@@ -108,33 +98,20 @@ export function WorkspaceNav({ onClick }: { onClick?: () => void }) {
 
       {/* ── Quick access ───────────────────────────────────────────────────── */}
       <NavItem
-        href="/?status=waiting"
+        href="/inbox"
         label="Inbox"
         icon={Inbox}
-        badge={waitingCount}
-        active={isRunsActive("waiting")}
+        badge={notificationCount}
+        active={pathname.startsWith("/inbox")}
         onClick={onClick}
       />
       <NavItem
         href="/"
         label="All Runs"
         icon={LayoutList}
-        active={isRunsActive(null)}
+        active={pathname === "/" || pathname.startsWith("/runs")}
         onClick={onClick}
       />
-      <NavItem
-        href="/?status=recent"
-        label="Archive"
-        icon={Archive}
-        active={isRunsActive("recent")}
-        onClick={onClick}
-      />
-
-      {/* ── Views ──────────────────────────────────────────────────────────── */}
-      <SectionHeader label="Views" />
-      <NavItem href="/?status=waiting"   label="Waiting"   icon={Clock}        active={isRunsActive("waiting")}   onClick={onClick} />
-      <NavItem href="/?status=running"   label="Running"   icon={Play}         active={isRunsActive("running")}   onClick={onClick} />
-      <NavItem href="/?status=scheduled" label="Scheduled" icon={CalendarClock} active={isRunsActive("scheduled")} onClick={onClick} />
 
 
       {/* ── Tools ──────────────────────────────────────────────────────────── */}

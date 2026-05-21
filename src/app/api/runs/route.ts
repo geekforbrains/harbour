@@ -35,6 +35,7 @@ export const POST = withAuth(async (req) => {
     instructions: body.instructions,
     docIds: body.docIds,
     envVarIds: body.envVarIds,
+    credentialProfileId: body.credentialProfileId || null,
     runAt: body.runAt,
   });
 

@@ -30,6 +30,7 @@ type LibraryEntry = {
   path: string | null;
   capsule: string | null;
   handoff_contract: string | null;
+  agent_compatibility: string[];
   tags: string[];
   triggers: string[];
   provenance: string | null;
@@ -65,6 +66,7 @@ type Skill = {
   source_agent: string | null;
   path: string | null;
   digest: string | null;
+  agent_compatibility?: string | null;
   tags?: string | null;
   triggers?: string | null;
 };
@@ -108,6 +110,7 @@ function skillToEntry(skill: Skill): LibraryEntry {
     path: skill.path,
     capsule: null,
     handoff_contract: null,
+    agent_compatibility: splitStoredList(skill.agent_compatibility),
     tags: splitStoredList(skill.tags),
     triggers: splitStoredList(skill.triggers),
     provenance: skill.source_agent ? `Imported from ${skill.source_agent}.` : null,
@@ -130,6 +133,7 @@ function entryText(entry: LibraryEntry) {
     entry.load_policy,
     entry.risk_level,
     entry.handoff_contract,
+    (entry.agent_compatibility || []).join(" "),
     entry.tags.join(" "),
     entry.triggers.join(" "),
   ].filter(Boolean).join(" ").toLowerCase();
@@ -141,6 +145,7 @@ export default function SkillsPage() {
   const [activeLibrary, setActiveLibrary] = useState<LibraryId>("skills");
   const [query, setQuery] = useState("");
   const [scopeFilter, setScopeFilter] = useState("all");
+  const [agentFilter, setAgentFilter] = useState("all");
   const [showProposal, setShowProposal] = useState(false);
   const [proposalName, setProposalName] = useState("");
   const [proposalScope, setProposalScope] = useState("global");
@@ -192,9 +197,15 @@ export default function SkillsPage() {
       const matchesQuery = !q || entryText(entry).includes(q);
       const scopes = entryScopes(entry);
       const matchesScope = scopeFilter === "all" || scopes.includes(scopeFilter);
-      return matchesQuery && matchesScope;
+      const compatibility = (entry.agent_compatibility || []).length
+        ? entry.agent_compatibility.map(item => item.toLowerCase())
+        : ["openclaw", "hermes"];
+      const matchesAgent = agentFilter === "all"
+        || (agentFilter === "both" && compatibility.includes("openclaw") && compatibility.includes("hermes"))
+        || compatibility.includes(agentFilter);
+      return matchesQuery && matchesScope && matchesAgent;
     });
-  }, [currentLibrary, query, scopeFilter]);
+  }, [currentLibrary, query, scopeFilter, agentFilter]);
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["toolkit-libraries"] });
@@ -331,6 +342,12 @@ export default function SkillsPage() {
           <option value="project">Project</option>
           <option value="brand-kit">Brand kit</option>
         </select>
+        <select className="rounded-md border bg-background px-3 py-2 text-sm" value={agentFilter} onChange={e => setAgentFilter(e.target.value)}>
+          <option value="all">All agents</option>
+          <option value="openclaw">OpenCLaw</option>
+          <option value="hermes">Hermes</option>
+          <option value="both">Both</option>
+        </select>
       </div>
 
       {activeLibrary === "skills" && proposals.length > 0 && (
@@ -366,6 +383,7 @@ export default function SkillsPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">{entry.name}</span>
                 {entryScopes(entry).map(scope => <Badge key={scope} variant="secondary" className="text-[10px]">{scope}</Badge>)}
+                {(entry.agent_compatibility || []).map(agent => <Badge key={agent} variant="outline" className="text-[10px]">{agent}</Badge>)}
                 {entry.risk_level && <Badge className="text-[10px]" variant={entry.risk_level === "high" ? "destructive" : "secondary"}>{entry.risk_level}</Badge>}
                 {entry.status !== "active" && <Badge className="text-[10px]">{entry.status}</Badge>}
               </div>

@@ -11,6 +11,8 @@ import { useApp } from "@/components/app/app-context";
 import { useRouter } from "next/navigation";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
+import EnvVarsPage from "../env-vars/page";
+import UsersPage from "../users/page";
 
 type Settings = Record<string, string>;
 
@@ -39,7 +41,7 @@ type Metrics = {
   freellm: { enabled: boolean; baseUrl: string; online: boolean; modelCount: number };
 };
 
-type Tab = "general" | "captain" | "usage";
+type Tab = "general" | "captain" | "usage" | "env-vars" | "users";
 
 type AdminApiKey = {
   id: string;
@@ -117,7 +119,7 @@ function UsageTab({ settings, updateSetting }: { settings: Settings; updateSetti
             warn={(metrics?.runs.running ?? 0) > 0} sub="active runs" />
           <StatCard label="Queued" value={metrics?.runs.pending ?? "–"} icon={Layers} sub="pending runs" />
           <StatCard label="Done (24h)" value={metrics?.runs.done24h ?? "–"} icon={Check} sub="completed" />
-          <StatCard label="Agents" value={metrics?.agents ?? "–"} icon={Bot} sub={`${metrics?.jobs ?? 0} active jobs`} />
+          <StatCard label="Agents" value={metrics?.agents ?? "–"} icon={Bot} sub={`${metrics?.jobs ?? 0} active goals`} />
         </div>
       </div>
 
@@ -407,22 +409,24 @@ export default function SettingsPage() {
     { id: "general", label: "General" },
     { id: "captain", label: "Captain" },
     { id: "usage", label: "Usage" },
+    { id: "env-vars", label: "Env Vars" },
+    { id: "users", label: "Users" },
   ];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">System-wide configuration.</p>
+        <p className="text-sm text-muted-foreground mt-1">System configuration, credentials, accounts, and runtime controls.</p>
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b pb-0">
+      <div className="flex gap-1 overflow-x-auto border-b pb-0">
         {TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-t transition-colors -mb-px border-b-2 ${
+            className={`min-w-fit px-4 py-2 text-sm font-medium rounded-t transition-colors -mb-px border-b-2 ${
               activeTab === tab.id
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -451,7 +455,7 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
                 <div>
                   <p className="text-sm font-medium">Delete project</p>
-                  <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, jobs, docs, and env vars are not deleted.</p>
+                  <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, goals, docs, and env vars are not deleted.</p>
                 </div>
                 <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
                   <Trash2 className="h-4 w-4 mr-1.5" /> Delete
@@ -462,7 +466,7 @@ export default function SettingsPage() {
 
           <div className="space-y-2">
             <Label>Timezone</Label>
-            <p className="text-xs text-muted-foreground">Used for scheduling jobs and displaying times.</p>
+            <p className="text-xs text-muted-foreground">Used for scheduling goals and displaying times.</p>
             <div className="relative">
               <Input value={tzOpen ? tzSearch : timezone}
                 onChange={e => { setTzSearch(e.target.value); setTzOpen(true); }}
@@ -644,6 +648,18 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {activeTab === "env-vars" && (
+        <div className="max-w-3xl">
+          <EnvVarsPage />
+        </div>
+      )}
+
+      {activeTab === "users" && (
+        <div className="max-w-3xl">
+          <UsersPage />
+        </div>
+      )}
+
       {/* Dialogs (shared across all tabs) */}
       <Dialog open={showNewKey} onOpenChange={(open) => { setShowNewKey(open); if (!open) setNewKeyName(""); }}>
         <DialogContent>
@@ -667,11 +683,11 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">Copy this invite and paste it into your management agent. The key won&apos;t be shown again.</p>
             <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all select-all max-h-64 overflow-y-auto">
-              {`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${typeof window !== "undefined" ? window.location.origin : ""}\n\nTo get started, fetch the admin guide:\n  GET ${typeof window !== "undefined" ? window.location.origin : ""}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, databases, env vars, projects, and settings.`}
+              {`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${typeof window !== "undefined" ? window.location.origin : ""}\n\nTo get started, fetch the admin guide:\n  GET ${typeof window !== "undefined" ? window.location.origin : ""}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, goals, runs, docs, databases, env vars, projects, and settings.`}
             </div>
             <Button variant="outline" className="w-full" onClick={() => {
               const base = typeof window !== "undefined" ? window.location.origin : "";
-              navigator.clipboard.writeText(`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${base}\n\nTo get started, fetch the admin guide:\n  GET ${base}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, databases, env vars, projects, and settings.`);
+              navigator.clipboard.writeText(`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${base}\n\nTo get started, fetch the admin guide:\n  GET ${base}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, goals, runs, docs, databases, env vars, projects, and settings.`);
               setCopied(true);
             }}>
               {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Invite</>}
@@ -683,7 +699,7 @@ export default function SettingsPage() {
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent>
           <DialogHeader><DialogTitle>Delete {activeProject?.name}?</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">This will remove the project and all its links. Your agents, jobs, docs, and env vars will not be deleted.</p>
+          <p className="text-sm text-muted-foreground">This will remove the project and all its links. Your agents, goals, docs, and env vars will not be deleted.</p>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteProject} disabled={deleting}>
