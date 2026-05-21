@@ -507,8 +507,7 @@ export function initializeSchema(db: Database.Database) {
   // SQLite CHECK constraints can't be altered, so we recreate the table if needed
   const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck?.sql && !runCheck.sql.includes("pending")) {
-    db.exec(`
-      PRAGMA foreign_keys = OFF;
+    withForeignKeysDisabled(db, () => db.exec(`
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -526,8 +525,7 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-      PRAGMA foreign_keys = ON;
-    `);
+    `));
   }
 
   // Migrations: add one_off and timeout_minutes columns to jobs
@@ -542,8 +540,7 @@ export function initializeSchema(db: Database.Database) {
   // Migrations: add 'scheduled' status and scheduled_for column to runs
   const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
-    db.exec(`
-      PRAGMA foreign_keys = OFF;
+    withForeignKeysDisabled(db, () => db.exec(`
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -563,15 +560,13 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-      PRAGMA foreign_keys = ON;
-    `);
+    `));
   }
 
   // Migrations: add 'killed' status and kill_requested_at column to runs
   const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as SqliteMasterRow | undefined;
   if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
-    db.exec(`
-      PRAGMA foreign_keys = OFF;
+    withForeignKeysDisabled(db, () => db.exec(`
       DROP TABLE IF EXISTS runs_new;
       CREATE TABLE runs_new (
         id TEXT PRIMARY KEY,
@@ -592,8 +587,7 @@ export function initializeSchema(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
       CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-      PRAGMA foreign_keys = ON;
-    `);
+    `));
   }
 
   // Migrations: normalize non-JSON schedule strings to canonical JSON
@@ -782,6 +776,7 @@ export function initializeSchema(db: Database.Database) {
     .find((c) => c.name === "agent_id");
   if (jobAgentCol?.notnull === 1) {
     withForeignKeysDisabled(db, () => db.exec(`
+      CREATE TEMP TABLE IF NOT EXISTS runs_preserve AS SELECT * FROM runs;
       DROP TABLE IF EXISTS jobs_new;
       CREATE TABLE jobs_new (
         id TEXT PRIMARY KEY,
@@ -818,6 +813,8 @@ export function initializeSchema(db: Database.Database) {
       ALTER TABLE jobs_new RENAME TO jobs;
       CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
       CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+      INSERT OR IGNORE INTO runs SELECT * FROM runs_preserve;
+      DROP TABLE runs_preserve;
     `));
   }
 
