@@ -8,6 +8,7 @@
 - Added the Harbour SAGE guard, Hermes `pre_tool_call` hook, setup script, and workflow `bash -c` preflight so `deny` and `ask` verdicts fail before execution.
 - Added OpenClaw/Hermes runtime coverage checks before CLI spawn, with unknown future providers failing closed until mapped to SAGE-native or wrapper coverage.
 - Added `runtime_security` metadata to `/api/toolkit-libraries` and OpenClaw/Hermes run payloads.
+- Tightened setup docs to the exact pinned OpenClaw SAGE install command and added direct `yaml@2.9.0` dependency metadata for the setup script; the follow-up dependency audit patch moves Next to `16.2.6`.
 - Excluded nested `deer-flow` and `freellmapi` workspaces from Harbour Vitest so `npm run test` covers Harbour's own test suite cleanly.
 - Upgraded Next.js to `16.2.6` and pinned PostCSS resolution to `8.5.15`, clearing the Docker/npm audit baseline to zero known vulnerabilities.
 

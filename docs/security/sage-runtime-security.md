@@ -43,7 +43,7 @@ Run payloads for OpenClaw and Hermes include the same metadata so spawned agents
 ```bash
 cd "/Users/davidk/Documents/Borg Interface/harbour"
 npm run setup:sage-runtime
-openclaw plugins install @gendigital/sage-openclaw
+openclaw plugins install @gendigital/sage-openclaw@0.9.0 --pin --dangerously-force-unsafe-install
 openclaw plugins list | rg -i 'sage|gendigital'
 hermes hooks list
 hermes hooks doctor

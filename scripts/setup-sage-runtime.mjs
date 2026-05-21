@@ -96,4 +96,4 @@ configureHermesHook();
 console.log(`SAGE runtime security configured (${SAGE_RUNTIME_SECURITY.version}).`);
 console.log(`SAGE config: ${configPath}`);
 console.log(`Hermes hook: ${HERMES_SAGE_HOOK_COMMAND}`);
-console.log("OpenClaw: run `openclaw plugins install @gendigital/sage-openclaw` if the plugin is not already enabled.");
+console.log("OpenClaw: run `openclaw plugins install @gendigital/sage-openclaw@0.9.0 --pin --dangerously-force-unsafe-install` if the plugin is not already enabled.");
