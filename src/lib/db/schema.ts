@@ -620,7 +620,6 @@ export function initializeSchema(db: Database.Database) {
     ["skills", "borg-interface", "SKILLS"],
     ["gemma-llm", "borg-interface", "GEMMA LLM"],
     ["agentops", "agent-research", "agentops"],
-    ["youtube-scraper-agent", "agent-research", "youtube-scraper-agent"],
     ["deceived-rei-agent", "agent-research", "deceived_rei_agent"],
     ["hermes-x-intelligence-os", "agent-research", "hermes-x-intelligence-os"],
     ["clawdius-website-leads", "agent-research", "CLAWDIUS WEBSITE LEADs"],

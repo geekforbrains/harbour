@@ -17,12 +17,14 @@
 - Prepared the current Harbour packet for deployment after clearing full lint to zero warnings and re-verifying TypeScript, production build, whitespace checks, and browser smoke.
 - Fixed the Docker standalone runtime packaging by copying Next 16/Turbopack server chunks and hashed external native modules into the runtime image.
 - Rebuilt the Docker deployment after the dependency security patch so the running image no longer reports the previous Next/PostCSS audit findings.
+- Prepared the current Harbour branch for production push after re-verifying audit, lint, TypeScript, production build, Docker rebuild, and HTTP smoke checks.
 
 ### Toolkit Libraries
 
 - Added `agent_compatibility` storage and filtering for imported skills, skill proposals, OpenCLaw/Hermes run payloads, and `/api/toolkit-libraries`.
 - Added OpenCLaw/Hermes compatibility badges and filters to the Libraries UI.
 - Synced the new daily `openclaw-skill-scout` AgentOps agent/job so OpenCLaw can scan and promote vetted community skill wrappers after the morning toolkit sync.
+- Added focused Hermes Skill Scout fixture coverage for official skills, awesome-list repo inspection, proposal reasons, and duplicate skips.
 
 ### Interface
 
@@ -61,10 +63,12 @@
 ### AgentOps Sync
 
 - AgentOps-synced Harbour jobs now compute `next_run_at` when an active default job is imported from the toolkit sync, so scheduled agents such as `github-trend-intelligence-daily` are actually due inside Harbour after sync.
-- Synced `yt-pipeline-full` from AgentOps as the project-scoped **YouTube Scraper Agent — Full Pipeline** Harbour agent.
-- Added the inactive on-demand `yt-pipeline-full-on-demand` job and local runner config without scheduling or creating any YouTube runs.
+- Synced `youtube-scraper-agent` from AgentOps as a standalone AGENT RESEARCH workspace Harbour agent with no project scope.
+- Added the inactive on-demand `youtube-scraper-agent-on-demand` job and local runner config without scheduling or creating any YouTube runs.
 - Guarded the job instructions so safe checks default to dry-run discovery and execution requires explicit channel/video scope.
 - Linked AgentOps-synced default jobs into their project scope so project-filtered Harbour job views include imported agent jobs.
+- Removed the old `youtube-scraper-agent` project seed so the nested prebuilt agent no longer appears as a Harbour project.
+- Included standalone workspace-scoped agent jobs and runs in workspace-filtered Harbour views.
 
 ### Deployment
 

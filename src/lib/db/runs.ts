@@ -186,13 +186,16 @@ function runScopeFilter(projectId?: string, workspaceId?: string) {
   }
   if (workspaceId) {
     return {
-      sql: `AND r.job_id IN (
-        SELECT pj.job_id
-        FROM project_jobs pj
-        JOIN projects p ON p.id = pj.project_id
-        WHERE p.workspace_id = ?
+      sql: `AND (
+        r.agent_id IN (SELECT id FROM agents WHERE workspace_id = ?)
+        OR r.job_id IN (
+          SELECT pj.job_id
+          FROM project_jobs pj
+          JOIN projects p ON p.id = pj.project_id
+          WHERE p.workspace_id = ?
+        )
       )`,
-      values: [workspaceId],
+      values: [workspaceId, workspaceId],
     };
   }
   return { sql: "", values: [] };

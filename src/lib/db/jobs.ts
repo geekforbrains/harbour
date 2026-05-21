@@ -158,14 +158,17 @@ export function listAllJobs(projectId?: string, workspaceId?: string) {
       LEFT JOIN agents a ON j.agent_id = a.id
       WHERE j.one_off = 0
       AND j.id != 'harbour-toolkit-library-sync-7am'
-      AND j.id IN (
-        SELECT pj.job_id
-        FROM project_jobs pj
-        JOIN projects p ON p.id = pj.project_id
-        WHERE p.workspace_id = ?
+      AND (
+        a.workspace_id = ?
+        OR j.id IN (
+          SELECT pj.job_id
+          FROM project_jobs pj
+          JOIN projects p ON p.id = pj.project_id
+          WHERE p.workspace_id = ?
+        )
       )
       ORDER BY j.name
-    `).all(workspaceId);
+    `).all(workspaceId, workspaceId);
   }
   return db.prepare(`
     SELECT j.*, a.name as agent_name,

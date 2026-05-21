@@ -333,6 +333,12 @@ function syncAgentOpsHarbourRecords(db, records) {
       thinking = excluded.thinking,
       updated_at = unixepoch()
   `);
+  const linkProjectAgent = db.prepare(`
+    INSERT OR IGNORE INTO project_agents (project_id, agent_id) VALUES (?, ?)
+  `);
+  const linkProjectJob = db.prepare(`
+    INSERT OR IGNORE INTO project_jobs (project_id, job_id) VALUES (?, ?)
+  `);
 
   for (const record of records) {
     const apiKey = getOrCreateApiKey(keys, record.id);
@@ -356,6 +362,9 @@ function syncAgentOpsHarbourRecords(db, records) {
       record.composioTools,
     );
     syncedAgents += 1;
+    if (record.projectId) {
+      linkProjectAgent.run(record.projectId, record.id);
+    }
 
     if (record.defaultJob?.id) {
       const active = record.defaultJob.active === false ? 0 : 1;
@@ -372,6 +381,9 @@ function syncAgentOpsHarbourRecords(db, records) {
         record.model,
         record.thinking,
       );
+      if (record.projectId) {
+        linkProjectJob.run(record.projectId, record.defaultJob.id);
+      }
       syncedJobs += 1;
     }
   }
