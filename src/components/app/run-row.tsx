@@ -3,11 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, Terminal, Hand, Zap, Pause, Play } from "lucide-react";
+import { Terminal, Hand, Zap, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { TriggerDialog } from "@/components/app/trigger-dialog";
+import { agentColor } from "@/lib/agent-color";
 
 export type RunRowData = {
   id: string;
@@ -57,18 +58,23 @@ export function RunRow({ run, showActions = true }: Props) {
 
   return (
     <>
-      <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+      <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border border-border bg-card p-3 hover:border-foreground/20 hover:bg-accent/40 transition-colors">
         <RunStatusIcon status={run.status} />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{run.title || run.job_name}</div>
           <div className="text-xs text-muted-foreground truncate mt-0.5">{run.job_name}</div>
-          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground flex-wrap">
+          <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground flex-wrap">
             {run.job_workflow_only && !run.agent_name ? (
               <><Terminal className="h-3 w-3" /><span>Workflow</span></>
-            ) : run.job_workflow_command && run.agent_name ? (
-              <><Bot className="h-3 w-3" /><Terminal className="h-3 w-3" /><span>{run.agent_name}</span></>
             ) : (
-              <><Bot className="h-3 w-3" /><span>{run.agent_name ?? "—"}</span></>
+              <>
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
+                  style={{ backgroundColor: agentColor(run.agent_name) }}
+                />
+                {run.job_workflow_command && run.agent_name && <Terminal className="h-3 w-3" />}
+                <span className="font-mono">{run.agent_name ?? "—"}</span>
+              </>
             )}
             {isManual && (
               <span

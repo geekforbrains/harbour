@@ -29,6 +29,7 @@ Technical depth. Skip unless you need it.
 - [Architecture](reference/architecture.md) — what the codebase actually looks like
 - [Database schema](reference/database-schema.md) — every table, its columns, and the FK graph
 - [API](reference/api.md) — pointer to the live wire-contract docs
+- [Design language](reference/design-language.md) — the dashboard's visual system: monochrome chrome, status & agent color
 
 ## Live API documentation
 

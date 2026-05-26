@@ -6,6 +6,10 @@ Harbour is a control plane for AI agents doing ongoing work. See README.md for f
 
 Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 
+## Design
+
+The dashboard's visual system is documented in [docs/reference/design-language.md](docs/reference/design-language.md) — "monochrome chrome, chromatic signal." Chrome is neutral (token-driven in `src/app/globals.css`, no hardcoded palette colors); color is reserved for run **status** (`src/lib/status.ts`) and **agent identity** (`src/lib/agent-color.ts`). Shape conveys type, color conveys state/who, two color dimensions max per view. Read it before building or restyling UI.
+
 ## Key paths
 
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)

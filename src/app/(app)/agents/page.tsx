@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { agentColor } from "@/lib/agent-color";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -253,9 +254,22 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
               href={`/agents/${agent.id}`}
               className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors"
             >
-              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${agent.waiting_count > 0 ? "bg-amber-500/10" : agent.pending_count > 0 ? "bg-blue-500/10" : "bg-primary/10"}`}>
-                <Bot className={`h-4 w-4 ${agent.waiting_count > 0 ? "text-amber-500" : agent.pending_count > 0 ? "text-blue-500" : "text-primary"}`} />
-              </div>
+              {agent.waiting_count > 0 ? (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
+                  <Bot className="h-4 w-4 text-amber-500" />
+                </div>
+              ) : agent.pending_count > 0 ? (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
+                  <Bot className="h-4 w-4 text-blue-500" />
+                </div>
+              ) : (
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                  style={{ backgroundColor: `${agentColor(agent.name)}1f`, color: agentColor(agent.name) }}
+                >
+                  <Bot className="h-4 w-4" />
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{agent.name}</span>
