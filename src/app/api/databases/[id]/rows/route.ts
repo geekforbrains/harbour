@@ -1,34 +1,43 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withAgentOrUser } from "@/lib/auth";
+import { orgIdForResource } from "@/lib/db/access";
 import { getDatabaseById, getRows, insertRows } from "@/lib/db/queries";
 
-export const GET = withAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const db = getDatabaseById(id);
-  if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
 
-  const url = new URL(req.url);
-  const limit = parseInt(url.searchParams.get("limit") || "100");
-  const offset = parseInt(url.searchParams.get("offset") || "0");
-  const orderBy = url.searchParams.get("orderBy") || undefined;
-  const order = (url.searchParams.get("order") || "DESC") as "ASC" | "DESC";
+export const GET = withAgentOrUser(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    const db = getDatabaseById(id);
+    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
-  const result = getRows(id, { limit, offset, orderBy, order });
-  return NextResponse.json(result);
-});
+    const url = new URL(req.url);
+    const limit = parseInt(url.searchParams.get("limit") || "100");
+    const offset = parseInt(url.searchParams.get("offset") || "0");
+    const orderBy = url.searchParams.get("orderBy") || undefined;
+    const order = (url.searchParams.get("order") || "DESC") as "ASC" | "DESC";
 
-export const POST = withAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const db = getDatabaseById(id);
-  if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const result = getRows(id, { limit, offset, orderBy, order });
+    return NextResponse.json(result);
+  },
+  { role: "viewer", orgFromParams: dbOrg }
+);
 
-  const body = await req.json();
-  const rows = Array.isArray(body) ? body : [body];
+export const POST = withAgentOrUser(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    const db = getDatabaseById(id);
+    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
-  try {
-    const result = insertRows(id, rows);
-    return NextResponse.json(result, { status: 201 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
-  }
-});
+    const body = await req.json();
+    const rows = Array.isArray(body) ? body : [body];
+
+    try {
+      const result = insertRows(id, rows);
+      return NextResponse.json(result, { status: 201 });
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+  },
+  { role: "editor", orgFromParams: dbOrg }
+);

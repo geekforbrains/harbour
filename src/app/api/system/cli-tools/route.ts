@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 import { execSync } from "child_process";
 import { homedir } from "os";
 import path from "path";
@@ -39,7 +39,7 @@ function checkTool(tool: typeof CLI_TOOLS[number]) {
   }
 }
 
-export const GET = withAuth(async () => {
+export const GET = withAuthenticatedUser(async () => {
   const tools = CLI_TOOLS.map(checkTool);
   return NextResponse.json(tools);
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withInstanceAdmin } from "@/lib/auth";
 import { listUsers } from "@/lib/db/queries";
 
-export const GET = withAuth(async () => {
+export const GET = withInstanceAdmin(async () => {
   return NextResponse.json(listUsers());
 });

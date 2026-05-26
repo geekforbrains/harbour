@@ -1,9 +1,9 @@
-import { withAuth } from "@/lib/auth";
+import { withResourceAuth } from "@/lib/auth";
 import { getRunById, listRunOutput } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
-export const GET = withAuth(async (req, auth, { params }) => {
+export const GET = withResourceAuth("run", "id", { role: "viewer" })(async (req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) {

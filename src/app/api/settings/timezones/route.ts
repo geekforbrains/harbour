@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 
-export const GET = withAuth(async () => {
+export const GET = withAuthenticatedUser(async () => {
   const timezones = Intl.supportedValuesOf("timeZone");
   return NextResponse.json(timezones);
 });

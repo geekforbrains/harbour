@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { withAuth, withUserAuth } from "@/lib/auth";
+import { withInstanceAdmin } from "@/lib/auth";
 import { getAllSettings, setSetting, isSensitiveSetting, maskSettingValue } from "@/lib/db/queries";
 
-export const GET = withAuth(async () => {
+export const GET = withInstanceAdmin(async () => {
   const settings = getAllSettings();
   for (const key of Object.keys(settings)) {
     if (isSensitiveSetting(key)) {
@@ -12,7 +12,7 @@ export const GET = withAuth(async () => {
   return NextResponse.json(settings);
 });
 
-export const PUT = withUserAuth(async (req) => {
+export const PUT = withInstanceAdmin(async (req) => {
   const body = await req.json();
   for (const [key, value] of Object.entries(body)) {
     if (typeof value === "string") {

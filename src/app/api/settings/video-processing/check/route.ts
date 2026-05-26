@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { withUserAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 import { isFfmpegAvailable, isWhisperAvailable, isTranscriptProviderAvailable } from "@/lib/video-processing";
 
-export const GET = withUserAuth(async () => {
+export const GET = withAuthenticatedUser(async () => {
   return NextResponse.json({
     ffmpeg: isFfmpegAvailable(),
     whisper: isWhisperAvailable(),

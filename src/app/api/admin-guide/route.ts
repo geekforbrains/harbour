@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { withUserAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
 
-export const GET = withUserAuth(async () => {
+export const GET = withAuthenticatedUser(async () => {
   const guidePath = path.join(process.cwd(), "ADMIN_GUIDE.md");
   try {
     const content = fs.readFileSync(guidePath, "utf-8");

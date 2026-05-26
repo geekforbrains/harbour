@@ -1,48 +1,50 @@
 import { NextResponse } from "next/server";
-import { withAuth, withUserAuth, requireAgentOwnership } from "@/lib/auth";
+import { withResourceAuth, withAgentOrUser } from "@/lib/auth";
+import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, requestKillRun, addRunActivity, isKillRequested } from "@/lib/db/queries";
 
 /**
- * Lightweight kill-check endpoint for the runner's fallback poll. Returns
- * just the kill flag — no activity, no attachments — so the runner can poll
- * cheaply every 10s without pulling the whole run down.
+ * Lightweight kill-check endpoint for the runner's fallback poll. Returns just
+ * the kill flag so the runner can poll cheaply without pulling the whole run.
  */
-export const GET = withAuth(async (_req, auth, { params }) => {
-  const { id } = await params;
-  const run = getRunById(id);
-  if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+export const GET = withAgentOrUser(
+  async (_req, auth, { params }) => {
+    const { id } = await params;
+    const run = getRunById(id);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-  const ownerError = requireAgentOwnership(auth, run.agent_id);
-  if (ownerError) return ownerError;
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  return NextResponse.json({ kill_requested: isKillRequested(id), status: run.status });
-});
-
-export const POST = withUserAuth(async (_req, auth, { params }) => {
-  const { id } = await params;
-  const run = getRunById(id);
-  if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-  if (run.agent_type !== "harbour") {
-    return NextResponse.json(
-      { error: "Only harbour-agent runs can be killed. External agents run outside Harbour's control." },
-      { status: 400 },
-    );
+    return NextResponse.json({ kill_requested: isKillRequested(id), status: run.status });
+  },
+  {
+    role: "viewer",
+    orgFromParams: (p) => orgIdForResource("run", p.id),
   }
+);
 
-  if (run.status !== "running") {
-    return NextResponse.json(
-      { error: `Cannot kill a run in status '${run.status}' — only 'running' runs can be killed.` },
-      { status: 409 },
-    );
+export const POST = withResourceAuth("run", "id", { role: "editor" })(
+  async (_req, auth, { params }) => {
+    const { id } = await params;
+    const run = getRunById(id);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+
+    if (run.status !== "running") {
+      return NextResponse.json(
+        { error: `Cannot kill a run in status '${run.status}' — only 'running' runs can be killed.` },
+        { status: 409 },
+      );
+    }
+
+    const ok = requestKillRun(id);
+    if (!ok) {
+      return NextResponse.json({ error: "Failed to request kill" }, { status: 500 });
+    }
+
+    addRunActivity(id, "system", null, "System", `Kill requested by **${auth.displayName}**`);
+
+    return NextResponse.json({ ok: true, kill_requested: true });
   }
-
-  const ok = requestKillRun(id);
-  if (!ok) {
-    return NextResponse.json({ error: "Failed to request kill" }, { status: 500 });
-  }
-
-  addRunActivity(id, "system", null, "System", `Kill requested by **${auth.displayName}**`);
-
-  return NextResponse.json({ ok: true, kill_requested: true });
-});
+);

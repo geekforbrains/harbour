@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { withUserAuth } from "@/lib/auth";
+import { withInstanceAdmin } from "@/lib/auth";
 import { listAdminApiKeys, createAdminApiKey } from "@/lib/db/queries";
 
-export const GET = withUserAuth(async () => {
+export const GET = withInstanceAdmin(async () => {
   return NextResponse.json(listAdminApiKeys());
 });
 
-export const POST = withUserAuth(async (req, auth) => {
+export const POST = withInstanceAdmin(async (req, auth) => {
   const body = await req.json();
   if (!body.name?.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });

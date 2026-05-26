@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withOrgAuth } from "@/lib/auth";
 import { listRunsHistory, type RunsHistoryFilters } from "@/lib/db/runs";
 
-export const GET = withAuth(async (req) => {
+export const GET = withOrgAuth(async (req, auth) => {
   const sp = req.nextUrl.searchParams;
 
   const statusesParam = sp.get("status");
@@ -24,6 +24,6 @@ export const GET = withAuth(async (req) => {
   const limit = sp.get("limit") ? Number(sp.get("limit")) : 25;
   const offset = sp.get("offset") ? Number(sp.get("offset")) : 0;
 
-  const { runs, hasMore } = listRunsHistory(filters, limit, offset);
+  const { runs, hasMore } = listRunsHistory(auth.orgId, filters, limit, offset);
   return NextResponse.json({ runs, hasMore, nextOffset: hasMore ? offset + runs.length : null });
-});
+}, { role: "viewer" });

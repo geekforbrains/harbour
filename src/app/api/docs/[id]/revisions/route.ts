@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withResourceAuth } from "@/lib/auth";
 import { getDocRevisions } from "@/lib/db/queries";
 
-export const GET = withAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  return NextResponse.json(getDocRevisions(id));
-});
+export const GET = withResourceAuth("doc", "id", { role: "viewer" })(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    return NextResponse.json(getDocRevisions(id));
+  }
+);

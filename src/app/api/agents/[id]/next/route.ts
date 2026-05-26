@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth, requireAgentOwnership } from "@/lib/auth";
+import { withAgentAuth, requireAgentSelf } from "@/lib/auth";
 import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment } from "@/lib/db/queries";
 import { serializeAttachment, SerializedAttachment } from "@/lib/attachments-serialize";
 import { publicBaseUrl } from "@/lib/request-url";
@@ -32,9 +32,9 @@ function buildApiSection(req: NextRequest, runId: string) {
   };
 }
 
-export const GET = withAuth(async (req, auth, { params }) => {
+export const GET = withAgentAuth(async (req, auth, { params }) => {
   const { id } = await params;
-  const ownerError = requireAgentOwnership(auth, id);
+  const ownerError = requireAgentSelf(auth, id);
   if (ownerError) return ownerError;
 
   const existing = getAgentById(id);

@@ -1,40 +1,55 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withAgentOrUser } from "@/lib/auth";
+import { orgIdForResource } from "@/lib/db/access";
 import { getAgentById, createDatabase, getDatabaseByName, insertRows, linkDatabaseToJob } from "@/lib/db/queries";
 
-// POST: Agent creates a database and optionally links it to a job + inserts initial rows
-// This is the convenience endpoint for agents — combines create + link + seed in one call
-export const POST = withAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const agent = getAgentById(id);
-  if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+// POST: Agent creates a database and optionally links it to a job + inserts initial rows.
+// Convenience endpoint for agents — combines create + link + seed in one call.
+export const POST = withAgentOrUser(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    const agent = getAgentById(id);
+    if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
-  const body = await req.json();
-  if (!body.name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+    // Agents may only act on their own agent record (GUIDE: agents act on their
+    // own work). Users are already authorized at org scope by the wrapper.
+    if (auth.type === "agent" && auth.agentId !== id) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
-  try {
-    // Get or create the database
-    let db = getDatabaseByName(body.name);
-    const created = !db;
-    if (!db) {
-      if (!body.columns?.length) {
-        return NextResponse.json({ error: "columns are required when creating a new database" }, { status: 400 });
+    const body = await req.json();
+    if (!body.name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+
+    try {
+      // Get or create the database (scoped to the agent's org + project).
+      let db = getDatabaseByName(auth.orgId, agent.project_id, body.name);
+      const created = !db;
+      if (!db) {
+        if (!body.columns?.length) {
+          return NextResponse.json({ error: "columns are required when creating a new database" }, { status: 400 });
+        }
+        db = createDatabase(auth.orgId, agent.project_id, body.name, body.columns);
       }
-      db = createDatabase(body.name, body.columns);
-    }
 
-    // Link to job if specified
-    if (body.jobId) {
-      linkDatabaseToJob(body.jobId, db.id);
-    }
+      if (body.jobId) {
+        // The target job must live in the same org — never link cross-org.
+        if (orgIdForResource("job", body.jobId) !== auth.orgId) {
+          return NextResponse.json({ error: "Job not found" }, { status: 404 });
+        }
+        linkDatabaseToJob(body.jobId, db.id);
+      }
 
-    // Insert initial rows if provided
-    if (body.rows?.length) {
-      insertRows(db.id, body.rows);
-    }
+      if (body.rows?.length) {
+        insertRows(db.id, body.rows);
+      }
 
-    return NextResponse.json(db, { status: created ? 201 : 200 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json(db, { status: created ? 201 : 200 });
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+  },
+  {
+    role: "editor",
+    orgFromParams: (p) => orgIdForResource("agent", p.id),
   }
-});
+);
