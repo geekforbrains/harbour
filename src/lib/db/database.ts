@@ -21,6 +21,8 @@ export type ColumnInfo = {
 
 export type DatabaseMeta = {
   id: string;
+  org_id: string;
+  project_id: string | null;
   name: string;
   table_name: string;
   created_at: number;
@@ -78,11 +80,14 @@ function safeColumnName(name: string): string {
 
 // --- Database CRUD ---
 
-export function createDatabase(name: string, columns: ColumnDef[]): DatabaseMeta & { columns: ColumnInfo[] } {
+export function createDatabase(orgId: string, projectId: string | null, name: string, columns: ColumnDef[]): DatabaseMeta & { columns: ColumnInfo[] } {
   const db = getDb();
   const id = uuid();
   const safeName = sanitizeName(name);
-  const tableName = toTableName(name);
+  // Suffix the physical table name with a short slice of the id so the same
+  // logical name can exist in different orgs/projects without colliding on the
+  // globally-unique table_name.
+  const tableName = `${toTableName(name)}_${id.replace(/-/g, "").slice(0, 8)}`;
 
   // Validate columns
   if (!columns.length) throw new Error("At least one column is required");
@@ -101,8 +106,8 @@ export function createDatabase(name: string, columns: ColumnDef[]): DatabaseMeta
   // Register metadata + create table in a transaction
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO databases (id, name, table_name) VALUES (?, ?, ?)`
-    ).run(id, safeName, tableName);
+      `INSERT INTO databases (id, org_id, project_id, name, table_name) VALUES (?, ?, ?, ?, ?)`
+    ).run(id, orgId, projectId, safeName, tableName);
 
     db.exec(createSql);
 
@@ -123,27 +128,39 @@ export function getDatabaseById(id: string): (DatabaseMeta & { columns: ColumnIn
   return { ...meta, columns: columns.filter(c => c.name !== "_id") };
 }
 
-export function getDatabaseByName(name: string): (DatabaseMeta & { columns: ColumnInfo[] }) | null {
+/**
+ * Resolve a database by logical name within an org scope. Project-level matches
+ * win over org-level ones of the same name (project-over-org override).
+ */
+export function getDatabaseByName(orgId: string, projectId: string | null, name: string): (DatabaseMeta & { columns: ColumnInfo[] }) | null {
   const db = getDb();
   const safeName = sanitizeName(name);
-  const meta = db.prepare(`SELECT * FROM databases WHERE name = ?`).get(safeName) as DatabaseMeta | undefined;
+  const meta = db.prepare(`
+    SELECT * FROM databases
+    WHERE org_id = ? AND name = ? AND (project_id = ? OR project_id IS NULL)
+    ORDER BY (project_id IS NULL) ASC
+    LIMIT 1
+  `).get(orgId, safeName, projectId) as DatabaseMeta | undefined;
   if (!meta) return null;
   const columns = db.pragma(`table_info("${meta.table_name}")`) as ColumnInfo[];
   return { ...meta, columns: columns.filter(c => c.name !== "_id") };
 }
 
-export function listDatabases(projectId?: string) {
+/**
+ * Two-tier list: org-level databases (project_id IS NULL) plus the given
+ * project's databases. Pass projectId=null to list only org-level databases.
+ */
+export function listDatabases(orgId: string, projectId: string | null = null) {
   const db = getDb();
-  let metas: DatabaseMeta[];
-  if (projectId) {
-    metas = db.prepare(`
-      SELECT * FROM databases
-      WHERE id IN (SELECT database_id FROM project_databases WHERE project_id = ?)
-      ORDER BY name ASC
-    `).all(projectId) as DatabaseMeta[];
-  } else {
-    metas = db.prepare(`SELECT * FROM databases ORDER BY name ASC`).all() as DatabaseMeta[];
-  }
+  const projectFilter = projectId
+    ? "AND (project_id = ? OR project_id IS NULL)"
+    : "AND project_id IS NULL";
+  const params = projectId ? [orgId, projectId] : [orgId];
+  const metas = db.prepare(`
+    SELECT * FROM databases
+    WHERE org_id = ? ${projectFilter}
+    ORDER BY name ASC
+  `).all(...params) as DatabaseMeta[];
 
   return metas.map(meta => {
     const count = db.prepare(`SELECT COUNT(*) as count FROM "${meta.table_name}"`).get() as { count: number };

@@ -5,6 +5,7 @@ import { getDb } from "./schema";
 
 export type CaptainConversation = {
   id: string;
+  org_id: string;
   title: string;
   cli: string;
   model: string | null;
@@ -36,25 +37,35 @@ export type CaptainOutputEvent = {
 
 // ── Conversations ──────────────────────────────────────────────────────
 
-export function listConversations(userId: string): CaptainConversation[] {
+/** List conversations for a user within an org (Captain is per-org). */
+export function listConversations(orgId: string, userId: string): CaptainConversation[] {
   const db = getDb();
   return db
     .prepare(
-      `SELECT * FROM captain_conversations WHERE user_id = ? ORDER BY updated_at DESC`
+      `SELECT * FROM captain_conversations WHERE org_id = ? AND user_id = ? ORDER BY updated_at DESC`
     )
-    .all(userId) as CaptainConversation[];
+    .all(orgId, userId) as CaptainConversation[];
 }
 
 export function getConversation(
-  id: string
+  id: string,
+  orgId?: string
 ): CaptainConversation | undefined {
   const db = getDb();
+  // Captain is per-org; when a caller knows the org, scope by it so a bare id
+  // can't surface another org's conversation (consistent with list/create).
+  if (orgId) {
+    return db
+      .prepare(`SELECT * FROM captain_conversations WHERE id = ? AND org_id = ?`)
+      .get(id, orgId) as CaptainConversation | undefined;
+  }
   return db
     .prepare(`SELECT * FROM captain_conversations WHERE id = ?`)
     .get(id) as CaptainConversation | undefined;
 }
 
 export function createConversation(
+  orgId: string,
   title: string,
   cli: string,
   model: string | null,
@@ -65,8 +76,8 @@ export function createConversation(
   const db = getDb();
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO captain_conversations (id, title, cli, model, thinking, cwd, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, title, cli, model || null, thinking || null, cwd || null, userId);
+    `INSERT INTO captain_conversations (id, org_id, title, cli, model, thinking, cwd, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, orgId, title, cli, model || null, thinking || null, cwd || null, userId);
   return getConversation(id)!;
 }
 

@@ -1,4 +1,6 @@
 export * from "./users";
+export * from "./orgs";
+export * from "./access";
 export * from "./agents";
 export * from "./jobs";
 export * from "./runs";

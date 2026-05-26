@@ -23,11 +23,6 @@ export function getTimezone(): string {
   return getSetting("timezone") || Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
-export function isSignupEnabled(): boolean {
-  const val = getSetting("signup_enabled");
-  return val === null || val === "true";
-}
-
 export function getRecentRunsLimit(): number {
   const val = getSetting("recent_runs_limit");
   const n = val ? parseInt(val, 10) : NaN;

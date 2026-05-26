@@ -11,27 +11,35 @@ function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
-export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean; eager?: boolean }) {
+export function createAgent(projectId: string, name: string, description?: string, opts?: {
+  cli?: string;
+  model?: string;
+  thinking?: string;
+  color?: string;
+  eager?: boolean;
+}) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateApiKey();
   const apiKeyHash = hashApiKey(apiKey);
-  const type = opts?.type || "external";
   const cli = opts?.cli || null;
   const model = opts?.model || null;
   const thinking = opts?.thinking || null;
-  const remote = opts?.remote ? 1 : 0;
+  const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
   db.prepare(
-    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote, eager) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote, eager);
-  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote, eager: !!eager };
+    `INSERT INTO agents (id, project_id, name, description, api_key_hash, cli, model, thinking, color, eager)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, projectId, name, description || null, apiKeyHash, cli, model, thinking, color, eager);
+  return { id, project_id: projectId, name, description, apiKey, cli, model, thinking, color, eager: !!eager };
 }
 
 export function authenticateAgent(apiKey: string) {
   const db = getDb();
   const hash = hashApiKey(apiKey);
-  const agent = db.prepare(`SELECT id, name, description FROM agents WHERE api_key_hash = ?`).get(hash) as any;
+  const agent = db.prepare(
+    `SELECT id, project_id, name, description FROM agents WHERE api_key_hash = ?`
+  ).get(hash) as any;
   return agent || null;
 }
 
@@ -45,34 +53,35 @@ export function rotateAgentKey(agentId: string) {
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, eager, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
+  return db.prepare(
+    `SELECT id, project_id, name, description, cli, model, thinking, color, eager, runner_fingerprint, last_polled_at, created_at, updated_at
+     FROM agents WHERE id = ?`
+  ).get(id) as any || null;
 }
 
-export function listAgents(projectId?: string) {
+export function listAgents(projectId: string) {
   const db = getDb();
-  if (projectId) {
-    return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
-        (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
-        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
-        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
-        (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
-      FROM agents a
-      WHERE a.id IN (SELECT agent_id FROM project_agents WHERE project_id = ?)
-      ORDER BY a.name
-    `).all(projectId);
-  }
   return db.prepare(`
-    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
       (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
-    FROM agents a ORDER BY a.name
-  `).all();
+    FROM agents a
+    WHERE a.project_id = ?
+    ORDER BY a.name
+  `).all(projectId);
 }
 
-export function updateAgent(id: string, data: { name?: string; description?: string; cli?: string; model?: string; thinking?: string; eager?: boolean }) {
+export function updateAgent(id: string, data: {
+  name?: string;
+  description?: string;
+  cli?: string;
+  model?: string;
+  thinking?: string;
+  color?: string;
+  eager?: boolean;
+}) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
@@ -81,6 +90,7 @@ export function updateAgent(id: string, data: { name?: string; description?: str
   if (data.cli !== undefined) { fields.push("cli = ?"); values.push(data.cli); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
+  if (data.color !== undefined) { fields.push("color = ?"); values.push(data.color || null); }
   if (data.eager !== undefined) { fields.push("eager = ?"); values.push(data.eager ? 1 : 0); }
   if (fields.length === 0) return getAgentById(id);
   fields.push("updated_at = unixepoch()");
@@ -89,10 +99,39 @@ export function updateAgent(id: string, data: { name?: string; description?: str
   return getAgentById(id);
 }
 
+/**
+ * Record the runner fingerprint that first claimed this agent (one-runtime-
+ * per-agent guard). Returns true if accepted (matched or first set), false if
+ * a different fingerprint already owns the agent.
+ */
+export function claimAgentRunner(id: string, fingerprint: string): boolean {
+  const db = getDb();
+  const row = db.prepare(`SELECT runner_fingerprint FROM agents WHERE id = ?`).get(id) as
+    | { runner_fingerprint: string | null }
+    | undefined;
+  if (!row) return false;
+  if (row.runner_fingerprint && row.runner_fingerprint !== fingerprint) return false;
+  if (!row.runner_fingerprint) {
+    db.prepare(`UPDATE agents SET runner_fingerprint = ?, updated_at = unixepoch() WHERE id = ?`).run(fingerprint, id);
+  }
+  return true;
+}
+
+/** Clear the runner fingerprint (admin clicks Reconnect to migrate runtimes). */
+export function resetAgentRunner(id: string) {
+  const db = getDb();
+  db.prepare(`UPDATE agents SET runner_fingerprint = NULL, updated_at = unixepoch() WHERE id = ?`).run(id);
+}
+
 export function deleteAgent(id: string) {
   const db = getDb();
-  // Capture run ids first so we can clean their on-disk attachment dirs after cascade
-  const runIds = db.prepare(`SELECT id FROM runs WHERE agent_id = ?`).all(id) as { id: string }[];
+  // Capture run ids first so we can clean their on-disk attachment dirs after
+  // cascade. Includes runs reachable via the agent's jobs (jobs.agent_id
+  // CASCADE deletes them too) — not just runs that still point at the agent,
+  // since runs.agent_id may already be SET NULL.
+  const runIds = db.prepare(
+    `SELECT id FROM runs WHERE agent_id = ? OR job_id IN (SELECT id FROM jobs WHERE agent_id = ?)`
+  ).all(id, id) as { id: string }[];
   db.prepare(`DELETE FROM agents WHERE id = ?`).run(id);
   for (const r of runIds) deleteRunAttachmentsDir(r.id);
 }

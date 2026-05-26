@@ -1,12 +1,16 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 
-export function createDoc(title: string, content?: string, authorType?: string, authorId?: string) {
+/**
+ * Create a doc. Dual-tier: pass projectId for a project-level doc, or omit it
+ * (null) for an org-level doc shared across the org's projects.
+ */
+export function createDoc(orgId: string, projectId: string | null, title: string, content?: string, authorType?: string, authorId?: string) {
   const db = getDb();
   const id = uuid();
   db.prepare(
-    `INSERT INTO docs (id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?)`
-  ).run(id, title, authorType || null, authorId || null);
+    `INSERT INTO docs (id, org_id, project_id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, orgId, projectId, title, authorType || null, authorId || null);
 
   if (content) {
     const revId = uuid();
@@ -51,23 +55,23 @@ export function deleteDoc(id: string) {
   db.prepare(`DELETE FROM docs WHERE id = ?`).run(id);
 }
 
-export function listDocs(projectId?: string) {
+/**
+ * Two-tier list: org-level docs (project_id IS NULL) plus the given project's
+ * docs. Pass projectId=null to list only org-level docs.
+ */
+export function listDocs(orgId: string, projectId: string | null = null) {
   const db = getDb();
-  if (projectId) {
-    return db.prepare(`
-      SELECT d.id, d.title, d.pinned, d.created_at, d.updated_at,
-        (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
-      FROM docs d
-      WHERE d.id IN (SELECT doc_id FROM project_docs WHERE project_id = ?)
-      ORDER BY d.pinned DESC, d.title ASC
-    `).all(projectId);
-  }
+  const projectFilter = projectId
+    ? "AND (d.project_id = ? OR d.project_id IS NULL)"
+    : "AND d.project_id IS NULL";
+  const params = projectId ? [orgId, projectId] : [orgId];
   return db.prepare(`
-    SELECT d.id, d.title, d.pinned, d.created_at, d.updated_at,
+    SELECT d.id, d.title, d.org_id, d.project_id, d.pinned, d.created_at, d.updated_at,
       (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
     FROM docs d
+    WHERE d.org_id = ? ${projectFilter}
     ORDER BY d.pinned DESC, d.title ASC
-  `).all();
+  `).all(...params);
 }
 
 export function toggleDocPinned(id: string) {
@@ -76,9 +80,18 @@ export function toggleDocPinned(id: string) {
   return getDocById(id);
 }
 
-export function listPinnedDocIds(): string[] {
+/**
+ * Pinned doc ids for the given scope (org-level + the project's pinned docs).
+ * Used to auto-attach pinned docs to new jobs created in a project.
+ */
+export function listPinnedDocIds(projectId: string): string[] {
   const db = getDb();
-  return (db.prepare(`SELECT id FROM docs WHERE pinned = 1`).all() as { id: string }[]).map(r => r.id);
+  // Resolve the org from the project so org-level pinned docs are included.
+  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as { org_id: string } | undefined;
+  if (!proj) return [];
+  return (db.prepare(
+    `SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`
+  ).all(proj.org_id, projectId) as { id: string }[]).map(r => r.id);
 }
 
 export function getDocRevisions(docId: string) {

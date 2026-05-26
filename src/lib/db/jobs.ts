@@ -7,13 +7,12 @@ import { getTimezone } from "./settings";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { defaultRunTitle } from "../run-title";
 
-export function createJob(agentId: string | null, data: {
+export function createJob(projectId: string, agentId: string | null, data: {
   name: string;
   description?: string;
   instructions?: string;
   schedule: string;
   workflowCommand?: string;
-  workflowOnly?: boolean;
   model?: string;
   thinking?: string;
   titleFormat?: string;
@@ -27,24 +26,24 @@ export function createJob(agentId: string | null, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, workflow_command, workflow_only, model, thinking, title_format, active, next_run_at)
+      INSERT INTO jobs (id, project_id, agent_id, name, description, instructions, schedule, workflow_command, model, thinking, title_format, active, next_run_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, agentId, data.name, data.description || null,
+      id, projectId, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
-      data.workflowCommand || null, data.workflowOnly ? 1 : 0,
+      data.workflowCommand || null,
       data.model || null, data.thinking || null,
       data.titleFormat?.trim() || null,
       data.active !== false ? 1 : 0, nextRunAt
     );
 
-    // Merge explicitly selected docs/env vars with pinned ones
-    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+    // Merge explicitly selected docs/env vars with pinned ones (within this project's scope)
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
     if (allDocIds.size > 0) {
       const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
       for (const docId of allDocIds) linkStmt.run(id, docId);
     }
-    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
     if (allEnvVarIds.size > 0) {
       const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
       for (const envId of allEnvVarIds) linkStmt.run(id, envId);
@@ -94,26 +93,12 @@ export function listJobsByAgent(agentId: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs
-    FROM jobs j WHERE j.agent_id = ? AND j.one_off = 0 ORDER BY j.name
+    FROM jobs j WHERE j.agent_id = ? ORDER BY j.name
   `).all(agentId);
 }
 
-export function listAllJobs(projectId?: string) {
+export function listAllJobs(projectId: string) {
   const db = getDb();
-  if (projectId) {
-    return db.prepare(`
-      SELECT j.*, a.name as agent_name,
-        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
-        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
-        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
-        (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
-      FROM jobs j
-      LEFT JOIN agents a ON j.agent_id = a.id
-      WHERE j.one_off = 0
-      AND j.id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)
-      ORDER BY j.name
-    `).all(projectId);
-  }
   return db.prepare(`
     SELECT j.*, a.name as agent_name,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
@@ -122,9 +107,9 @@ export function listAllJobs(projectId?: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
     FROM jobs j
     LEFT JOIN agents a ON j.agent_id = a.id
-    WHERE j.one_off = 0
+    WHERE j.project_id = ?
     ORDER BY j.name
-  `).all();
+  `).all(projectId);
 }
 
 export function updateJob(id: string, data: {
@@ -133,7 +118,6 @@ export function updateJob(id: string, data: {
   instructions?: string;
   schedule?: string;
   workflowCommand?: string;
-  workflowOnly?: boolean;
   model?: string;
   thinking?: string;
   titleFormat?: string;
@@ -151,7 +135,6 @@ export function updateJob(id: string, data: {
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
   if (data.workflowCommand !== undefined) { fields.push("workflow_command = ?"); values.push(data.workflowCommand); }
-  if (data.workflowOnly !== undefined) { fields.push("workflow_only = ?"); values.push(data.workflowOnly ? 1 : 0); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.titleFormat !== undefined) { fields.push("title_format = ?"); values.push(data.titleFormat?.trim() || null); }
@@ -200,72 +183,36 @@ export function deleteJob(id: string) {
   for (const r of runIds) deleteRunAttachmentsDir(r.id);
 }
 
-export function createOneOffRun(agentId: string, data: {
-  name: string;
-  instructions?: string;
-  docIds?: string[];
-  envVarIds?: string[];
-  runAt?: number;
-}) {
-  const db = getDb();
-  const jobId = uuid();
-  const runId = uuid();
-  const now = Math.floor(Date.now() / 1000);
-  const runAt = data.runAt || now;
-
-  const create = db.transaction(() => {
-    // Create the backing job (hidden, one_off)
-    db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
-      VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
-    `).run(jobId, agentId, data.name, data.instructions || null, runAt);
-
-    // Merge explicitly selected docs with pinned docs
-    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
-    if (allDocIds.size > 0) {
-      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-      for (const docId of allDocIds) linkStmt.run(jobId, docId);
-    }
-
-    // Merge explicitly selected env vars with pinned env vars
-    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
-    if (allEnvVarIds.size > 0) {
-      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
-      for (const envId of allEnvVarIds) linkStmt.run(jobId, envId);
-    }
-
-    // Create the run immediately with 'scheduled' status
-    const title = defaultRunTitle(data.name, now);
-    db.prepare(`
-      INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, title, created_at, updated_at)
-      VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?)
-    `).run(runId, jobId, agentId, runAt, title, now, now);
-  });
-
-  create();
-  return { jobId, runId };
-}
-
+/**
+ * Manually fire a scheduled run for a job (dashboard "Run now" / debug). One-off
+ * runs no longer exist in v2 — this is the only ad-hoc trigger path. The run
+ * inherits the job's project (denormalized onto the run).
+ */
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT id, agent_id, name FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT id, project_id, agent_id, name FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job) return null;
 
   const runId = uuid();
   const now = Math.floor(Date.now() / 1000);
   const title = defaultRunTitle(job.name, now);
 
-  db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
-    VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
-  `).run(runId, jobId, job.agent_id || null, now, extraInstructions || null, title, now, now);
-
-  if (extraInstructions) {
+  // Run + its seeded activity log must land atomically (repo convention: run
+  // creation is transactional) — otherwise a failed activity insert leaves a
+  // scheduled run with silently-dropped instructions.
+  db.transaction(() => {
     db.prepare(`
-      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
-      VALUES (?, ?, 'system', 'System', ?, ?)
-    `).run(uuid(), runId, `Additional instructions:\n${extraInstructions}`, now);
-  }
+      INSERT INTO runs (id, project_id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
+    `).run(runId, job.project_id, jobId, job.agent_id || null, now, extraInstructions || null, title, now, now);
+
+    if (extraInstructions) {
+      db.prepare(`
+        INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
+        VALUES (?, ?, 'system', 'System', ?, ?)
+      `).run(uuid(), runId, `Additional instructions:\n${extraInstructions}`, now);
+    }
+  })();
 
   return { jobId, runId };
 }
