@@ -18,12 +18,13 @@ import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Settings, Trash2, X, Plus, Pin,
-  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound, Zap,
+  FileText, Database, Play, Pause, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound, Zap,
 } from "lucide-react";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { SelectedItems, PickerDialog } from "@/components/app/create-dialog";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
+import { agentColor } from "@/lib/agent-color";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string; description: string | null;
@@ -241,7 +242,10 @@ export default function JobDetailPage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-3 gap-x-4 rounded-lg border p-3">
         <div className="flex items-center gap-2 text-sm">
-          <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span
+            className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
+            style={{ backgroundColor: agentColor(job.agent_name) }}
+          />
           <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
         </div>
         {(job.model || job.thinking) && (
@@ -294,8 +298,8 @@ export default function JobDetailPage() {
           <div className="space-y-2">
             {job.docs.map(d => (
               <div key={d.id} className="flex items-center gap-3 rounded-lg border p-3 group">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <FileText className="h-4 w-4 text-primary" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <Link href={`/docs/${d.id}`} className="text-sm font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
                   {d.title}
@@ -316,8 +320,8 @@ export default function JobDetailPage() {
           <div className="space-y-2">
             {job.databases.map(d => (
               <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <Database className="h-4 w-4 text-primary" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <Database className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <span className="text-sm font-mono font-medium">{d.name}</span>
               </Link>
@@ -340,8 +344,8 @@ export default function JobDetailPage() {
           <div className="space-y-2">
             {job.envVars.map(ev => (
               <div key={ev.id} className="flex items-center gap-3 rounded-lg border p-3 group">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <KeyRound className="h-4 w-4 text-primary" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <KeyRound className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <Link href={`/env-vars/${ev.id}`} className="text-sm font-mono font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
                   {ev.name}
@@ -398,8 +402,8 @@ export default function JobDetailPage() {
                     onClick={async () => { await handleLinkDoc(d.id); }}
                     className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
                   >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <FileText className="h-4 w-4 text-primary" />
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <FileText className="h-4 w-4 text-muted-foreground" />
                     </div>
                     <span className="text-sm font-medium flex-1 min-w-0 truncate">{d.title}</span>
                     {d.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
@@ -432,8 +436,8 @@ export default function JobDetailPage() {
                     onClick={async () => { await handleLinkEnvVar(ev.id); }}
                     className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
                   >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <KeyRound className="h-4 w-4 text-primary" />
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <KeyRound className="h-4 w-4 text-muted-foreground" />
                     </div>
                     <span className="text-sm font-mono font-medium flex-1 min-w-0 truncate">{ev.name}</span>
                     {ev.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}

@@ -107,8 +107,8 @@ export default function EnvVarDetailPage() {
 
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <KeyRound className="h-5 w-5 text-primary" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+            <KeyRound className="h-5 w-5 text-muted-foreground" />
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight font-mono">{envVar.name}</h1>

@@ -57,8 +57,8 @@ export function PickerDialog({
                   onChange={() => onToggle(item.id)}
                   className="rounded"
                 />
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <Icon className="h-3.5 w-3.5 text-primary" />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <span className={`text-sm font-medium flex-1 min-w-0 truncate ${nameClass || ""}`}>{item.name}</span>
                 {item.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground/50 shrink-0" />}

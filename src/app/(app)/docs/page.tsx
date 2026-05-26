@@ -92,8 +92,8 @@ export default function DocsPage() {
         <div className="space-y-2">
           {docs.map(doc => (
             <Link key={doc.id} href={`/docs/${doc.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <FileText className="h-4 w-4 text-primary" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <FileText className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-medium flex-1 pt-1">{doc.title}</span>
               <button

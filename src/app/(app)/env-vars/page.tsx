@@ -93,8 +93,8 @@ export default function EnvVarsPage() {
         <div className="space-y-2">
           {envVars.map(ev => (
             <Link key={ev.id} href={`/env-vars/${ev.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <KeyRound className="h-4 w-4 text-primary" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <KeyRound className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-mono font-medium flex-1 truncate">{ev.name}</span>
               <button

@@ -59,7 +59,7 @@ export function MobileBottomNav() {
                 <tab.icon className="h-5 w-5" />
                 <span>{tab.label}</span>
                 {"badge" in tab && (tab.badge ?? 0) > 0 && (
-                  <span className="absolute -top-0.5 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
+                  <span className="absolute -top-0.5 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white">
                     {tab.badge}
                   </span>
                 )}
@@ -91,7 +91,7 @@ export function MobileBottomNav() {
                     router.push(link.href);
                   }}
                   className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-4 text-sm font-medium transition-colors ${
-                    isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent"
+                    isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   }`}
                 >
                   <link.icon className="h-5 w-5" />

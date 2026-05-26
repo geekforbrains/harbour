@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
+import { statusStyle } from "@/lib/status";
+import { agentColor } from "@/lib/agent-color";
 
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -160,8 +162,11 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
 
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <Bot className="h-5 w-5 text-primary" />
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+            style={{ backgroundColor: `${agentColor(agent.name)}1f`, color: agentColor(agent.name) }}
+          >
+            <Bot className="h-5 w-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -236,10 +241,10 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
             {jobs.map(job => (
               <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
                 <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                  !job.active ? "bg-muted" : job.waiting_runs > 0 ? "bg-amber-500/10" : job.pending_runs > 0 ? "bg-blue-500/10" : "bg-primary/10"
+                  !job.active ? "bg-muted" : job.waiting_runs > 0 ? statusStyle("waiting").bg : job.pending_runs > 0 ? statusStyle("pending").bg : "bg-muted"
                 }`}>
                   <Briefcase className={`h-4 w-4 ${
-                    !job.active ? "text-muted-foreground" : job.waiting_runs > 0 ? "text-amber-500" : job.pending_runs > 0 ? "text-blue-500" : "text-primary"
+                    !job.active ? "text-muted-foreground" : job.waiting_runs > 0 ? statusStyle("waiting").fg : job.pending_runs > 0 ? statusStyle("pending").fg : "text-muted-foreground"
                   }`} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -253,8 +258,8 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     {!job.active && <Badge variant="secondary" className="text-[10px]">Paused</Badge>}
-                    {job.waiting_runs > 0 && <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10">{job.waiting_runs} waiting</Badge>}
-                    {job.pending_runs > 0 && <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10">{job.pending_runs} pending</Badge>}
+                    {job.waiting_runs > 0 && <Badge className={`text-[10px] ${statusStyle("waiting").bg} ${statusStyle("waiting").text} hover:bg-amber-500/10`}>{job.waiting_runs} waiting</Badge>}
+                    {job.pending_runs > 0 && <Badge className={`text-[10px] ${statusStyle("pending").bg} ${statusStyle("pending").text} hover:bg-violet-500/10`}>{job.pending_runs} pending</Badge>}
                   </div>
                 )}
               </Link>

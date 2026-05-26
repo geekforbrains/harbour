@@ -15,6 +15,7 @@ import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film,
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
+import { agentColor } from "@/lib/agent-color";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
 import { AttachmentList } from "@/components/app/attachment-display";
 import type { SerializedAttachment } from "@/lib/attachments-serialize";
@@ -599,7 +600,10 @@ export default function RunDetailPage() {
         <div className="flex items-center gap-2 text-sm">
           {run.agent_id && run.agent_name ? (
             <>
-              <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span
+                className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
+                style={{ backgroundColor: agentColor(run.agent_name) }}
+              />
               <Link href={`/agents/${run.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{run.agent_name}</Link>
             </>
           ) : (
@@ -630,11 +634,14 @@ export default function RunDetailPage() {
               const entryAttachments = (run.attachments ?? []).filter(a => a.activity_id === entry.id);
               return (
                 <div key={entry.id} className={`flex gap-3 ${entry.author_type === "system" ? "opacity-60" : ""}`}>
-                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 ${
-                    entry.author_type === "agent" ? "bg-primary/10 text-primary" :
-                    entry.author_type === "user" ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" :
-                    "bg-muted text-muted-foreground"
-                  }`}>
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 bg-muted text-muted-foreground"
+                    style={entry.author_type === "agent"
+                      ? { backgroundColor: `${agentColor(run.agent_name)}1f`, color: agentColor(run.agent_name) }
+                      : entry.author_type === "user"
+                      ? { backgroundColor: "var(--foreground)", color: "var(--background)" }
+                      : undefined}
+                  >
                     <AuthorIcon type={entry.author_type} />
                   </div>
                   <div className="flex-1 min-w-0">

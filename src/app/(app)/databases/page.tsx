@@ -59,8 +59,8 @@ export default function DatabasesPage() {
         <div className="space-y-2">
           {databases.map(db => (
             <Link key={db.id} href={`/databases/${db.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <Database className="h-4 w-4 text-primary" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <Database className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-mono font-medium">{db.name}</span>

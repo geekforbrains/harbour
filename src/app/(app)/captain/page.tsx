@@ -78,7 +78,7 @@ function ConversationList({
             key={c.id}
             className={`group flex items-center rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
               c.id === activeId
-                ? "bg-primary/10 text-primary"
+                ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
             }`}
             onClick={() => onSelect(c.id)}
@@ -303,7 +303,7 @@ function ChatView({
               <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "rounded-lg bg-muted/50 px-3 py-2.5" : ""}`}>
                 <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
                   msg.role === "user"
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-foreground text-background"
                     : "bg-muted text-muted-foreground"
                 }`}>
                   {msg.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}

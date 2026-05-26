@@ -80,8 +80,8 @@ export function ProjectLinkDialog({
                 onClick={() => handleLink(item.id)}
                 className="flex w-full items-center gap-3 rounded-lg p-2.5 hover:bg-accent/50 transition-colors text-left"
               >
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <Icon className="h-3.5 w-3.5 text-primary" />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <span className={`text-sm font-medium flex-1 min-w-0 truncate ${nameClass || ""}`}>{item.name}</span>
               </button>
