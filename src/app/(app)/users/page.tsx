@@ -95,7 +95,12 @@ function UsersConsole() {
         </div>
       )}
 
-      <NewUserDialog open={showNew} onOpenChange={setShowNew} onLink={setLink} />
+      <NewUserDialog
+        open={showNew}
+        onOpenChange={setShowNew}
+        orgs={orgs.map((o) => ({ id: o.id, name: o.name }))}
+        onLink={setLink}
+      />
       <LinkDialog link={link} onOpenChange={(o) => !o && setLink(null)} />
     </div>
   );
@@ -284,22 +289,29 @@ function UserCard({
 function NewUserDialog({
   open,
   onOpenChange,
+  orgs,
   onLink,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  orgs: { id: string; name: string }[];
   onLink: (l: { user: SetPasswordLink["user"]; url: string }) => void;
 }) {
   const createUser = useCreateUser();
   const setPasswordLink = useSetPasswordLink();
+  const addMembership = useAddMembership();
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [orgId, setOrgId] = useState("");
+  const [role, setRole] = useState<"editor" | "viewer">("editor");
 
   function reset() {
     setEmail("");
     setDisplayName("");
     setIsAdmin(false);
+    setOrgId("");
+    setRole("editor");
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -310,6 +322,12 @@ function NewUserDialog({
       displayName: displayName.trim(),
       isInstanceAdmin: isAdmin,
     });
+    // Non-admins get all access from org memberships, so grant the first one
+    // here if chosen — otherwise they'd log in to an empty app. Admins skip
+    // this (they see every org regardless).
+    if (!isAdmin && orgId) {
+      await addMembership.mutateAsync({ orgId, userId: created.id, role });
+    }
     // Immediately mint a set-password link so the admin can hand it over.
     const linkRes = await setPasswordLink.mutateAsync(created.id);
     reset();
@@ -317,7 +335,7 @@ function NewUserDialog({
     onLink({ user: linkRes.user, url: linkRes.url });
   }
 
-  const busy = createUser.isPending || setPasswordLink.isPending;
+  const busy = createUser.isPending || addMembership.isPending || setPasswordLink.isPending;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
@@ -357,6 +375,47 @@ function NewUserDialog({
             />
             Instance admin (full access to every org)
           </label>
+          {!isAdmin && (
+            <div className="space-y-2">
+              <Label>Organization</Label>
+              {orgs.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No organizations yet. Create one first — a non-admin user has no access until
+                  they belong to an org.
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={orgId}
+                      onChange={(e) => setOrgId(e.target.value)}
+                      className="flex h-9 flex-1 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="">Select an organization…</option>
+                      {orgs.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={role}
+                      onChange={(e) => setRole(e.target.value as "editor" | "viewer")}
+                      disabled={!orgId}
+                      className="flex h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                    >
+                      <option value="editor">editor</option>
+                      <option value="viewer">viewer</option>
+                    </select>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    A non-admin user has no access until they belong to an org. You can add more
+                    later from the user&apos;s row.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -393,8 +452,10 @@ function LinkDialog({
         <DialogHeader>
           <DialogTitle>Set-password link</DialogTitle>
           <DialogDescription>
-            Hand this single-use link to {link?.user.email} out of band. It expires in 24 hours and
-            can only be used once. It won&apos;t be shown again.
+            Send this single-use link to{" "}
+            <span className="font-medium">{link?.user.email}</span>{" "}
+            however you normally reach them — chat, email, or in person. It expires
+            in 24 hours and can only be used once. It won&apos;t be shown again.
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">
