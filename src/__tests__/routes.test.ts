@@ -32,7 +32,7 @@ import { POST as jobEnvVarsPOST } from "@/app/api/jobs/[id]/env-vars/route";
 import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
-import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
+import { PUT as runStatusPUT, GET as runStatusGET } from "@/app/api/runs/[id]/status/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 
@@ -447,6 +447,26 @@ describe("agent self-ownership (within an org)", () => {
     });
     const res = await jobTriggerPOST(req, ctx({ id: job.id }));
     expect(res.status).toBe(201);
+  });
+
+  // Regression: the runner reads GET /api/runs/:id/status after a CLI exits to
+  // see whether the agent set a final status. The full run detail (GET
+  // /api/runs/:id) is user/admin-only, so without this agent-readable endpoint
+  // the runner always read "running" and wrongly force-failed every run.
+  it("an agent can read its own run's status", async () => {
+    const { agent, run } = fixture();
+    const req = agentReq(agent.apiKey, "http://x/");
+    const res = await runStatusGET(req, ctx({ id: run.id }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("running");
+  });
+
+  it("an agent cannot read another agent's run status in the same org", async () => {
+    const { project, run } = fixture();
+    const agentB = createAgent(project.id, "DevB");
+    const req = agentReq(agentB.apiKey, "http://x/");
+    const res = await runStatusGET(req, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
   });
 
   it("an agent cannot write data as another agent in the same org", async () => {

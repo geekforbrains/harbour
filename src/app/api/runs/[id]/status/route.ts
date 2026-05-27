@@ -5,6 +5,26 @@ import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 
 const VALID_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
 
+// Lightweight status read. The full run detail (GET /api/runs/:id) is
+// withResourceAuth (user/admin only), so a runner can't use it to check the
+// status it just set — it would always read "running" and wrongly fail the run.
+// This mirrors the PUT's agent-ownership check and returns only { status }.
+export const GET = withAgentOrUser(
+  async (_req, auth, { params }) => {
+    const { id } = await params;
+    const run = getRunById(id);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.json({ status: run.status });
+  },
+  {
+    role: "viewer",
+    orgFromParams: (p) => orgIdForResource("run", p.id),
+  }
+);
+
 export const PUT = withAgentOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
