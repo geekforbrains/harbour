@@ -12,7 +12,7 @@ export const POST = withAgentOrUser(
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
     // Agents may only retry their own runs.
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

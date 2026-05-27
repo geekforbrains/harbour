@@ -32,6 +32,7 @@ import { POST as jobEnvVarsPOST } from "@/app/api/jobs/[id]/env-vars/route";
 import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
+import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -357,6 +358,39 @@ describe("POST /api/runs/[id]/activity (viewer may comment)", () => {
       headers: { "content-type": "application/json" },
     });
     const res = await activityPOST(req, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("agentless workflow-only run reporting", () => {
+  // Workflow-only runs have agent_id = null. The polling agent (authed for the
+  // org) must be able to report their status even though it doesn't "own" them.
+  it("an in-org agent can set status on an agentless run", async () => {
+    const { project, agent } = fixture();
+    const wfJob = createJob(project.id, null, { name: "WF", schedule: '{"every":60}', workflowCommand: "echo hi" })!;
+    const run = createRun(wfJob.id, null)!;
+    const req = agentReq(agent.apiKey, "http://x/", {
+      method: "POST",
+      body: JSON.stringify({ status: "done" }),
+      headers: { "content-type": "application/json" },
+    });
+    // status route is PUT
+    const putReq = new NextRequest("http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: req.headers });
+    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it("an out-of-org agent cannot touch an agentless run", async () => {
+    const { project } = fixture();
+    const wfJob = createJob(project.id, null, { name: "WF", schedule: '{"every":60}', workflowCommand: "echo hi" })!;
+    const run = createRun(wfJob.id, null)!;
+    const other = otherOrgFixture();
+    const putReq = new NextRequest("http://x/", {
+      method: "PUT",
+      body: JSON.stringify({ status: "done" }),
+      headers: { authorization: `Bearer ${other.agent.apiKey}`, "content-type": "application/json" },
+    });
+    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
   });
 });
