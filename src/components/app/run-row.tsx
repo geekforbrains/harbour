@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQueryClient } from "@tanstack/react-query";
 import { Terminal, Hand, Zap, Pause, Play } from "lucide-react";
+import { useUpdateJob } from "@/lib/hooks/use-jobs";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
@@ -33,26 +33,18 @@ type Props = {
 };
 
 export function RunRow({ run, showActions = true }: Props) {
-  const queryClient = useQueryClient();
   const [triggerOpen, setTriggerOpen] = useState(false);
-  const [toggling, setToggling] = useState(false);
+  const updateJob = useUpdateJob();
+  const toggling = updateJob.isPending;
   const isManual = !!run.one_off;
 
   async function handleToggleActive(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    setToggling(true);
     try {
-      const res = await fetch(`/api/jobs/${run.job_id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: !run.job_active }),
-      });
-      if (!res.ok) { alert("Failed to update job"); return; }
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    } finally {
-      setToggling(false);
+      await updateJob.mutateAsync({ id: run.job_id, body: { active: !run.job_active } });
+    } catch {
+      alert("Failed to update job");
     }
   }
 

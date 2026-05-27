@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -11,7 +10,12 @@ import { Label } from "@/components/ui/label";
 import { FileText, Plus, Pin, Link2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useDocs, useCreateDoc } from "@/lib/hooks/use-docs";
+import { useProjectMutations } from "@/lib/hooks/use-projects";
+import { apiFetch } from "@/lib/api/client";
+import { useQueryClient } from "@tanstack/react-query";
+import { qk } from "@/lib/api/keys";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type Doc = { id: string; title: string; pinned: number; updated_at: number };
@@ -22,47 +26,35 @@ export default function DocsPage() {
   const [showNew, setShowNew] = useState(false);
   const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
+  const createDoc = useCreateDoc();
+  const { link } = useProjectMutations();
 
-  const { data: docs = [], isLoading: loading } = useQuery<Doc[]>({
-    queryKey: ["docs", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/docs${projectFilter}`);
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
-    },
-    refetchInterval: 5000,
-  });
+  const { data: docsData = [], isLoading: loading } = useDocs();
+  const docs = docsData as Doc[];
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    const res = await fetch("/api/docs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTitle }),
-    });
-    if (res.ok) {
-      const doc = await res.json();
-      // Auto-link to active project
+    try {
+      const doc = await createDoc.mutateAsync({ title: newTitle });
       if (activeProjectId) {
-        await fetch(`/api/projects/${activeProjectId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "link", type: "doc", targetId: doc.id }),
-        });
+        await link.mutateAsync({ projectId: activeProjectId, type: "doc", targetId: doc.id });
       }
       router.push(`/docs/${doc.id}?edit=1`);
+    } catch {
+      // ignore; stays on page
     }
   }
 
   async function handleTogglePin(e: React.MouseEvent, docId: string) {
     e.preventDefault();
-    const res = await fetch(`/api/docs/${docId}/pin`, { method: "POST" });
-    if (!res.ok) return;
-    queryClient.invalidateQueries({ queryKey: ["docs"] });
+    try {
+      await apiFetch(`/api/docs/${docId}/pin`, { method: "POST" });
+      queryClient.invalidateQueries({ queryKey: qk.docs.all });
+    } catch {
+      // ignore
+    }
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;

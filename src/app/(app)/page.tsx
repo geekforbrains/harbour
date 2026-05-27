@@ -1,33 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { Activity, ArrowRight } from "lucide-react";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useRuns } from "@/lib/hooks/use-runs";
 
 type Run = RunRowData;
 
 export default function RunsPage() {
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
   const historyHref = activeProjectId ? `/runs?projectId=${activeProjectId}` : "/runs";
 
-  const { data: runsData, isLoading: loading } = useQuery<{
-    scheduled?: Run[];
-    running?: Run[];
-    waiting?: Run[];
-    recent?: Run[];
-  }>({
-    queryKey: ["runs", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/runs${projectFilter}`);
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: runsData, isLoading: loading } = useRuns({ refetchInterval: 5000 });
 
   const scheduled = runsData?.scheduled || [];
   const running = runsData?.running || [];

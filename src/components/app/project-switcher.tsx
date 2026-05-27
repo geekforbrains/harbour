@@ -11,51 +11,72 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FolderOpen, ChevronDown, Plus, Check } from "lucide-react";
+import { FolderOpen, ChevronDown, Plus, Check, Building2 } from "lucide-react";
+import { SCOPED_DOMAINS, qk } from "@/lib/api/keys";
+import { useCreateProject } from "@/lib/hooks/use-projects";
 
 export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "mobile" }) {
-  const { projects, activeProjectId, setActiveProjectId } = useApp();
+  const {
+    user,
+    orgs,
+    activeOrgId,
+    setActiveOrgId,
+    projects,
+    activeProjectId,
+    setActiveProjectId,
+  } = useApp();
   const queryClient = useQueryClient();
+  const createProject = useCreateProject();
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
 
-  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null;
+  const isAdmin = !!user?.isInstanceAdmin;
+  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null;
+  const activeOrg = activeOrgId ? orgs.find((o) => o.id === activeOrgId) : null;
+  const showOrgPicker = isAdmin || orgs.length > 1;
 
-  function handleSelect(id: string | null) {
+  /** Invalidate every scope-carrying query so lists refetch under the new scope. */
+  function invalidateScoped() {
+    for (const prefix of SCOPED_DOMAINS) {
+      queryClient.invalidateQueries({ queryKey: prefix });
+    }
+  }
+
+  function handleSelectProject(id: string | null) {
     setActiveProjectId(id);
-    // Invalidate all list queries so they refetch with the new project filter
-    queryClient.invalidateQueries({ queryKey: ["agents"] });
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    queryClient.invalidateQueries({ queryKey: ["runs"] });
-    queryClient.invalidateQueries({ queryKey: ["docs"] });
-    queryClient.invalidateQueries({ queryKey: ["env-vars"] });
-    queryClient.invalidateQueries({ queryKey: ["databases"] });
-    queryClient.invalidateQueries({ queryKey: ["runs", "waiting-count"] });
+    invalidateScoped();
+  }
+
+  function handleSelectOrg(id: string | null) {
+    setActiveOrgId(id);
+    // Switching org drops the current project selection (it belonged to the old org).
+    setActiveProjectId(null);
+    invalidateScoped();
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newName.trim()) return;
-    setCreating(true);
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim() }),
-    });
-    if (res.ok) {
-      const project = await res.json();
-      setNewName("");
-      setShowNew(false);
-      // Wait for the projects list to include the new one before selecting
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      handleSelect(project.id);
-    }
-    setCreating(false);
+    const project = await createProject.mutateAsync(newName.trim());
+    setNewName("");
+    setShowNew(false);
+    await queryClient.invalidateQueries({ queryKey: qk.projects.all });
+    handleSelectProject(project.id);
   }
+
+  const label = activeProject
+    ? activeProject.name
+    : activeOrg
+      ? activeOrg.name
+      : variant === "mobile"
+        ? "Harbour"
+        : isAdmin
+          ? "All Orgs"
+          : "All Projects";
 
   return (
     <>
@@ -66,24 +87,47 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
         }>
           {variant === "sidebar" && <FolderOpen className="h-4 w-4 shrink-0" />}
           <span className={variant === "mobile" ? "truncate max-w-[200px]" : "flex-1 truncate text-left"}>
-            {activeProject ? activeProject.name : variant === "mobile" ? "Harbour" : "All Projects"}
+            {label}
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-52">
-          <DropdownMenuItem onClick={() => handleSelect(null)}>
+        <DropdownMenuContent align="start" className="w-56">
+          {showOrgPicker && (
+            <>
+              <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Building2 className="h-3.5 w-3.5" /> Organization
+              </DropdownMenuLabel>
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => handleSelectOrg(null)}>
+                  <span className="flex-1">All Orgs</span>
+                  {!activeOrgId && <Check className="h-4 w-4 ml-2 text-primary" />}
+                </DropdownMenuItem>
+              )}
+              {orgs.map((o) => (
+                <DropdownMenuItem key={o.id} onClick={() => handleSelectOrg(o.id)}>
+                  <span className="flex-1 truncate">{o.name}</span>
+                  {activeOrgId === o.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+            </>
+          )}
+
+          <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <FolderOpen className="h-3.5 w-3.5" /> Project
+          </DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => handleSelectProject(null)}>
             <span className="flex-1">All Projects</span>
             {!activeProjectId && <Check className="h-4 w-4 ml-2 text-primary" />}
           </DropdownMenuItem>
-          {projects.length > 0 && <DropdownMenuSeparator />}
-          {projects.map(p => (
-            <DropdownMenuItem key={p.id} onClick={() => handleSelect(p.id)}>
+          {projects.map((p) => (
+            <DropdownMenuItem key={p.id} onClick={() => handleSelectProject(p.id)}>
               <span className="flex-1 truncate">{p.name}</span>
               {activeProjectId === p.id && <Check className="h-4 w-4 ml-2 text-primary" />}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setShowNew(true)}>
+          <DropdownMenuItem onClick={() => setShowNew(true)} disabled={!activeOrgId}>
             <Plus className="h-4 w-4 mr-2" />
             New Project
           </DropdownMenuItem>
@@ -100,7 +144,7 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
             </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>Cancel</Button>
-              <Button type="submit" disabled={creating}>{creating ? "Creating..." : "Create"}</Button>
+              <Button type="submit" disabled={createProject.isPending}>{createProject.isPending ? "Creating..." : "Create"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

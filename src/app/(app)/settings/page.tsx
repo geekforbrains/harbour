@@ -11,6 +11,8 @@ import { useApp } from "@/components/app/app-context";
 import { useRouter } from "next/navigation";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
+import { apiFetch } from "@/lib/api/client";
+import { qk } from "@/lib/api/keys";
 
 type Settings = Record<string, string>;
 
@@ -182,20 +184,19 @@ export default function SettingsPage() {
 
   async function handleRenameProject() {
     if (!activeProjectId || !projectName.trim() || projectName === activeProject?.name) return;
-    await fetch(`/api/projects/${activeProjectId}`, {
+    await apiFetch(`/api/projects/${activeProjectId}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: projectName.trim() }),
+      body: { name: projectName.trim() },
     });
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: qk.projects.all });
   }
 
   async function handleDeleteProject() {
     if (!activeProjectId) return;
     setDeleting(true);
-    await fetch(`/api/projects/${activeProjectId}`, { method: "DELETE" });
+    await apiFetch(`/api/projects/${activeProjectId}`, { method: "DELETE" });
     setActiveProjectId(null);
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: qk.projects.all });
     setShowDeleteConfirm(false);
     setDeleting(false);
     router.push("/");

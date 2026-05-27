@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -37,24 +36,19 @@ type CliTool = {
 };
 
 import { CLI_CONFIG } from "@/lib/cli-config";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
+import { useProjectMutations } from "@/lib/hooks/use-projects";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 import { Link2 } from "lucide-react";
 
 export default function AgentsPage() {
-  const queryClient = useQueryClient();
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
+  const createAgent = useCreateAgent();
+  const { link } = useProjectMutations();
 
-  const { data: agents = [], isLoading: loading } = useQuery<Agent[]>({
-    queryKey: ["agents", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/agents${projectFilter}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: agentsData = [], isLoading: loading } = useAgents();
+  const agents = agentsData as unknown as Agent[];
 
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -115,19 +109,14 @@ export default function AgentsPage() {
       if (eagerAgent) body.eager = true;
     }
 
-    const res = await fetch("/api/agents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await createAgent.mutateAsync(body);
       setNewAgent({
         id: data.id,
         name: data.name,
-        apiKey: data.apiKey,
+        apiKey: data.apiKey ?? "",
         type: agentType || "external",
-        remote: !!data.remote,
+        remote: !!(data as Record<string, unknown>).remote,
         cli: data.cli ?? null,
         model: data.model ?? null,
         thinking: data.thinking ?? null,
@@ -136,13 +125,10 @@ export default function AgentsPage() {
       setDescription("");
       // Auto-link to active project if one is selected
       if (activeProjectId) {
-        await fetch(`/api/projects/${activeProjectId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "link", type: "agent", targetId: data.id }),
-        });
+        await link.mutateAsync({ projectId: activeProjectId, type: "agent", targetId: data.id });
       }
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    } catch {
+      // surfaced inline; leave dialog open
     }
     setCreating(false);
   }

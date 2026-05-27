@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,11 @@ import { Label } from "@/components/ui/label";
 import { KeyRound, Plus, Pin, Link2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useEnvVars, useCreateEnvVar } from "@/lib/hooks/use-env-vars";
+import { useProjectMutations } from "@/lib/hooks/use-projects";
+import { apiFetch } from "@/lib/api/client";
+import { qk } from "@/lib/api/keys";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
@@ -21,49 +25,37 @@ export default function EnvVarsPage() {
   const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
+  const createEnvVar = useCreateEnvVar();
+  const { link } = useProjectMutations();
 
-  const { data: envVars = [], isLoading: loading } = useQuery<EnvVar[]>({
-    queryKey: ["env-vars", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/env-vars${projectFilter}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: envVarsData = [], isLoading: loading } = useEnvVars();
+  const envVars = envVarsData as EnvVar[];
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newName.trim() || !newValue.trim()) return;
-    const res = await fetch("/api/env-vars", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), value: newValue }),
-    });
-    if (res.ok) {
-      const envVar = await res.json();
-      // Auto-link to active project
+    try {
+      const envVar = await createEnvVar.mutateAsync({ name: newName.trim(), value: newValue });
       if (activeProjectId) {
-        await fetch(`/api/projects/${activeProjectId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "link", type: "env-var", targetId: envVar.id }),
-        });
+        await link.mutateAsync({ projectId: activeProjectId, type: "env-var", targetId: envVar.id });
       }
       setShowNew(false);
       setNewName("");
       setNewValue("");
-      queryClient.invalidateQueries({ queryKey: ["env-vars"] });
+    } catch {
+      // ignore
     }
   }
 
   async function handleTogglePin(e: React.MouseEvent, id: string) {
     e.preventDefault();
-    const res = await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
-    if (!res.ok) return;
-    queryClient.invalidateQueries({ queryKey: ["env-vars"] });
+    try {
+      await apiFetch(`/api/env-vars/${id}/pin`, { method: "POST" });
+      queryClient.invalidateQueries({ queryKey: qk.envVars.all });
+    } catch {
+      // ignore
+    }
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;

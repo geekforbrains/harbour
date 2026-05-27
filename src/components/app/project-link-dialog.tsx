@@ -1,11 +1,23 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { apiFetch, scoped } from "@/lib/api/client";
+import { qk } from "@/lib/api/keys";
+import { useScope } from "@/lib/hooks/use-project-filter";
 
 type Item = { id: string; name: string };
+
+// Map the legacy string `queryKey` prop to the matching qk domain prefix.
+const PREFIX_BY_KEY: Record<string, QueryKey> = {
+  agents: qk.agents.all,
+  jobs: qk.jobs.all,
+  docs: qk.docs.all,
+  "env-vars": qk.envVars.all,
+  databases: qk.databases.all,
+};
 
 export function ProjectLinkDialog({
   open,
@@ -29,6 +41,7 @@ export function ProjectLinkDialog({
   nameClass?: string;
 }) {
   const queryClient = useQueryClient();
+  const { orgId } = useScope();
   const [allItems, setAllItems] = useState<Item[]>([]);
   const [linkedItems, setLinkedItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
@@ -36,32 +49,36 @@ export function ProjectLinkDialog({
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    const toItems = (data: unknown): Item[] =>
+      Array.isArray(data)
+        ? data.map((i: { id: string; name?: string; title?: string }) => ({
+            id: i.id,
+            name: i.name || i.title || "",
+          }))
+        : [];
     Promise.all([
-      // Fetch ALL items (no project filter)
-      fetch(fetchAllUrl).then(r => r.json()),
-      // Fetch items linked to this project
-      fetch(`${fetchAllUrl}${fetchAllUrl.includes("?") ? "&" : "?"}projectId=${projectId}`).then(r => r.json()),
+      // All items in the org scope.
+      apiFetch(scoped(fetchAllUrl, { orgId })).catch(() => []),
+      // Items already linked to this project.
+      apiFetch(scoped(fetchAllUrl, { orgId, projectId })).catch(() => []),
     ]).then(([all, linked]) => {
-      const allArr = Array.isArray(all) ? all : [];
-      const linkedArr = Array.isArray(linked) ? linked : [];
-      setAllItems(allArr.map((i: any) => ({ id: i.id, name: i.name || i.title || i.name })));
-      setLinkedItems(linkedArr.map((i: any) => ({ id: i.id, name: i.name || i.title || i.name })));
+      setAllItems(toItems(all));
+      setLinkedItems(toItems(linked));
       setLoading(false);
     });
-  }, [open, fetchAllUrl, projectId]);
+  }, [open, fetchAllUrl, projectId, orgId]);
 
   const linkedIds = new Set(linkedItems.map(i => i.id));
   const unlinked = allItems.filter(i => !linkedIds.has(i.id));
 
   async function handleLink(itemId: string) {
-    await fetch(`/api/projects/${projectId}`, {
+    await apiFetch(`/api/projects/${projectId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "link", type, targetId: itemId }),
+      body: { action: "link", type, targetId: itemId },
     });
     const item = allItems.find(i => i.id === itemId);
     if (item) setLinkedItems(prev => [...prev, item]);
-    queryClient.invalidateQueries({ queryKey: [queryKey] });
+    queryClient.invalidateQueries({ queryKey: PREFIX_BY_KEY[queryKey] ?? [queryKey] });
   }
 
   return (

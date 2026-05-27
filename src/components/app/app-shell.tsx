@@ -1,40 +1,105 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Anchor, LogOut } from "lucide-react";
 
-import { AppContext, type User, type Project } from "./app-context";
+import { AppContext, type User, type Org } from "./app-context";
 import { ThemeToggle } from "./theme-toggle";
 import { NavLinks } from "./nav-links";
 import { ProjectSwitcher } from "./project-switcher";
 import { MobileBottomNav } from "./mobile-nav";
+import { useMe, userFromMe, orgsFromMe } from "@/lib/hooks/use-orgs";
+import { useProjects } from "@/lib/hooks/use-projects";
+import { useWaitingCount } from "@/lib/hooks/use-runs";
 
 export { useApp } from "./app-context";
 
+const ORG_COOKIE = "harbour_org";
+
+function readOrgCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)harbour_org=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function writeOrgCookie(id: string | null) {
+  if (typeof document === "undefined") return;
+  if (id) {
+    // 1-year persistent cookie; server components read it for default scope.
+    document.cookie = `${ORG_COOKIE}=${encodeURIComponent(id)}; path=/; max-age=31536000; samesite=lax`;
+  } else {
+    document.cookie = `${ORG_COOKIE}=; path=/; max-age=0; samesite=lax`;
+  }
+}
+
+function orgTimezone(org: Org | undefined): string | null {
+  if (!org?.settings) return null;
+  try {
+    const parsed = JSON.parse(org.settings) as { timezone?: string };
+    return parsed.timezone ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
   const router = useRouter();
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // Identity + org memberships.
+  const meQuery = useMe();
+  const user: User | null = userFromMe(meQuery.data);
+  const orgs = useMemo(() => orgsFromMe(meQuery.data), [meQuery.data]);
 
   useEffect(() => {
-    fetch("/api/auth/me").then((r) => {
-      if (r.ok) return r.json();
-      throw new Error("Not authed");
-    }).then((data) => {
-      if (data.type === "user" && data.user) {
-        setUser({ userId: data.user.id, email: data.user.email, displayName: data.user.display_name });
-        setAuthChecked(true);
-      } else {
-        throw new Error("Not authed");
-      }
-    }).catch(() => { window.location.href = "/login"; });
-  }, [router]);
+    if (meQuery.isError) {
+      window.location.href = "/login";
+      return;
+    }
+    if (meQuery.data) {
+      if (meQuery.data.type === "user" && meQuery.data.user) setAuthChecked(true);
+      else window.location.href = "/login";
+    }
+  }, [meQuery.data, meQuery.isError]);
 
-  // Active project (persisted in localStorage)
+  // Active org (persisted in the harbour_org cookie). Instance admins may pick
+  // "All orgs" (null); org members are pinned to their single org.
+  const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
+  const [orgStateLoaded, setOrgStateLoaded] = useState(false);
+
+  useEffect(() => {
+    setActiveOrgIdState(readOrgCookie());
+    setOrgStateLoaded(true);
+  }, []);
+
+  function setActiveOrgId(id: string | null) {
+    setActiveOrgIdState(id);
+    writeOrgCookie(id);
+  }
+
+  // Reconcile the active org against memberships once both are known.
+  useEffect(() => {
+    if (!orgStateLoaded || !user) return;
+    const isAdmin = user.isInstanceAdmin;
+    if (activeOrgId && !orgs.some((o) => o.id === activeOrgId)) {
+      // Stored org no longer accessible.
+      if (isAdmin) {
+        // Admins may keep an explicit org even if not a member; otherwise clear.
+        if (orgs.length === 0) return; // can't validate; leave as-is
+        setActiveOrgId(null);
+      } else {
+        setActiveOrgId(orgs[0]?.id ?? null);
+      }
+    } else if (!activeOrgId && !isAdmin) {
+      // Members default to their single org (no "All orgs").
+      if (orgs[0]) setActiveOrgId(orgs[0].id);
+    }
+  }, [orgStateLoaded, user, orgs, activeOrgId]);
+
+  // Active project (persisted in localStorage), scoped to the active org.
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
   const [projectStateLoaded, setProjectStateLoaded] = useState(false);
 
@@ -50,53 +115,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     else localStorage.removeItem("harbour_active_project");
   }
 
-  // Fetch projects
-  const { data: projects = [] } = useQuery<Project[]>({
-    queryKey: ["projects"],
-    queryFn: async () => {
-      const res = await fetch("/api/projects");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 10000,
-    enabled: !!user,
-  });
+  // Projects in the active org.
+  const { data: projects = [] } = useProjects(
+    { orgId: activeOrgId },
+    { enabled: !!user && !!activeOrgId, refetchInterval: 10000 }
+  );
 
-  // If stored project no longer exists, clear it
+  // If the stored project isn't in the active org's project list, clear it.
   useEffect(() => {
-    if (projectStateLoaded && activeProjectId && projects.length > 0 && !projects.some(p => p.id === activeProjectId)) {
+    if (
+      projectStateLoaded &&
+      activeProjectId &&
+      projects.length > 0 &&
+      !projects.some((p) => p.id === activeProjectId)
+    ) {
       setActiveProjectId(null);
     }
   }, [projects, activeProjectId, projectStateLoaded]);
 
-  // Fetch system timezone
-  const { data: timezone = Intl.DateTimeFormat().resolvedOptions().timeZone } = useQuery({
-    queryKey: ["settings", "timezone"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings");
-      if (!res.ok) return Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const data = await res.json();
-      return data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-    },
-    enabled: !!user,
-  });
+  // Timezone comes from the active org's settings; falls back to the browser.
+  const activeOrg = orgs.find((o) => o.id === activeOrgId);
+  const timezone =
+    orgTimezone(activeOrg) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  // Poll waiting runs count (project-filtered)
-  const waitingProjectParam = activeProjectId ? `&projectId=${activeProjectId}` : "";
-  const { data: waitingCount = 0 } = useQuery({
-    queryKey: ["runs", "waiting-count", activeProjectId],
-    queryFn: async () => {
-      const res = await fetch(`/api/runs?filter=waiting${waitingProjectParam}`);
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return Array.isArray(data) ? data.length : 0;
-    },
+  // Waiting-run count for the sidebar badge (scoped).
+  const { data: waitingCount = 0 } = useWaitingCount({
+    enabled: !!user && !!activeOrgId,
     refetchInterval: 5000,
-    enabled: !!user,
   });
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     router.push("/login");
   }
 
@@ -139,7 +188,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount, timezone, projects, activeProjectId, setActiveProjectId }}>
+    <AppContext.Provider
+      value={{
+        user,
+        waitingCount,
+        timezone,
+        orgs,
+        activeOrgId,
+        setActiveOrgId,
+        projects,
+        activeProjectId,
+        setActiveProjectId,
+      }}
+    >
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}

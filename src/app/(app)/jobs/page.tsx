@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
@@ -11,7 +10,8 @@ import { EmptyState } from "@/components/app/empty-state";
 import { statusStyle } from "@/lib/status";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useJobs } from "@/lib/hooks/use-jobs";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 import { Link2 } from "lucide-react";
 
@@ -25,18 +25,10 @@ type Job = {
 export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showLinkExisting, setShowLinkExisting] = useState(false);
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
 
-  const { data: jobs = [], isLoading: loading } = useQuery<Job[]>({
-    queryKey: ["jobs", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/jobs${projectFilter}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: jobsData = [], isLoading: loading } = useJobs();
+  const jobs = jobsData as Job[];
 
   function renderJobSection(title: string, sectionJobs: Job[]) {
     if (sectionJobs.length === 0) return null;

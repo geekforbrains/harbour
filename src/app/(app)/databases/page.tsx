@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Database, Briefcase, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useDatabases } from "@/lib/hooks/use-databases";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type DatabaseEntry = {
@@ -22,18 +22,10 @@ type DatabaseEntry = {
 
 export default function DatabasesPage() {
   const [showLinkExisting, setShowLinkExisting] = useState(false);
-  const projectFilter = useProjectFilter();
   const activeProjectId = useActiveProjectId();
 
-  const { data: databases = [], isLoading: loading } = useQuery<DatabaseEntry[]>({
-    queryKey: ["databases", projectFilter],
-    queryFn: async () => {
-      const res = await fetch(`/api/databases${projectFilter}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: databasesData = [], isLoading: loading } = useDatabases();
+  const databases = databasesData as DatabaseEntry[];
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 

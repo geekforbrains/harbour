@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, scoped } from "@/lib/api/client";
+import { useScope } from "@/lib/hooks/use-project-filter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { StreamingOutput, ToolCallList } from "@/components/app/captain-message";
@@ -381,18 +383,16 @@ function ChatView({
 
 export default function CaptainPage() {
   const queryClient = useQueryClient();
+  const { orgId } = useScope();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileListOpen, setMobileListOpen] = useState(false);
 
-  // Fetch conversations
+  // Fetch conversations (org-scoped)
   const { data: conversations = [] } = useQuery<Conversation[]>({
-    queryKey: ["captain-conversations"],
-    queryFn: async () => {
-      const res = await fetch("/api/captain/conversations");
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryKey: ["captain-conversations", orgId],
+    queryFn: () => apiFetch<Conversation[]>(scoped("/api/captain/conversations", { orgId })).catch(() => []),
+    enabled: !!orgId,
   });
 
   // Auto-select first conversation — derive from data rather than setState in effect
@@ -403,17 +403,17 @@ export default function CaptainPage() {
         ? conversations[0].id
         : null;
 
-  // Create new conversation
+  // Create new conversation (org-scoped)
   async function handleNew() {
-    const res = await fetch("/api/captain/conversations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "New conversation" }),
-    });
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await apiFetch<{ id: string }>(
+        scoped("/api/captain/conversations", { orgId }),
+        { method: "POST", body: { title: "New conversation" } }
+      );
       queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
       setActiveConversationId(data.id);
+    } catch {
+      // ignore
     }
   }
 

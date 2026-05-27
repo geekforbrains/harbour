@@ -11,6 +11,10 @@ import { BackLink } from "@/components/app/back-link";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useApp } from "@/components/app/app-context";
+import { apiFetch, scoped } from "@/lib/api/client";
+import { useAgents } from "@/lib/hooks/use-agents";
+import { useJobs } from "@/lib/hooks/use-jobs";
 
 type AgentLite = { id: string; name: string };
 type JobLite = { id: string; name: string; agent_id: string | null };
@@ -39,6 +43,7 @@ export default function RunsHistoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeProjectId = useActiveProjectId();
+  const { activeOrgId } = useApp();
 
   // Read filters from URL (URL is the source of truth)
   const statusesFromUrl = useMemo(() => {
@@ -75,23 +80,11 @@ export default function RunsHistoryPage() {
     router.replace("/runs", { scroll: false });
   }
 
-  const { data: agents = [] } = useQuery<AgentLite[]>({
-    queryKey: ["agents", "lite"],
-    queryFn: async () => {
-      const res = await fetch("/api/agents");
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
+  const { data: agentsData = [] } = useAgents();
+  const agents = agentsData as unknown as AgentLite[];
 
-  const { data: jobs = [] } = useQuery<JobLite[]>({
-    queryKey: ["jobs", "lite"],
-    queryFn: async () => {
-      const res = await fetch("/api/jobs");
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
+  const { data: jobsData = [] } = useJobs();
+  const jobs = jobsData as unknown as JobLite[];
 
   const jobsForAgent = useMemo(() => {
     if (!agentId) return jobs;
@@ -114,14 +107,14 @@ export default function RunsHistoryPage() {
     if (projectId) params.set("projectId", projectId);
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(offset));
-    return `/api/runs/history?${params.toString()}`;
+    return scoped(`/api/runs/history?${params.toString()}`, { orgId: activeOrgId });
   }
 
   // Pagination: we keep all loaded pages in state so "Load more" can append.
   const queryKey = useMemo(() => [
     "runs", "history",
-    statusesFromUrl.join(","), agentId, jobId, from, to, sort, projectId,
-  ], [statusesFromUrl, agentId, jobId, from, to, sort, projectId]);
+    statusesFromUrl.join(","), agentId, jobId, from, to, sort, projectId, activeOrgId,
+  ], [statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId]);
 
   const [pages, setPages] = useState<RunRowData[][]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -129,11 +122,12 @@ export default function RunsHistoryPage() {
 
   const { data: firstPage, isLoading } = useQuery<{ runs: RunRowData[]; hasMore: boolean }>({
     queryKey,
-    queryFn: async () => {
-      const res = await fetch(buildHistoryUrl(0));
-      if (!res.ok) return { runs: [], hasMore: false };
-      return res.json();
-    },
+    queryFn: () =>
+      apiFetch<{ runs: RunRowData[]; hasMore: boolean }>(buildHistoryUrl(0)).catch(() => ({
+        runs: [],
+        hasMore: false,
+      })),
+    enabled: !!activeOrgId,
     refetchInterval: 5000,
   });
 
@@ -149,16 +143,14 @@ export default function RunsHistoryPage() {
     setLoadingMore(true);
     try {
       const currentCount = pages.reduce((n, p) => n + p.length, 0);
-      const res = await fetch(buildHistoryUrl(currentCount));
-      if (!res.ok) return;
-      const data = (await res.json()) as { runs: RunRowData[]; hasMore: boolean };
+      const data = await apiFetch<{ runs: RunRowData[]; hasMore: boolean }>(buildHistoryUrl(currentCount));
       setPages(prev => [...prev, data.runs]);
       setHasMore(data.hasMore);
     } finally {
       setLoadingMore(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages, statusesFromUrl, agentId, jobId, from, to, sort, projectId]);
+  }, [pages, statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId]);
 
   const allRuns = pages.flat();
   const filtersActive = statusesFromUrl.join(",") !== DEFAULT_STATUSES.join(",")

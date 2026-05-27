@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { useTriggerJob } from "@/lib/hooks/use-jobs";
 
 interface TriggerDialogProps {
   jobId: string;
@@ -16,31 +16,17 @@ interface TriggerDialogProps {
 }
 
 export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflowOnly }: TriggerDialogProps) {
-  const queryClient = useQueryClient();
+  const trigger = useTriggerJob();
   const [instructions, setInstructions] = useState("");
-  const [triggering, setTriggering] = useState(false);
+  const triggering = trigger.isPending;
 
   async function handleTrigger() {
-    setTriggering(true);
     try {
-      const body: Record<string, string> = {};
-      if (instructions.trim()) body.instructions = instructions.trim();
-
-      const res = await fetch(`/api/jobs/${jobId}/trigger`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        alert("Failed to trigger run");
-        return;
-      }
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+      await trigger.mutateAsync({ jobId, instructions: instructions.trim() || undefined });
       setInstructions("");
       onOpenChange(false);
-    } finally {
-      setTriggering(false);
+    } catch {
+      alert("Failed to trigger run");
     }
   }
 
