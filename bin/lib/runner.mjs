@@ -165,8 +165,16 @@ function buildPrompt(payload, apiKey, isResume) {
 
   if (payload.data && Object.keys(payload.data).length > 0) {
     prompt += `## Reference Data\n\n`;
-    for (const [name, rows] of Object.entries(payload.data)) {
-      prompt += `### ${name}\n\n`;
+    prompt += `To add or read rows, use the insert_rows / read_rows endpoints from the api section with each table's database id below.\n\n`;
+    for (const [name, info] of Object.entries(payload.data)) {
+      // Current shape: { id, columns, rows }. Tolerate the old rows[] shape too.
+      const rows = Array.isArray(info) ? info : info?.rows || [];
+      const id = Array.isArray(info) ? null : info?.id;
+      const columns = Array.isArray(info) ? null : info?.columns;
+      prompt += `### ${name}\n`;
+      if (id) prompt += `database id: ${id}\n`;
+      if (columns?.length) prompt += `columns: ${columns.map(c => `${c.name} (${c.type})`).join(", ")}\n`;
+      prompt += `\n`;
       if (rows.length > 0) {
         prompt += `\`\`\`json\n${JSON.stringify(rows.slice(0, 20), null, 2)}\n\`\`\`\n\n`;
       } else {

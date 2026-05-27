@@ -332,7 +332,7 @@ export function deleteRow(databaseId: string, rowId: number) {
  * tier wins: job-linked > project-level > org-level. Returns the winning
  * `{ name, table_name }` per logical name.
  */
-export function getComposedDatabasesForJob(jobId: string): { name: string; table_name: string }[] {
+export function getComposedDatabasesForJob(jobId: string): { id: string; name: string; table_name: string }[] {
   const db = getDb();
 
   const scope = db.prepare(`
@@ -376,7 +376,7 @@ export function getComposedDatabasesForJob(jobId: string): { name: string; table
   }
   return [...byName.values()]
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(r => ({ name: r.name, table_name: r.table_name }));
+    .map(r => ({ id: r.id, name: r.name, table_name: r.table_name }));
 }
 
 // --- Job Linkage ---

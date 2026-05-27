@@ -108,10 +108,16 @@ describe("run payload resource composition", () => {
     // content carried through
     expect(payload.docs.find((d: any) => d.id === orgDoc.id)?.content).toBe("org doc body");
 
-    // databases: all three tiers present
-    expect(payload.data.org_table).toEqual([expect.objectContaining({ v: "org-row" })]);
-    expect(payload.data.project_table).toEqual([expect.objectContaining({ v: "project-row" })]);
-    expect(payload.data.linked_table).toEqual([expect.objectContaining({ v: "linked-row" })]);
+    // databases: all three tiers present, each carrying id + columns + rows so
+    // an agent can actually write back (not just read injected rows).
+    expect(payload.data.org_table.rows).toEqual([expect.objectContaining({ v: "org-row" })]);
+    expect(payload.data.project_table.rows).toEqual([expect.objectContaining({ v: "project-row" })]);
+    expect(payload.data.linked_table.rows).toEqual([expect.objectContaining({ v: "linked-row" })]);
+
+    // each injected database exposes the id (to target insert_rows/read_rows)
+    // and its column schema (so the agent knows valid column names).
+    expect(payload.data.org_table.id).toBe(orgDb.id);
+    expect(payload.data.org_table.columns).toEqual([expect.objectContaining({ name: "v", type: "TEXT" })]);
   });
 
   it("job-linked env var overrides project- and org-level on the same name", () => {

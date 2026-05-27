@@ -2,7 +2,7 @@ import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { getComposedDocsForJob } from "./docs";
-import { getComposedDatabasesForJob } from "./database";
+import { getComposedDatabasesForJob, getDatabaseById } from "./database";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 import { defaultRunTitle } from "../run-title";
@@ -558,12 +558,18 @@ export function buildRunPayload(runId: string) {
 
   // Composed databases = org-level + project-level + job-linked, with the
   // recent rows of each (name collisions resolved project-over-org / linked-wins).
+  // Each entry carries id + columns + rows so an agent can actually write back
+  // (target insert_rows/read_rows by id, with valid column names) — not just
+  // read the injected rows. `data` is keyed by logical name.
   const composedDbs = getComposedDatabasesForJob(run.job_id);
-  const data: Record<string, any> = {};
+  const data: Record<string, { id: string; columns: { name: string; type: string }[]; rows: any[] }> = {};
   for (const d of composedDbs) {
-    data[d.name] = db.prepare(
-      `SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`
-    ).all();
+    const meta = getDatabaseById(d.id);
+    data[d.name] = {
+      id: d.id,
+      columns: (meta?.columns ?? []).map(c => ({ name: c.name, type: c.type })),
+      rows: db.prepare(`SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`).all(),
+    };
   }
 
   // Composed env vars = org-level + project-level + job-linked (job > project > org).

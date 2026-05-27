@@ -108,8 +108,16 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
   "data": {
-    "metrics": [{ "_id": 1, "followers": 12400, "engagement_rate": 3.2 }],
-    "tweet_history": [{ "_id": 5, "date": "2024-03-01", "text": "...", "impressions": 340 }]
+    "metrics": {
+      "id": "uuid",
+      "columns": [{ "name": "followers", "type": "INTEGER" }, { "name": "engagement_rate", "type": "REAL" }],
+      "rows": [{ "_id": 1, "followers": 12400, "engagement_rate": 3.2 }]
+    },
+    "tweet_history": {
+      "id": "uuid",
+      "columns": [{ "name": "date", "type": "TEXT" }, { "name": "text", "type": "TEXT" }, { "name": "impressions", "type": "INTEGER" }],
+      "rows": [{ "_id": 5, "date": "2024-03-01", "text": "...", "impressions": 340 }]
+    }
   },
   "env": {
     "GITHUB_TOKEN": "ghp_...",
@@ -159,7 +167,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, linked database rows (most recent 100 per table), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
@@ -360,7 +368,7 @@ Content-Type: application/json
 { "databaseId": "uuid" }
 ```
 
-Linked databases are included in the `/next` payload (most recent 100 rows per table).
+Org-, project-, and job-linked databases are all included in the `/next` payload under `data`, keyed by name. Each entry is `{ id, columns, rows }` (most recent 100 rows per table) — use the `id` to target `insert_rows`/`read_rows` and `columns` for valid field names.
 
 ### Convenience Endpoint
 
