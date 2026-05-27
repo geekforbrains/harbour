@@ -112,6 +112,7 @@ export function initializeSchema(db: Database.Database) {
       thinking TEXT,
       color TEXT,                         -- stored round-robin identity hue
       eager INTEGER NOT NULL DEFAULT 0,
+      remote INTEGER NOT NULL DEFAULT 0,  -- runner lives on another machine
       runner_fingerprint TEXT,            -- one-runtime-per-agent guard
       last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),

@@ -14,6 +14,7 @@ export type Agent = {
   thinking: string | null;
   color?: string | null;
   eager: number | null;
+  remote?: number | null;
   [key: string]: unknown;
 };
 

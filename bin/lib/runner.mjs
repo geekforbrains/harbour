@@ -1,5 +1,5 @@
 import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
-import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
+import { getProvider, ensureWorkingDir, runCliTool, resolveRunConfig } from "./providers.mjs";
 import { spawn } from "child_process";
 import { mkdirSync } from "fs";
 import { join } from "path";
@@ -300,8 +300,7 @@ export function shouldContinueEagerLoop(outcome, eager) {
  * cached runner config if the payload didn't include one).
  */
 async function processNextRun(runner) {
-  const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
-  const provider = getProvider(cli);
+  const { agentId, apiKey, name: agentName, url } = runner;
   const sessions = loadSessions();
 
   console.log(`  [${agentName}] Polling...`);
@@ -319,6 +318,16 @@ async function processNextRun(runner) {
     console.log(`  [${agentName}] Nothing to do.`);
     return { outcome: "no-work", eager: false };
   }
+
+  // cli/model/thinking come live from the /next payload (harbour is the source
+  // of truth); the runner config is identity-only but may carry legacy values
+  // as a fallback. Resolve before anything that needs the provider.
+  const { cli, model: agentModel, thinking: agentThinking } = resolveRunConfig(payload, runner);
+  if (!cli) {
+    console.error(`  [${agentName}] No CLI configured for this agent — set one in the dashboard.`);
+    return { outcome: "config-error", eager: false };
+  }
+  const provider = getProvider(cli);
 
   // Live eager flag from server, falling back to cached runner config
   const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
@@ -450,10 +459,8 @@ async function processNextRun(runner) {
     prompt += `## Workflow Output\n\n${workflowOutput}\n\n`;
   }
 
-  // Build CLI command — job-level model/thinking override agent defaults
-  const model = payload.job?.model || agentModel;
-  const thinking = payload.job?.thinking || agentThinking;
-  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
+  // model/thinking were already resolved (job override > agent default) above.
+  const cmd = provider.buildCommand(prompt, agentModel, workingDir, sessionId, isNewSession, agentThinking);
 
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
@@ -581,7 +588,7 @@ async function processNextRun(runner) {
     // status, respect it — the kill was moot.
     let statusAtKill = "running";
     try {
-      const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
+      const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
       statusAtKill = run.status;
     } catch { /* best effort */ }
 
@@ -693,7 +700,7 @@ async function processNextRun(runner) {
   // If not, the agent didn't follow the instructions — mark as failed.
   let currentStatus = "running";
   try {
-    const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
+    const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
     currentStatus = run.status;
   } catch { /* best effort — fall through to failsafe */ }
 

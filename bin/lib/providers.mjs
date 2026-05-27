@@ -419,6 +419,25 @@ export function getProvider(cli) {
   return provider;
 }
 
+/**
+ * Resolve which cli/model/thinking a run should use. Harbour is the source of
+ * truth: the /next payload carries the agent's live config (payload.agent) and
+ * any per-job overrides (payload.job). The runner's own config is only an
+ * identity record now, but older configs may still carry cli/model/thinking —
+ * accept them as a last-resort fallback so a stale runner keeps working.
+ *
+ * Precedence: job override → agent default (live) → runner-config fallback.
+ */
+export function resolveRunConfig(payload, fallback = {}) {
+  const agent = payload?.agent || {};
+  const job = payload?.job || {};
+  return {
+    cli: agent.cli || fallback.cli || null,
+    model: job.model || agent.model || fallback.model || null,
+    thinking: job.thinking || agent.thinking || fallback.thinking || null,
+  };
+}
+
 export function ensureWorkingDir(agentName) {
   const home = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
   const dir = path.join(home, "workspaces", agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-"));

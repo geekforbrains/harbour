@@ -592,12 +592,22 @@ export function buildRunPayload(runId: string) {
     instructions = instructions ? `${preamble}\n\n---\n\n${instructions}` : preamble;
   }
 
-  // Agent runtime config (eager) — read live so remote runners pick up
-  // dashboard toggles without reconnecting.
+  // Agent runtime config — read live so runners (local or remote) pick up
+  // dashboard changes without reconnecting. The runner config is identity-only;
+  // cli/model/thinking/eager all come from here. Job-level model/thinking still
+  // override these agent defaults (see job.model/job.thinking above).
   const agentRow = run.agent_id
-    ? db.prepare(`SELECT eager FROM agents WHERE id = ?`).get(run.agent_id) as { eager: number } | undefined
+    ? db.prepare(`SELECT cli, model, thinking, eager FROM agents WHERE id = ?`).get(run.agent_id) as
+        { cli: string | null; model: string | null; thinking: string | null; eager: number } | undefined
     : undefined;
-  const agent = agentRow ? { eager: !!agentRow.eager } : undefined;
+  const agent = agentRow
+    ? {
+        cli: agentRow.cli || null,
+        model: agentRow.model || null,
+        thinking: agentRow.thinking || null,
+        eager: !!agentRow.eager,
+      }
+    : undefined;
 
   // A job is workflow-only when it has a workflow command and no agent.
   const workflowOnly = !!job.workflow_command && !job.agent_id;

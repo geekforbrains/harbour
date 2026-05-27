@@ -51,9 +51,10 @@ export default function AgentsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; cli?: string | null; model?: string | null; thinking?: string | null } | null>(null);
+  const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; remote: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const [eagerAgent, setEagerAgent] = useState(false);
+  const [remoteAgent, setRemoteAgent] = useState(false);
 
   // CLI tool selection — every v2 agent is a harbour CLI agent; cli is required.
   const [cliTools, setCliTools] = useState<CliTool[]>([]);
@@ -93,6 +94,7 @@ export default function AgentsPage() {
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
     if (eagerAgent) body.eager = true;
+    if (remoteAgent) body.remote = true;
 
     try {
       const data = await createAgent.mutateAsync(body);
@@ -100,9 +102,7 @@ export default function AgentsPage() {
         id: data.id,
         name: data.name,
         apiKey: data.apiKey ?? "",
-        cli: data.cli ?? null,
-        model: data.model ?? null,
-        thinking: data.thinking ?? null,
+        remote: !!data.remote,
       });
       setName("");
       setDescription("");
@@ -129,27 +129,24 @@ export default function AgentsPage() {
     setSelectedThinking("");
     setCliTools([]);
     setEagerAgent(false);
+    setRemoteAgent(false);
   }
 
+  // Identity-only blob: cli/model/thinking are resolved live from /next, so the
+  // connect command just carries who the agent is and where harbour lives.
   function getConnectBlob() {
-    if (!newAgent) return "";
-    const base = typeof window !== "undefined" ? window.location.origin : "";
+    if (!newAgent || typeof window === "undefined") return "";
     const payload = {
-      url: base,
+      url: window.location.origin,
       agentId: newAgent.id,
       apiKey: newAgent.apiKey,
       name: newAgent.name,
-      cli: newAgent.cli,
-      model: newAgent.model,
-      thinking: newAgent.thinking,
-      eager: !!eagerAgent,
     };
-    if (typeof window === "undefined") return "";
     return btoa(JSON.stringify(payload));
   }
 
   function getConnectCommand() {
-    return `harbour agent connect ${getConnectBlob()}`;
+    return `harbour-agent connect ${getConnectBlob()}`;
   }
 
   if (loading) {
@@ -245,26 +242,41 @@ export default function AgentsPage() {
           </DialogHeader>
 
           {newAgent ? (
-            // Success state — agent is created and pollable locally. The connect
-            // command is always available so the agent can instead be run on
-            // another machine via the remote agent runtime.
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                <strong>{newAgent.name}</strong> is ready. The local runner picks it up automatically. To run it on a different machine instead, paste this connect command there:
-              </p>
-              <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
-                {getConnectCommand()}
+            newAgent.remote ? (
+              // Remote agent — the only setup is running the connect command on
+              // the target machine. cli/model/thinking are resolved live from
+              // harbour, so they stay editable here on the agent's page.
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run it, install <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour-agent</code> and run this command:
+                </p>
+                <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
+                  {getConnectCommand()}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The command contains the agent API key — treat it like a password. Model, effort, and CLI tool are set here in harbour and applied on every run, so you never have to reconfigure the remote machine. If this agent&apos;s jobs use workflow gates, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour-agent/workflows/</code> there.
+                </p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={handleCopy}>
+                    {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
+                  </Button>
+                  <Button onClick={handleCloseCreate}>Done</Button>
+                </DialogFooter>
               </div>
-              <p className="text-xs text-muted-foreground">
-                The command contains the agent API key. Treat it like a password. If you add workflow gates to this agent&apos;s jobs, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour-agent/workflows/</code> on the remote machine.
-              </p>
-              <DialogFooter>
-                <Button variant="outline" onClick={handleCopy}>
-                  {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
-                </Button>
-                <Button onClick={handleCloseCreate}>Done</Button>
-              </DialogFooter>
-            </div>
+            ) : (
+              // Local agent — the co-located runner was registered automatically.
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  <strong>{newAgent.name}</strong> is ready. The local runner picks it up on its next poll — no further setup needed.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  If no runner is installed yet, run <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour agent install</code> on this machine.
+                </p>
+                <DialogFooter>
+                  <Button onClick={handleCloseCreate}>Done</Button>
+                </DialogFooter>
+              </div>
+            )
           ) : !selectedCli ? (
             // CLI tool selection — required; every agent is a harbour CLI agent.
             <div className="space-y-3">
@@ -333,6 +345,22 @@ export default function AgentsPage() {
                     <p className="font-medium">Eager polling</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
+                    </p>
+                  </div>
+                </label>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={remoteAgent}
+                    onChange={e => setRemoteAgent(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="text-sm">
+                    <p className="font-medium">Runs on a different machine</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      For work that must run elsewhere (e.g. Xcode builds on a Mac). You&apos;ll get a connect command to run there instead of the local runner picking it up.
                     </p>
                   </div>
                 </label>

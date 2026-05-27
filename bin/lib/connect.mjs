@@ -2,7 +2,9 @@ import fs from "fs";
 import path from "path";
 import { ensureDir, getHarbourDir, loadRunnerConfigs } from "./config.mjs";
 
-const REQUIRED_FIELDS = ["url", "agentId", "apiKey", "cli", "name"];
+// Identity-only: the agent's cli/model/thinking come live from the /next
+// payload, so the blob just needs to say who the agent is and where harbour is.
+const REQUIRED_FIELDS = ["url", "agentId", "apiKey", "name"];
 
 function decodeBlob(blob) {
   let json;
@@ -47,10 +49,6 @@ function writeRunner(config) {
     agentId: config.agentId,
     name: config.name,
     apiKey: config.apiKey,
-    cli: config.cli,
-    model: config.model ?? null,
-    thinking: config.thinking ?? null,
-    eager: !!config.eager,
     url: config.url,
   };
   if (existing >= 0) {

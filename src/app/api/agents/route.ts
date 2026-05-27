@@ -15,7 +15,7 @@ export const POST = withProjectAuth(
   async (req) => {
     const projectId = req.nextUrl.searchParams.get("projectId")!;
     const body = await req.json();
-    const { name, description, cli, model, thinking, color, eager } = body;
+    const { name, description, cli, model, thinking, color, eager, remote } = body;
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
@@ -29,20 +29,23 @@ export const POST = withProjectAuth(
       thinking,
       color,
       eager: !!eager,
+      remote: !!remote,
     });
 
-    // Save runner config locally so the CLI can poll on the same machine.
-    const baseUrl = req.headers.get("origin") || `http://localhost:${process.env.PORT || 3000}`;
-    saveRunnerConfig({
-      agentId: agent.id,
-      name: agent.name,
-      apiKey: agent.apiKey,
-      cli,
-      model: model || null,
-      thinking: thinking || null,
-      eager: !!eager,
-      url: baseUrl,
-    });
+    // Local agents run on this machine, so register them with the co-located
+    // runner now. Remote agents are registered on their own machine via
+    // `harbour-agent connect`. Either way the runner config is identity-only —
+    // cli/model/thinking are resolved live from the /next payload, so changing
+    // them in the dashboard takes effect without touching the runner.
+    if (!remote) {
+      const baseUrl = req.headers.get("origin") || `http://localhost:${process.env.PORT || 3000}`;
+      saveRunnerConfig({
+        agentId: agent.id,
+        name: agent.name,
+        apiKey: agent.apiKey,
+        url: baseUrl,
+      });
+    }
 
     return NextResponse.json(agent, { status: 201 });
   },

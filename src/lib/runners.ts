@@ -1,15 +1,19 @@
 import fs from "fs";
 import { runnersFile, harbourHome, ensureDir } from "./paths";
 
+// Runner config is identity-only: which agent, its key, and where harbour is.
+// The agent's cli/model/thinking/eager are resolved live from the /next payload
+// (see buildRunPayload), so they aren't stored here. cli/model/thinking stay
+// optional for backward compat with configs written by older versions.
 export type RunnerConfig = {
   agentId: string;
   name: string;
   apiKey: string;
-  cli: string;
-  model: string | null;
-  thinking: string | null;
-  eager?: boolean;
   url: string;
+  cli?: string;
+  model?: string | null;
+  thinking?: string | null;
+  eager?: boolean;
 };
 
 export function loadRunners(): RunnerConfig[] {

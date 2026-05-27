@@ -17,6 +17,7 @@ export function createAgent(projectId: string, name: string, description?: strin
   thinking?: string;
   color?: string;
   eager?: boolean;
+  remote?: boolean;
 }) {
   const db = getDb();
   const id = uuid();
@@ -27,11 +28,12 @@ export function createAgent(projectId: string, name: string, description?: strin
   const thinking = opts?.thinking || null;
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
+  const remote = opts?.remote ? 1 : 0;
   db.prepare(
-    `INSERT INTO agents (id, project_id, name, description, api_key_hash, cli, model, thinking, color, eager)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, projectId, name, description || null, apiKeyHash, cli, model, thinking, color, eager);
-  return { id, project_id: projectId, name, description, apiKey, cli, model, thinking, color, eager: !!eager };
+    `INSERT INTO agents (id, project_id, name, description, api_key_hash, cli, model, thinking, color, eager, remote)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, projectId, name, description || null, apiKeyHash, cli, model, thinking, color, eager, remote);
+  return { id, project_id: projectId, name, description, apiKey, cli, model, thinking, color, eager: !!eager, remote: !!remote };
 }
 
 export function authenticateAgent(apiKey: string) {
@@ -54,7 +56,7 @@ export function rotateAgentKey(agentId: string) {
 export function getAgentById(id: string) {
   const db = getDb();
   return db.prepare(
-    `SELECT id, project_id, name, description, cli, model, thinking, color, eager, runner_fingerprint, last_polled_at, created_at, updated_at
+    `SELECT id, project_id, name, description, cli, model, thinking, color, eager, remote, runner_fingerprint, last_polled_at, created_at, updated_at
      FROM agents WHERE id = ?`
   ).get(id) as any || null;
 }
@@ -62,7 +64,7 @@ export function getAgentById(id: string) {
 export function listAgents(projectId: string) {
   const db = getDb();
   return db.prepare(`
-    SELECT a.id, a.project_id, a.name, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,

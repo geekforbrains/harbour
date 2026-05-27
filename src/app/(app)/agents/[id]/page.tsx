@@ -42,6 +42,7 @@ type Agent = {
   thinking: string | null;
   color: string | null;
   eager: number | null;
+  remote: number | null;
   last_polled_at: number | null;
   created_at: number;
 };
@@ -119,11 +120,10 @@ export default function AgentDetailPage() {
   }
 
   function connectCommand() {
-    if (!agent || !connectKey) return "";
-    const base = typeof window !== "undefined" ? window.location.origin : "";
-    if (typeof window === "undefined") return "";
-    const payload = { url: base, agentId: agent.id, apiKey: connectKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
-    return `harbour agent connect ${btoa(JSON.stringify(payload))}`;
+    if (!agent || !connectKey || typeof window === "undefined") return "";
+    // Identity-only blob — cli/model/thinking come live from /next.
+    const payload = { url: window.location.origin, agentId: agent.id, apiKey: connectKey, name: agent.name };
+    return `harbour-agent connect ${btoa(JSON.stringify(payload))}`;
   }
 
   function handleCopyConnect() {
@@ -155,6 +155,9 @@ export default function AgentDetailPage() {
               {agent.cli && (
                 <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
               )}
+              {agent.remote ? (
+                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">remote</span>
+              ) : null}
             </div>
             {agent.description && <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>}
           </div>
@@ -376,7 +379,9 @@ export default function AgentDetailPage() {
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                The local runner picks this agent up automatically. To run it on a different machine instead, generate a connect command and paste it there. This rotates the API key — any previously-connected runner will stop working until you reconnect it with the new command.
+                {agent.remote
+                  ? "Generate a connect command to register (or re-register) the machine that runs this agent. This rotates the API key — any previously-connected runner stops working until you reconnect it with the new command."
+                  : "This agent runs on the local machine. Generating a connect command lets you run it elsewhere instead — it rotates the API key, so the local runner stops picking it up until reconnected."}
               </p>
               <DialogFooter>
                 <Button variant="ghost" onClick={() => setShowConnect(false)}>Cancel</Button>
