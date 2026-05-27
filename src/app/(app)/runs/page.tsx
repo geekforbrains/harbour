@@ -7,6 +7,7 @@ import { Activity, Filter, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/app/empty-state";
+import { PageHeader } from "@/components/app/page-header";
 import { BackLink } from "@/components/app/back-link";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { SELECT_CLASS } from "@/components/app/model-thinking-select";
@@ -163,12 +164,7 @@ export default function RunsHistoryPage() {
     <div className="space-y-6">
       {showBackLink && <BackLink href="/" label="Runs" />}
 
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">All Runs</h1>
-          <p className="text-sm text-muted-foreground mt-1">Full run history, filterable.</p>
-        </div>
-      </div>
+      <PageHeader title="All Runs" subtitle="Full run history, filterable." />
 
       {/* Filter bar */}
       <div className="rounded-lg border p-3 space-y-3">

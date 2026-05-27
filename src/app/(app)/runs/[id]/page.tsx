@@ -13,6 +13,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image as ImageIcon, Trash2, MoreVertical, Copy, Check } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
@@ -515,7 +516,7 @@ export default function RunDetailPage() {
     } catch { /* ignore */ }
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!run) return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
 
   // Kill button should only be clickable once per run — derive the visible

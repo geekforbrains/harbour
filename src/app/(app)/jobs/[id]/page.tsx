@@ -11,11 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
+import { RowLink } from "@/components/app/row-link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
@@ -164,7 +166,7 @@ export default function JobDetailPage() {
     router.push(`/agents/${job?.agent_id}`);
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!job) return <div className="text-sm text-muted-foreground py-12 text-center">Job not found.</div>;
 
   // v2 dropped jobs.workflow_only — a job is workflow-only iff it has no agent.
@@ -274,12 +276,12 @@ export default function JobDetailPage() {
           <SectionHeader>Databases</SectionHeader>
           <div className="space-y-2">
             {job.databases.map(d => (
-              <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+              <RowLink key={d.id} href={`/databases/${d.id}`} align="center">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Database className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <span className="text-sm font-mono font-medium">{d.name}</span>
-              </Link>
+              </RowLink>
             ))}
           </div>
         </section>
@@ -323,11 +325,11 @@ export default function JobDetailPage() {
           <>
             <div className="space-y-2">
               {specificRuns.map(run => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                <RowLink key={run.id} href={`/runs/${run.id}`} align="center">
                   <StatusDot status={run.status} />
                   <span className="text-sm font-medium flex-1 truncate">{run.title || run.status}</span>
                   <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.created_at)}</span>
-                </Link>
+                </RowLink>
               ))}
             </div>
             <div className="text-center pt-1">

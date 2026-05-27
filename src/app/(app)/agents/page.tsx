@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -11,8 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Bot, Plus, Briefcase, Copy, Check, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { agentColor } from "@/lib/agent-color";
 import { timeAgo } from "@/lib/time";
-import { EmptyState } from "@/components/app/empty-state";
-import { ScopePrompt } from "@/components/app/scope-prompt";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ListState } from "@/components/app/list-state";
+import { RowLink } from "@/components/app/row-link";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = {
@@ -149,7 +149,7 @@ export default function AgentsPage() {
   }
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+    return <PageLoading />;
   }
 
   // Any agent without a recent poll means the runner isn't picking up work.
@@ -159,19 +159,19 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
-          <p className="text-sm text-muted-foreground mt-1">Your AI workforce.</p>
-        </div>
-        <div className="flex gap-2">
-          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
-              project_id reparent route exists; new agents land in the active project. */}
-          <Button onClick={handleOpenCreate} size="sm" disabled={!activeProjectId}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Agent
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Agents"
+        subtitle="Your AI workforce."
+        actions={
+          <div className="flex gap-2">
+            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+                project_id reparent route exists; new agents land in the active project. */}
+            <Button onClick={handleOpenCreate} size="sm" disabled={!activeProjectId}>
+              <Plus className="h-4 w-4 mr-1.5" /> New Agent
+            </Button>
+          </div>
+        }
+      />
 
       {activeProjectId && showRunnerBanner && (
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
@@ -182,20 +182,17 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {!activeProjectId ? (
-        <ScopePrompt need="project" entity="agents" />
-      ) : agents.length === 0 ? (
-        <EmptyState large icon={<Bot className="h-10 w-10 text-muted-foreground/40" />}>
-          No agents yet. Create one to get started.
-        </EmptyState>
-      ) : (
+      <ListState
+        scope={activeProjectId}
+        scopeNeed="project"
+        scopeEntity="agents"
+        isEmpty={agents.length === 0}
+        emptyIcon={<Bot className="h-10 w-10 text-muted-foreground/40" />}
+        emptyMessage="No agents yet. Create one to get started."
+      >
         <div className="grid gap-2">
           {agents.map(agent => (
-            <Link
-              key={agent.id}
-              href={`/agents/${agent.id}`}
-              className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors"
-            >
+            <RowLink key={agent.id} href={`/agents/${agent.id}`}>
               {agent.waiting_count > 0 ? (
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
                   <Bot className="h-4 w-4 text-amber-500" />
@@ -230,10 +227,10 @@ export default function AgentsPage() {
               {agent.pending_count > 0 && (
                 <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10 shrink-0">{agent.pending_count} pending</Badge>
               )}
-            </Link>
+            </RowLink>
           ))}
         </div>
-      )}
+      </ListState>
 
       <Dialog open={showCreate} onOpenChange={handleCloseCreate}>
         <DialogContent>

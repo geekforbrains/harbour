@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
 import { timeAgo } from "@/lib/time";
-import { EmptyState } from "@/components/app/empty-state";
-import { ScopePrompt } from "@/components/app/scope-prompt";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ListState } from "@/components/app/list-state";
+import { RowLink } from "@/components/app/row-link";
 import { statusStyle } from "@/lib/status";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
@@ -39,7 +39,7 @@ export default function JobsPage() {
         <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
         <div className="grid gap-2">
           {sectionJobs.map(job => (
-            <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+            <RowLink key={job.id} href={`/jobs/${job.id}`}>
               <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                 !job.active ? "bg-muted" : job.waiting_runs > 0 ? statusStyle("waiting").bg : job.pending_runs > 0 ? statusStyle("pending").bg : "bg-muted"
               }`}>
@@ -68,43 +68,42 @@ export default function JobsPage() {
                   {job.pending_runs > 0 && <Badge className={`text-[10px] ${statusStyle("pending").bg} ${statusStyle("pending").text} hover:bg-violet-500/10`}>{job.pending_runs} pending</Badge>}
                 </div>
               )}
-            </Link>
+            </RowLink>
           ))}
         </div>
       </div>
     );
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-          <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
-        </div>
-        <div className="flex gap-2">
-          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
-              project_id reparent route exists; new jobs land in the active project. */}
-          <Button onClick={() => setShowCreate(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1.5" /> New Job
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Jobs"
+        subtitle="Recurring work across all agents."
+        actions={
+          <div className="flex gap-2">
+            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+                project_id reparent route exists; new jobs land in the active project. */}
+            <Button onClick={() => setShowCreate(true)} size="sm">
+              <Plus className="h-4 w-4 mr-1.5" /> New Job
+            </Button>
+          </div>
+        }
+      />
 
-      {!activeProjectId ? (
-        <ScopePrompt need="project" entity="jobs" />
-      ) : jobs.length === 0 ? (
-        <EmptyState large icon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}>
-          No jobs yet. Create one to get started.
-        </EmptyState>
-      ) : (
-        <>
-          {renderJobSection("Agent Jobs", jobs.filter(j => !isWorkflowOnly(j)))}
-          {renderJobSection("Workflow Jobs", jobs.filter(j => isWorkflowOnly(j)))}
-        </>
-      )}
+      <ListState
+        scope={activeProjectId}
+        scopeNeed="project"
+        scopeEntity="jobs"
+        isEmpty={jobs.length === 0}
+        emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
+        emptyMessage="No jobs yet. Create one to get started."
+      >
+        {renderJobSection("Agent Jobs", jobs.filter(j => !isWorkflowOnly(j)))}
+        {renderJobSection("Workflow Jobs", jobs.filter(j => isWorkflowOnly(j)))}
+      </ListState>
 
       <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />
     </div>

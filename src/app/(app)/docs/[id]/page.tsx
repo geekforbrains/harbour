@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { Pencil, Save, X, Trash2, History, Pin } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/time";
@@ -80,7 +81,7 @@ export default function DocDetailPage() {
     }
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!doc) return <div className="text-sm text-muted-foreground py-12 text-center">Doc not found.</div>;
 
   return (

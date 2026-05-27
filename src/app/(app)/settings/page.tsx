@@ -14,6 +14,7 @@ import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinki
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useUpdateOrg } from "@/lib/hooks/use-orgs";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
 
 type Settings = Record<string, string>;
 
@@ -278,14 +279,11 @@ export default function SettingsPage() {
     await updateOrg.mutateAsync({ settings: { timezone: tz } });
   }
 
-  if (isLoading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (isLoading) return <PageLoading />;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">System-wide configuration.</p>
-      </div>
+      <PageHeader title="Settings" subtitle="System-wide configuration." />
 
       <div className="space-y-6 max-w-lg">
         {/* Project Settings */}

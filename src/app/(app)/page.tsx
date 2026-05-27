@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { Activity, ArrowRight } from "lucide-react";
 import { SectionHeader } from "@/components/app/section-header";
-import { EmptyState } from "@/components/app/empty-state";
-import { ScopePrompt } from "@/components/app/scope-prompt";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ListState } from "@/components/app/list-state";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { useActiveProjectId, useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useRuns } from "@/lib/hooks/use-runs";
@@ -25,24 +25,20 @@ export default function RunsPage() {
   const pending = allWaiting.filter((r: Run) => r.status === "pending");
   const recent = runsData?.recent || [];
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
-          <p className="text-sm text-muted-foreground mt-1">All run activity.</p>
-        </div>
-      </div>
+      <PageHeader title="Runs" subtitle="All run activity." />
 
-      {!activeOrgId ? (
-        <ScopePrompt need="org" entity="runs" />
-      ) : running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
-        <EmptyState large icon={<Activity className="h-10 w-10 text-muted-foreground/40" />}>
-          No runs yet.
-        </EmptyState>
-      ) : (
+      <ListState
+        scope={activeOrgId}
+        scopeNeed="org"
+        scopeEntity="runs"
+        isEmpty={running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0}
+        emptyIcon={<Activity className="h-10 w-10 text-muted-foreground/40" />}
+        emptyMessage="No runs yet."
+      >
         <>
           {running.length > 0 && (
             <section>
@@ -94,7 +90,7 @@ export default function RunsPage() {
             )}
           </section>
         </>
-      )}
+      </ListState>
     </div>
   );
 }

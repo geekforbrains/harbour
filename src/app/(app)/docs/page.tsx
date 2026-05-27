@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FileText, Plus, Pin } from "lucide-react";
 import { timeAgo } from "@/lib/time";
-import { EmptyState } from "@/components/app/empty-state";
-import { ScopePrompt } from "@/components/app/scope-prompt";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ListState } from "@/components/app/list-state";
+import { RowLink } from "@/components/app/row-link";
 import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useDocs, useCreateDoc } from "@/lib/hooks/use-docs";
 import { apiFetch } from "@/lib/api/client";
@@ -53,32 +53,33 @@ export default function DocsPage() {
     }
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Docs</h1>
-          <p className="text-sm text-muted-foreground mt-1">Shared knowledge linked to jobs.</p>
-        </div>
-        <div className="flex gap-2">
-          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
-              project_id reparent route exists; new docs land in the active scope. */}
-          <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Docs"
+        subtitle="Shared knowledge linked to jobs."
+        actions={
+          <div className="flex gap-2">
+            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+                project_id reparent route exists; new docs land in the active scope. */}
+            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+          </div>
+        }
+      />
 
-      {!activeOrgId ? (
-        <ScopePrompt need="org" entity="docs" />
-      ) : docs.length === 0 ? (
-        <EmptyState large icon={<FileText className="h-10 w-10 text-muted-foreground/40" />}>
-          No docs yet.
-        </EmptyState>
-      ) : (
+      <ListState
+        scope={activeOrgId}
+        scopeNeed="org"
+        scopeEntity="docs"
+        isEmpty={docs.length === 0}
+        emptyIcon={<FileText className="h-10 w-10 text-muted-foreground/40" />}
+        emptyMessage="No docs yet."
+      >
         <div className="space-y-2">
           {docs.map(doc => (
-            <Link key={doc.id} href={`/docs/${doc.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+            <RowLink key={doc.id} href={`/docs/${doc.id}`}>
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </div>
@@ -91,10 +92,10 @@ export default function DocsPage() {
                 <Pin className="h-3.5 w-3.5" />
               </button>
               <span className="text-xs text-muted-foreground pt-1">{timeAgo(doc.updated_at)}</span>
-            </Link>
+            </RowLink>
           ))}
         </div>
-      )}
+      </ListState>
 
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent>

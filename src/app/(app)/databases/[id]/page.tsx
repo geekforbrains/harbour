@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { Briefcase, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
@@ -64,7 +65,7 @@ export default function DatabaseDetailPage() {
     router.push("/databases");
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!db) return <div className="text-sm text-muted-foreground py-12 text-center">Database not found.</div>;
 
   const totalPages = rowsData ? Math.ceil(rowsData.total / pageSize) : 0;

@@ -24,6 +24,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/app/empty-state";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { useApp } from "@/components/app/app-context";
 import { useMe, orgsFromMe } from "@/lib/hooks/use-orgs";
 import {
@@ -45,9 +46,7 @@ export default function UsersPage() {
   if (!isAdmin) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-        </div>
+        <PageHeader title="Users" />
         <EmptyState>Only instance admins can manage users.</EmptyState>
       </div>
     );
@@ -65,22 +64,21 @@ function UsersConsole() {
   const [link, setLink] = useState<{ user: SetPasswordLink["user"]; url: string } | null>(null);
 
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+    return <PageLoading />;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Dashboard accounts, instance admins, and org memberships.
-          </p>
-        </div>
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="h-4 w-4 mr-2" /> New User
-        </Button>
-      </div>
+      <PageHeader
+        align="start"
+        title="Users"
+        subtitle="Dashboard accounts, instance admins, and org memberships."
+        actions={
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="h-4 w-4 mr-2" /> New User
+          </Button>
+        }
+      />
 
       {users.length === 0 ? (
         <EmptyState>No users.</EmptyState>

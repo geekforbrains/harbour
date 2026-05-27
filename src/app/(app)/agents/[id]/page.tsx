@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
+import { RowLink } from "@/components/app/row-link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { parseSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Bot, Settings, Copy, Check, Calendar, Activity, Wifi,
@@ -132,7 +134,7 @@ export default function AgentDetailPage() {
     setTimeout(() => setConnectCopied(false), 2000);
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!agent) return <div className="text-sm text-muted-foreground py-12 text-center">Agent not found.</div>;
 
   return (
@@ -204,7 +206,7 @@ export default function AgentDetailPage() {
         ) : (
           <div className="space-y-2">
             {jobs.map(job => (
-              <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+              <RowLink key={job.id} href={`/jobs/${job.id}`}>
                 <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                   !job.active ? "bg-muted" : job.waiting_runs > 0 ? statusStyle("waiting").bg : job.pending_runs > 0 ? statusStyle("pending").bg : "bg-muted"
                 }`}>
@@ -227,7 +229,7 @@ export default function AgentDetailPage() {
                     {job.pending_runs > 0 && <Badge className={`text-[10px] ${statusStyle("pending").bg} ${statusStyle("pending").text} hover:bg-violet-500/10`}>{job.pending_runs} pending</Badge>}
                   </div>
                 )}
-              </Link>
+              </RowLink>
             ))}
           </div>
         )}
@@ -239,13 +241,13 @@ export default function AgentDetailPage() {
           <SectionHeader count={waitingRuns.length}>Waiting</SectionHeader>
           <div className="space-y-2">
             {waitingRuns.map(run => (
-              <Link key={run.id} href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+              <RowLink key={run.id} href={`/runs/${run.id}`}>
                 <RunStatusIcon status={run.status} />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium">{run.job_name}</span>
                 </div>
                 <span className="text-xs text-muted-foreground pt-1">{timeAgo(run.created_at)}</span>
-              </Link>
+              </RowLink>
             ))}
           </div>
         </section>
@@ -257,13 +259,13 @@ export default function AgentDetailPage() {
           <SectionHeader count={pendingRuns.length}>Pending</SectionHeader>
           <div className="space-y-2">
             {pendingRuns.map(run => (
-              <Link key={run.id} href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+              <RowLink key={run.id} href={`/runs/${run.id}`}>
                 <RunStatusIcon status={run.status} />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium">{run.job_name}</span>
                 </div>
                 <span className="text-xs text-muted-foreground pt-1">{timeAgo(run.created_at)}</span>
-              </Link>
+              </RowLink>
             ))}
           </div>
         </section>
@@ -278,13 +280,13 @@ export default function AgentDetailPage() {
           <>
             <div className="space-y-2">
               {recentRuns.map(run => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                <RowLink key={run.id} href={`/runs/${run.id}`}>
                   <RunStatusIcon status={run.status} />
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium">{run.job_name}</span>
                   </div>
                   <span className="text-xs text-muted-foreground pt-1">{timeAgo(run.completed_at || run.created_at)}</span>
-                </Link>
+                </RowLink>
               ))}
             </div>
             <div className="text-center pt-2">

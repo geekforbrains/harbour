@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { BackLink } from "@/components/app/back-link";
+import { PageLoading } from "@/components/app/page-header";
 import { KeyRound, Eye, EyeOff, Pin, Pencil, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { useEnvVar, useEnvVarMutations } from "@/lib/hooks/use-env-vars";
@@ -94,7 +95,7 @@ export default function EnvVarDetailPage() {
     router.push("/env-vars");
   }
 
-  if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  if (loading) return <PageLoading />;
   if (!envVar) return <div className="text-sm text-muted-foreground py-12 text-center">Env var not found.</div>;
 
   return (
