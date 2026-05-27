@@ -7,6 +7,7 @@ import { useScope } from "@/lib/hooks/use-project-filter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { StreamingOutput, ToolCallList } from "@/components/app/captain-message";
+import { ScopePrompt } from "@/components/app/scope-prompt";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   MessageSquare,
@@ -409,14 +410,23 @@ export default function CaptainPage() {
   // Create new conversation (org-scoped)
   async function handleNew() {
     try {
-      const data = await apiFetch<{ id: string }>(
+      const created = await apiFetch<Conversation>(
         scoped("/api/captain/conversations", { orgId }),
         { method: "POST", body: { title: "New conversation" } }
       );
+      // Seed the cache with the new conversation up front so the chat view
+      // switches to it immediately. `effectiveConversationId` only honors an
+      // active id that's present in the list, and the invalidate refetch below
+      // is async — without this the page would sit on the empty state (or the
+      // wrong conversation) until the refetch lands.
+      queryClient.setQueryData<Conversation[]>(
+        ["captain-conversations", orgId],
+        (prev = []) => (prev.some((c) => c.id === created.id) ? prev : [created, ...prev])
+      );
+      setActiveConversationId(created.id);
       queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
-      setActiveConversationId(data.id);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to create conversation", err);
     }
   }
 
@@ -436,6 +446,17 @@ export default function CaptainPage() {
       body: { title },
     });
     queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
+  }
+
+  // Captain conversations are org-scoped — without an active org the API
+  // rejects every request. Show the scope prompt instead of a dead "New Chat"
+  // button that silently fails.
+  if (!orgId) {
+    return (
+      <div className="max-w-2xl mx-auto pt-8">
+        <ScopePrompt need="org" entity="Captain" />
+      </div>
+    );
   }
 
   return (
