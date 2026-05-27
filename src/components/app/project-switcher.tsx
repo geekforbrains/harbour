@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -122,44 +123,48 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
         <DropdownMenuContent align="start" className="w-56">
           {showOrgPicker && (
             <>
-              <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Building2 className="h-3.5 w-3.5" /> Organization
-              </DropdownMenuLabel>
-              {isAdmin && (
-                <DropdownMenuItem onClick={() => handleSelectOrg(null)}>
-                  <span className="flex-1">All Orgs</span>
-                  {!activeOrgId && <Check className="h-4 w-4 ml-2 text-primary" />}
-                </DropdownMenuItem>
-              )}
-              {orgs.map((o) => (
-                <DropdownMenuItem key={o.id} onClick={() => handleSelectOrg(o.id)}>
-                  <span className="flex-1 truncate">{o.name}</span>
-                  {activeOrgId === o.id && <Check className="h-4 w-4 ml-2 text-primary" />}
-                </DropdownMenuItem>
-              ))}
-              {isAdmin && (
-                <DropdownMenuItem onClick={() => setShowNewOrg(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Org
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Building2 className="h-3.5 w-3.5" /> Organization
+                </DropdownMenuLabel>
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => handleSelectOrg(null)}>
+                    <span className="flex-1">All Orgs</span>
+                    {!activeOrgId && <Check className="h-4 w-4 ml-2 text-primary" />}
+                  </DropdownMenuItem>
+                )}
+                {orgs.map((o) => (
+                  <DropdownMenuItem key={o.id} onClick={() => handleSelectOrg(o.id)}>
+                    <span className="flex-1 truncate">{o.name}</span>
+                    {activeOrgId === o.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+                  </DropdownMenuItem>
+                ))}
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => setShowNewOrg(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    New Org
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
             </>
           )}
 
-          <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <FolderOpen className="h-3.5 w-3.5" /> Project
-          </DropdownMenuLabel>
-          <DropdownMenuItem onClick={() => handleSelectProject(null)}>
-            <span className="flex-1">All Projects</span>
-            {!activeProjectId && <Check className="h-4 w-4 ml-2 text-primary" />}
-          </DropdownMenuItem>
-          {projects.map((p) => (
-            <DropdownMenuItem key={p.id} onClick={() => handleSelectProject(p.id)}>
-              <span className="flex-1 truncate">{p.name}</span>
-              {activeProjectId === p.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <FolderOpen className="h-3.5 w-3.5" /> Project
+            </DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => handleSelectProject(null)}>
+              <span className="flex-1">All Projects</span>
+              {!activeProjectId && <Check className="h-4 w-4 ml-2 text-primary" />}
             </DropdownMenuItem>
-          ))}
+            {projects.map((p) => (
+              <DropdownMenuItem key={p.id} onClick={() => handleSelectProject(p.id)}>
+                <span className="flex-1 truncate">{p.name}</span>
+                {activeProjectId === p.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setShowNew(true)} disabled={!activeOrgId}>
             <Plus className="h-4 w-4 mr-2" />
