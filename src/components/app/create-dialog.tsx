@@ -9,12 +9,10 @@ import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { Bot, Pin, FileText, KeyRound, Plus, Terminal, X } from "lucide-react";
-import { useScope } from "@/lib/hooks/use-project-filter";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
-import { useProjectMutations } from "@/lib/hooks/use-projects";
 
 type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
@@ -142,10 +140,8 @@ export function CreateDialog({
   /** Retained for call-site compatibility; the dialog only creates jobs now. */
   defaultTab?: "run" | "job";
 }) {
-  const { projectId } = useScope();
   const createAgentJob = useCreateAgentJob();
   const createWorkflowJob = useCreateWorkflowJob();
-  const { link } = useProjectMutations();
 
   // Scoped lists from the data layer (loaded while the dialog is open).
   const { data: agents = [] } = useAgents(undefined, { enabled: open });
@@ -236,13 +232,12 @@ export function CreateDialog({
     };
 
     try {
-      const created = isWorkflowOnly
-        ? await createWorkflowJob.mutateAsync(body)
-        : await createAgentJob.mutateAsync({ agentId, body });
-
-      // Auto-link the job to the active project.
-      if (projectId && created?.id) {
-        await link.mutateAsync({ projectId, type: "job", targetId: created.id });
+      // Workflow jobs are created in the active project (scoped POST); agent
+      // jobs inherit their agent's project. v2 has no separate link step.
+      if (isWorkflowOnly) {
+        await createWorkflowJob.mutateAsync(body);
+      } else {
+        await createAgentJob.mutateAsync({ agentId, body });
       }
       handleClose(false);
     } catch {

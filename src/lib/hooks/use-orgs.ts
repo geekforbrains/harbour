@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "@/lib/api/client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import type { Org, User } from "@/components/app/app-context";
 
@@ -36,4 +36,21 @@ export function userFromMe(me: MeResponse | undefined): User | null {
 export function orgsFromMe(me: MeResponse | undefined): Org[] {
   if (!me || me.type !== "user") return [];
   return me.orgs ?? [];
+}
+
+/**
+ * Update an org's name and/or settings (e.g. timezone). Settings are merged
+ * server-side. Invalidates `me`, the source of the org list (and the active
+ * org's settings the app shell reads its timezone from).
+ */
+export function useUpdateOrg(orgId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name?: string; settings?: Record<string, unknown> }) =>
+      apiFetch<Org>(scoped("/api/orgs", { orgId }), { method: "PUT", body }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: qk.orgs.all });
+    },
+  });
 }

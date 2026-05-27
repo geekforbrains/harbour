@@ -18,6 +18,8 @@ import {
 import { getDb } from "@/lib/db/schema";
 
 import { GET as agentsGET } from "@/app/api/agents/route";
+import { PUT as orgsPUT } from "@/app/api/orgs/route";
+import { getOrgSettings } from "@/lib/db/queries";
 import { GET as runGET, DELETE as runDELETE } from "@/app/api/runs/[id]/route";
 import { POST as docsPOST } from "@/app/api/docs/route";
 import { POST as envVarsPOST } from "@/app/api/env-vars/route";
@@ -94,6 +96,50 @@ describe("GET /api/agents (project-scoped list)", () => {
   it("outsider is forbidden", async () => {
     const { project, outsider } = fixture();
     const res = await agentsGET(userReq(outsider.id, `http://x/api/agents?projectId=${project.id}`), ctx({}));
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("PUT /api/orgs (org settings, backs useUpdateOrg)", () => {
+  it("editor updates the org timezone (settings merge)", async () => {
+    const { org, editor } = fixture();
+    const req = userReq(editor.id, `http://x/api/orgs?orgId=${org.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ settings: { timezone: "America/New_York" } }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await orgsPUT(req, ctx({}));
+    expect(res.status).toBe(200);
+    expect(getOrgSettings(org.id).timezone).toBe("America/New_York");
+  });
+
+  it("merge preserves unrelated settings keys", async () => {
+    const { org, editor } = fixture();
+    const first = userReq(editor.id, `http://x/api/orgs?orgId=${org.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ settings: { foo: "bar" } }),
+      headers: { "content-type": "application/json" },
+    });
+    await orgsPUT(first, ctx({}));
+    const second = userReq(editor.id, `http://x/api/orgs?orgId=${org.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ settings: { timezone: "UTC" } }),
+      headers: { "content-type": "application/json" },
+    });
+    await orgsPUT(second, ctx({}));
+    const settings = getOrgSettings(org.id);
+    expect(settings.timezone).toBe("UTC");
+    expect(settings.foo).toBe("bar");
+  });
+
+  it("viewer cannot update the org", async () => {
+    const { org, viewer } = fixture();
+    const req = userReq(viewer.id, `http://x/api/orgs?orgId=${org.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ settings: { timezone: "UTC" } }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await orgsPUT(req, ctx({}));
     expect(res.status).toBe(403);
   });
 });

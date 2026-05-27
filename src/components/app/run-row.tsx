@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Terminal, Hand, Zap, Pause, Play } from "lucide-react";
+import { Terminal, Zap, Pause, Play } from "lucide-react";
 import { useUpdateJob } from "@/lib/hooks/use-jobs";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
@@ -17,10 +17,8 @@ export type RunRowData = {
   job_name: string;
   title?: string | null;
   job_active?: number;
-  one_off?: number;
   agent_name?: string | null;
   job_workflow_command?: string | null;
-  job_workflow_only?: number;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -36,7 +34,9 @@ export function RunRow({ run, showActions = true }: Props) {
   const [triggerOpen, setTriggerOpen] = useState(false);
   const updateJob = useUpdateJob();
   const toggling = updateJob.isPending;
-  const isManual = !!run.one_off;
+  // v2: workflow-only runs have no agent. (workflow + agent runs still have an
+  // agent_name and show the agent dot plus a terminal glyph.)
+  const isWorkflowOnly = !run.agent_name;
 
   async function handleToggleActive(e: React.MouseEvent) {
     e.preventDefault();
@@ -56,7 +56,7 @@ export function RunRow({ run, showActions = true }: Props) {
           <div className="text-sm font-medium truncate">{run.title || run.job_name}</div>
           <div className="text-xs text-muted-foreground truncate mt-0.5">{run.job_name}</div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground flex-wrap">
-            {run.job_workflow_only && !run.agent_name ? (
+            {isWorkflowOnly ? (
               <><Terminal className="h-3 w-3" /><span>Workflow</span></>
             ) : (
               <>
@@ -64,23 +64,14 @@ export function RunRow({ run, showActions = true }: Props) {
                   className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
                   style={{ backgroundColor: agentColor(run.agent_name) }}
                 />
-                {run.job_workflow_command && run.agent_name && <Terminal className="h-3 w-3" />}
-                <span className="font-mono">{run.agent_name ?? "—"}</span>
+                {run.job_workflow_command && <Terminal className="h-3 w-3" />}
+                <span className="font-mono">{run.agent_name}</span>
               </>
-            )}
-            {isManual && (
-              <span
-                title="Manual / one-off run"
-                className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium"
-              >
-                <Hand className="h-2.5 w-2.5" />
-                Manual
-              </span>
             )}
           </div>
         </div>
         <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.updated_at)}</span>
-        {showActions && !isManual && (
+        {showActions && (
           <div className="flex items-center gap-1 shrink-0">
             <Button
               variant="ghost" size="icon" className="h-7 w-7"
@@ -100,7 +91,7 @@ export function RunRow({ run, showActions = true }: Props) {
           </div>
         )}
       </Link>
-      {showActions && !isManual && (
+      {showActions && (
         <TriggerDialog jobId={run.job_id} jobName={run.job_name} open={triggerOpen} onOpenChange={setTriggerOpen} />
       )}
     </>

@@ -4,14 +4,16 @@ import Link from "next/link";
 import { Activity, ArrowRight } from "lucide-react";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
+import { ScopePrompt } from "@/components/app/scope-prompt";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId, useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useRuns } from "@/lib/hooks/use-runs";
 
 type Run = RunRowData;
 
 export default function RunsPage() {
   const activeProjectId = useActiveProjectId();
+  const activeOrgId = useActiveOrgId();
   const historyHref = activeProjectId ? `/runs?projectId=${activeProjectId}` : "/runs";
 
   const { data: runsData, isLoading: loading } = useRuns({ refetchInterval: 5000 });
@@ -34,7 +36,9 @@ export default function RunsPage() {
         </div>
       </div>
 
-      {running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
+      {!activeOrgId ? (
+        <ScopePrompt need="org" entity="runs" />
+      ) : running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
         <EmptyState large icon={<Activity className="h-10 w-10 text-muted-foreground/40" />}>
           No runs yet.
         </EmptyState>

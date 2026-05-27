@@ -29,25 +29,15 @@ export function useCreateProject() {
   });
 }
 
-/** Link/unlink an entity to a project (PATCH) or delete a project (DELETE). */
+// v2 NOTE: the v1 PATCH link/unlink action is gone (per-project link tables were
+// replaced by a single project_id column, and no entity PUT route accepts a
+// project_id reparent). Entities are placed in a project at creation time via
+// the scoped POST. If reparenting is needed later, add it to the data layer and
+// restore the "Add Existing" dialogs that referenced this.
+/** Project lifecycle mutations (delete = soft-archive). */
 export function useProjectMutations() {
   const qc = useQueryClient();
   return {
-    link: useMutation({
-      mutationFn: (vars: { projectId: string; type: string; targetId: string }) =>
-        apiFetch(`/api/projects/${vars.projectId}`, {
-          method: "PATCH",
-          body: { action: "link", type: vars.type, targetId: vars.targetId },
-        }),
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: qk.projects.all });
-        qc.invalidateQueries({ queryKey: qk.agents.all });
-        qc.invalidateQueries({ queryKey: qk.jobs.all });
-        qc.invalidateQueries({ queryKey: qk.docs.all });
-        qc.invalidateQueries({ queryKey: qk.envVars.all });
-        qc.invalidateQueries({ queryKey: qk.databases.all });
-      },
-    }),
     remove: useMutation({
       mutationFn: (projectId: string) =>
         apiFetch(`/api/projects/${projectId}`, { method: "DELETE" }),

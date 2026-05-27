@@ -1,14 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Database, Briefcase, Link2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Database, Briefcase } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ScopePrompt } from "@/components/app/scope-prompt";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useDatabases } from "@/lib/hooks/use-databases";
-import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type DatabaseEntry = {
   id: string;
@@ -21,8 +19,7 @@ type DatabaseEntry = {
 };
 
 export default function DatabasesPage() {
-  const [showLinkExisting, setShowLinkExisting] = useState(false);
-  const activeProjectId = useActiveProjectId();
+  const activeOrgId = useActiveOrgId();
 
   const { data: databasesData = [], isLoading: loading } = useDatabases();
   const databases = databasesData as DatabaseEntry[];
@@ -36,14 +33,14 @@ export default function DatabasesPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
           <p className="text-sm text-muted-foreground mt-1">Agent-managed SQLite tables.</p>
         </div>
-        {activeProjectId && (
-          <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
-            <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
-          </Button>
-        )}
+        {/* TODO(v2): "Add Existing" removed — v2 dropped the per-project link
+            tables and the PATCH link/unlink route; no entity PUT route accepts a
+            project_id move. Restore once the data layer supports reparenting. */}
       </div>
 
-      {databases.length === 0 ? (
+      {!activeOrgId ? (
+        <ScopePrompt need="org" entity="databases" />
+      ) : databases.length === 0 ? (
         <EmptyState large icon={<Database className="h-10 w-10 text-muted-foreground/40" />}>
           No databases yet. Agents create them through the API.
         </EmptyState>
@@ -70,20 +67,6 @@ export default function DatabasesPage() {
             </Link>
           ))}
         </div>
-      )}
-
-      {activeProjectId && (
-        <ProjectLinkDialog
-          open={showLinkExisting}
-          onOpenChange={setShowLinkExisting}
-          projectId={activeProjectId}
-          type="database"
-          queryKey="databases"
-          fetchAllUrl="/api/databases"
-          icon={Database}
-          title="Add Existing Database"
-          nameClass="font-mono"
-        />
       )}
     </div>
   );

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -15,18 +15,34 @@ import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
 import { parseSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
-  Bot, Settings, Key, Copy, Check, Calendar, Activity, Wifi, FileText,
+  Bot, Settings, Copy, Check, Calendar, Activity, Wifi,
   Briefcase, Trash2, Terminal, Cpu, Brain,
 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { statusStyle } from "@/lib/status";
 import { agentColor } from "@/lib/agent-color";
+import { apiFetch } from "@/lib/api/client";
 
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { useAgent, useAgentJobs, useAgentRuns, useUpdateAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
 
-type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; last_polled_at: number | null; created_at: number };
+// Every v2 agent is a harbour CLI agent. There is no `type` or per-agent
+// `remote` flag — any agent can run on another machine via the runtime, so the
+// connect-runner command is always available.
+type Agent = {
+  id: string;
+  name: string;
+  description: string | null;
+  cli: string | null;
+  model: string | null;
+  thinking: string | null;
+  color: string | null;
+  eager: number | null;
+  last_polled_at: number | null;
+  created_at: number;
+};
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -35,38 +51,15 @@ export default function AgentDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const { data: agentData, isLoading: agentLoading } = useQuery({
-    queryKey: ["agents", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/agents/${id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: agentData, isLoading: agentLoading } = useAgent(id);
+  const { data: jobsData } = useAgentJobs(id);
+  const { data: agentRunsData } = useAgentRuns(id, 50);
 
-  const { data: jobs = [] } = useQuery<Job[]>({
-    queryKey: ["agents", id, "jobs"],
-    queryFn: async () => {
-      const res = await fetch(`/api/agents/${id}/jobs`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const updateAgent = useUpdateAgent(id);
+  const deleteAgent = useDeleteAgent();
 
-  const { data: agentRunsData = [] } = useQuery({
-    queryKey: ["agents", id, "runs"],
-    queryFn: async () => {
-      // Pull enough that all waiting/pending are likely covered and we have a recent feed.
-      const res = await fetch(`/api/agents/${id}/runs?limit=50`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
-
-  const agent: Agent | null = agentData ?? null;
+  const agent: Agent | null = (agentData as Agent | undefined) ?? null;
+  const jobs = (Array.isArray(jobsData) ? jobsData : []) as Job[];
   const loading = agentLoading;
   const allRuns = Array.isArray(agentRunsData) ? (agentRunsData as Run[]) : [];
   const waitingRuns = allRuns.filter(r => r.status === "waiting");
@@ -82,75 +75,61 @@ export default function AgentDetailPage() {
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editEager, setEditEager] = useState(false);
-  const [showRotateKey, setShowRotateKey] = useState(false);
-  const [newApiKey, setNewApiKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [showInvite, setShowInvite] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
+  const [connectKey, setConnectKey] = useState<string | null>(null);
   const [connectCopied, setConnectCopied] = useState(false);
 
   async function handleUpdateAgent() {
-    const body: Record<string, string | boolean> = { name: editName, description: editDesc };
-    if (agent?.type === "harbour") {
-      body.model = editModel;
-      body.thinking = editThinking;
-      body.eager = editEager;
+    try {
+      await updateAgent.mutateAsync({
+        name: editName,
+        description: editDesc,
+        model: editModel,
+        thinking: editThinking,
+        eager: editEager,
+      });
+    } catch {
+      alert("Failed to update agent");
+      return;
     }
-    const res = await fetch(`/api/agents/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) { alert("Failed to update agent"); return; }
     setShowSettings(false);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
   }
 
   async function handleDeleteAgent() {
     if (!confirm(`Delete "${agent?.name}"? All jobs and runs will be permanently removed.`)) return;
-    const res = await fetch(`/api/agents/${id}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to delete agent"); return; }
+    try {
+      await deleteAgent.mutateAsync(id);
+    } catch {
+      alert("Failed to delete agent");
+      return;
+    }
     router.push("/agents");
   }
 
-  async function handleRotateKey() {
-    const res = await fetch(`/api/agents/${id}/rotate-key`, { method: "POST" });
-    if (res.ok) {
-      const data = await res.json();
-      setNewApiKey(data.apiKey);
+  async function handleGenerateConnect() {
+    try {
+      const data = await apiFetch<{ apiKey: string }>(`/api/agents/${id}/rotate-key`, { method: "POST" });
+      setConnectKey(data.apiKey);
+    } catch {
+      alert("Failed to generate connect command");
     }
   }
 
-  function handleCopy() {
-    if (newApiKey) {
-      navigator.clipboard.writeText(newApiKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }
-
-  function getInviteText() {
-    if (!agent) return "";
+  function connectCommand() {
+    if (!agent || !connectKey) return "";
     const base = typeof window !== "undefined" ? window.location.origin : "";
-    return `You're being invited to Harbour, a control plane that manages your recurring jobs, shared docs, and data stores.
-
-Save these credentials to your memory now:
-- Agent ID: ${agent.id}
-- API Key: <use your existing key, or rotate from the dashboard>
-- Base URL: ${base}
-- Poll endpoint: GET ${base}/api/agents/${agent.id}/next (Authorization: Bearer <key>)
-- Guide: GET ${base}/api/guide
-
-IMPORTANT: Read the full guide at the URL above before doing anything. Do NOT copy the guide contents into your memory — fetch it each time you need to reference it so you always have the latest version.
-
-The guide covers everything: polling, scheduling, run lifecycle, docs, databases, and the full API. Follow it exactly.`;
+    if (typeof window === "undefined") return "";
+    const payload = { url: base, agentId: agent.id, apiKey: connectKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
+    return `harbour agent connect ${btoa(JSON.stringify(payload))}`;
   }
 
-  function handleCopyInvite() {
-    navigator.clipboard.writeText(getInviteText());
-    setInviteCopied(true);
-    setTimeout(() => setInviteCopied(false), 2000);
+  function handleCopyConnect() {
+    const cmd = connectCommand();
+    if (!cmd) return;
+    navigator.clipboard.writeText(cmd);
+    setConnectCopied(true);
+    setTimeout(() => setConnectCopied(false), 2000);
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
@@ -171,7 +150,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
-              {agent.type === "harbour" && agent.cli && (
+              {agent.cli && (
                 <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
               )}
             </div>
@@ -179,21 +158,9 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
           </div>
         </div>
         <div className="flex gap-1.5">
-          {agent.type === "external" && (
-            <>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowInvite(true)} title="Copy Invite">
-                <FileText className="h-3.5 w-3.5" />
-              </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
-                <Key className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
-          {agent.type === "harbour" && agent.remote ? (
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowConnect(true)} title="Connect Remote Runner">
-              <Wifi className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setConnectKey(null); setConnectCopied(false); setShowConnect(true); }} title="Connect Runner">
+            <Wifi className="h-3.5 w-3.5" />
+          </Button>
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -203,20 +170,18 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
         <div className="flex items-center gap-2 text-sm">
           <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{agent.type === "harbour" ? "Harbour" : "External"}</span>
+          <span className="text-muted-foreground truncate">{agent.cli || "—"}</span>
         </div>
-        {agent.type === "harbour" && agent.model && (
+        {agent.model && (
           <div className="flex items-center gap-2 text-sm">
             <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-muted-foreground truncate">{agent.model}</span>
           </div>
         )}
-        {agent.type === "harbour" && agent.cli && (
-          <div className="flex items-center gap-2 text-sm">
-            <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2 text-sm">
+          <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
+        </div>
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
@@ -348,7 +313,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Label>Description</Label>
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
-            {agent.type === "harbour" && agent.cli && CLI_CONFIG[agent.cli] && (
+            {agent.cli && CLI_CONFIG[agent.cli] && (
               <ModelThinkingSelect
                 cli={agent.cli}
                 model={editModel}
@@ -358,24 +323,22 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 defaultThinkingLabel="Default"
               />
             )}
-            {agent.type === "harbour" && (
-              <div className="rounded-md border p-3">
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editEager}
-                    onChange={e => setEditEager(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <div className="text-sm">
-                    <p className="font-medium">Eager polling</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
-                    </p>
-                  </div>
-                </label>
-              </div>
-            )}
+            <div className="rounded-md border p-3">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editEager}
+                  onChange={e => setEditEager(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <div className="text-sm">
+                  <p className="font-medium">Eager polling</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
@@ -385,94 +348,37 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
         </DialogContent>
       </Dialog>
 
-      {/* Rotate Key Dialog */}
-      <Dialog open={showRotateKey} onOpenChange={(open) => { setShowRotateKey(open); if (!open) { setNewApiKey(null); setCopied(false); } }}>
+      {/* Connect Runner Dialog — any agent can run on another machine. Generating
+          a command rotates the API key, which embeds in the connect blob. */}
+      <Dialog open={showConnect} onOpenChange={(open) => { setShowConnect(open); if (!open) { setConnectKey(null); setConnectCopied(false); } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>API Key</DialogTitle></DialogHeader>
-          {newApiKey ? (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Save this key now — it won&apos;t be shown again.</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all">{newApiKey}</code>
-                <Button variant="outline" size="icon" onClick={handleCopy} className="shrink-0">
-                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-              </div>
-              <DialogFooter><Button onClick={() => { setShowRotateKey(false); setNewApiKey(null); }}>Done</Button></DialogFooter>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Rotating the API key will invalidate the current key. The agent will need to be updated with the new key.</p>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setShowRotateKey(false)}>Cancel</Button>
-                <Button variant="destructive" onClick={handleRotateKey}>Rotate Key</Button>
-              </DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Invite Dialog */}
-      <Dialog open={showInvite} onOpenChange={(open) => { setShowInvite(open); if (!open) setInviteCopied(false); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Agent Invite</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Copy and paste this into your agent. You&apos;ll need to add the API key separately.</p>
-            <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all select-all max-h-64 overflow-y-auto">{getInviteText()}</div>
-            <DialogFooter>
-              <Button variant="outline" onClick={handleCopyInvite}>
-                {inviteCopied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Invite</>}
-              </Button>
-              <Button onClick={() => setShowInvite(false)}>Done</Button>
-            </DialogFooter>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Connect Remote Runner Dialog */}
-      <Dialog open={showConnect} onOpenChange={(open) => { setShowConnect(open); if (!open) { setNewApiKey(null); setConnectCopied(false); } }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Connect Remote Runner</DialogTitle></DialogHeader>
-          {newApiKey ? (
+          <DialogHeader><DialogTitle>Connect Runner</DialogTitle></DialogHeader>
+          {connectKey ? (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Run this on the remote machine. The command embeds a fresh API key — any previously-connected runner for this agent has been invalidated.
+                Run this on the target machine. The command embeds a fresh API key — any previously-connected runner for this agent has been invalidated.
               </p>
               <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
-                {(() => {
-                  if (!agent || !newApiKey) return "";
-                  const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
-                  const blob = typeof window !== "undefined" ? btoa(JSON.stringify(payload)) : "";
-                  return `harbour agent connect ${blob}`;
-                })()}
+                {connectCommand()}
               </div>
               <p className="text-xs text-muted-foreground">
-                Workflow gate scripts used by this agent&apos;s jobs must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
+                The command contains the agent API key. Treat it like a password. If this agent&apos;s jobs use workflow gates, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour-agent/workflows/</code> on that machine.
               </p>
               <DialogFooter>
-                <Button variant="outline" onClick={() => {
-                  if (!agent || !newApiKey) return;
-                  const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
-                  const blob = btoa(JSON.stringify(payload));
-                  navigator.clipboard.writeText(`harbour agent connect ${blob}`);
-                  setConnectCopied(true);
-                  setTimeout(() => setConnectCopied(false), 2000);
-                }}>
+                <Button variant="outline" onClick={handleCopyConnect}>
                   {connectCopied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
                 </Button>
-                <Button onClick={() => { setShowConnect(false); setNewApiKey(null); }}>Done</Button>
+                <Button onClick={() => { setShowConnect(false); setConnectKey(null); }}>Done</Button>
               </DialogFooter>
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Generate a connect command for this remote agent. This rotates the API key — any previously-connected runner will stop working until you reconnect it with the new command.
+                The local runner picks this agent up automatically. To run it on a different machine instead, generate a connect command and paste it there. This rotates the API key — any previously-connected runner will stop working until you reconnect it with the new command.
               </p>
               <DialogFooter>
                 <Button variant="ghost" onClick={() => setShowConnect(false)}>Cancel</Button>
-                <Button onClick={handleRotateKey}>Generate Command</Button>
+                <Button onClick={handleGenerateConnect}>Generate Command</Button>
               </DialogFooter>
             </div>
           )}

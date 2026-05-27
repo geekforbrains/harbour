@@ -27,8 +27,8 @@ import { StatusDot } from "@/components/app/run-status";
 import { agentColor } from "@/lib/agent-color";
 
 type Job = {
-  id: string; agent_id: string; agent_name: string; name: string; description: string | null;
-  instructions: string | null; schedule: string; workflow_command: string | null; workflow_only: number;
+  id: string; agent_id: string | null; agent_name: string | null; name: string; description: string | null;
+  instructions: string | null; schedule: string; workflow_command: string | null;
   timeout_minutes: number; model: string | null; thinking: string | null;
   title_format: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
@@ -125,7 +125,6 @@ export default function JobDetailPage() {
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   const [editWorkflowCommand, setEditWorkflowCommand] = useState("");
-  const [editWorkflowOnly, setEditWorkflowOnly] = useState(false);
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
@@ -146,7 +145,6 @@ export default function JobDetailPage() {
         instructions: editInstructions,
         schedule: serializeSchedule(editSchedule),
         workflowCommand: editWorkflowCommand || undefined,
-        workflowOnly: editWorkflowCommand ? editWorkflowOnly : false,
         timeoutMinutes: editTimeout,
         model: editModel || "",
         thinking: editThinking || "",
@@ -215,6 +213,9 @@ export default function JobDetailPage() {
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   if (!job) return <div className="text-sm text-muted-foreground py-12 text-center">Job not found.</div>;
 
+  // v2 dropped jobs.workflow_only — a job is workflow-only iff it has no agent.
+  const isWorkflowOnly = !job.agent_id;
+
   return (
     <div className="space-y-6">
       <BackLink href="/jobs" label="Jobs" />
@@ -234,7 +235,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -274,7 +275,7 @@ export default function JobDetailPage() {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Workflow</p>
-            {job.workflow_only ? (
+            {isWorkflowOnly ? (
               <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow Only</span>
             ) : (
               <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow + Agent</span>
@@ -486,12 +487,8 @@ export default function JobDetailPage() {
               <Label>Workflow Command</Label>
               <Input value={editWorkflowCommand} onChange={e => setEditWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" />
               <p className="text-xs text-muted-foreground">Exit 0 = success, 77 = skip, other = fail.</p>
-              {editWorkflowCommand && (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={editWorkflowOnly} onChange={e => setEditWorkflowOnly(e.target.checked)} className="rounded" />
-                  <span className="text-xs text-muted-foreground">Workflow only — no LLM</span>
-                </label>
-              )}
+              {/* v2: whether a job is workflow-only is determined by absence of
+                  an agent, set at creation — not an editable toggle here. */}
             </div>
             <div className="space-y-2">
               <Label>Timeout (minutes)</Label>
@@ -556,7 +553,7 @@ export default function JobDetailPage() {
       />
 
       {/* Trigger Dialog */}
-      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflowOnly={!!job.workflow_only} />
+      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflowOnly={isWorkflowOnly} />
     </div>
   );
 }

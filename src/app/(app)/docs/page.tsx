@@ -7,16 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FileText, Plus, Pin, Link2 } from "lucide-react";
+import { FileText, Plus, Pin } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ScopePrompt } from "@/components/app/scope-prompt";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useDocs, useCreateDoc } from "@/lib/hooks/use-docs";
-import { useProjectMutations } from "@/lib/hooks/use-projects";
 import { apiFetch } from "@/lib/api/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { qk } from "@/lib/api/keys";
-import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type Doc = { id: string; title: string; pinned: number; updated_at: number };
 
@@ -24,11 +23,9 @@ export default function DocsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
-  const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const activeProjectId = useActiveProjectId();
+  const activeOrgId = useActiveOrgId();
   const createDoc = useCreateDoc();
-  const { link } = useProjectMutations();
 
   const { data: docsData = [], isLoading: loading } = useDocs();
   const docs = docsData as Doc[];
@@ -37,10 +34,9 @@ export default function DocsPage() {
     e.preventDefault();
     if (!newTitle.trim()) return;
     try {
+      // Created directly in the active scope (org + project) by useCreateDoc;
+      // no separate link step in v2.
       const doc = await createDoc.mutateAsync({ title: newTitle });
-      if (activeProjectId) {
-        await link.mutateAsync({ projectId: activeProjectId, type: "doc", targetId: doc.id });
-      }
       router.push(`/docs/${doc.id}?edit=1`);
     } catch {
       // ignore; stays on page
@@ -67,16 +63,15 @@ export default function DocsPage() {
           <p className="text-sm text-muted-foreground mt-1">Shared knowledge linked to jobs.</p>
         </div>
         <div className="flex gap-2">
-          {activeProjectId && (
-            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
-              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
-            </Button>
-          )}
+          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+              project_id reparent route exists; new docs land in the active scope. */}
           <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
         </div>
       </div>
 
-      {docs.length === 0 ? (
+      {!activeOrgId ? (
+        <ScopePrompt need="org" entity="docs" />
+      ) : docs.length === 0 ? (
         <EmptyState large icon={<FileText className="h-10 w-10 text-muted-foreground/40" />}>
           No docs yet.
         </EmptyState>
@@ -116,19 +111,6 @@ export default function DocsPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {activeProjectId && (
-        <ProjectLinkDialog
-          open={showLinkExisting}
-          onOpenChange={setShowLinkExisting}
-          projectId={activeProjectId}
-          type="doc"
-          queryKey="docs"
-          fetchAllUrl="/api/docs"
-          icon={FileText}
-          title="Add Existing Doc"
-        />
-      )}
     </div>
   );
 }

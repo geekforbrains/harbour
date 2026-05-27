@@ -13,6 +13,7 @@ import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
+import { useUpdateOrg } from "@/lib/hooks/use-orgs";
 
 type Settings = Record<string, string>;
 
@@ -157,8 +158,9 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const { projects, activeProjectId, setActiveProjectId } = useApp();
+  const { projects, activeProjectId, setActiveProjectId, activeOrgId, timezone } = useApp();
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null;
+  const updateOrg = useUpdateOrg(activeOrgId);
 
   const [tzSearch, setTzSearch] = useState("");
   const [tzOpen, setTzOpen] = useState(false);
@@ -271,10 +273,12 @@ export default function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   }
 
-  if (isLoading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
+  async function updateTimezone(tz: string) {
+    if (!activeOrgId) return;
+    await updateOrg.mutateAsync({ settings: { timezone: tz } });
+  }
 
-  const timezone = settings?.timezone || "";
-  const signupEnabled = settings?.signup_enabled !== "false";
+  if (isLoading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 
   return (
     <div className="space-y-6">
@@ -313,40 +317,42 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Timezone */}
-        <div className="space-y-2">
-          <Label>Timezone</Label>
-          <p className="text-xs text-muted-foreground">Used for scheduling jobs and displaying times.</p>
-          <div className="relative">
-            <Input
-              value={tzOpen ? tzSearch : timezone}
-              onChange={e => { setTzSearch(e.target.value); setTzOpen(true); }}
-              onFocus={() => { setTzSearch(""); setTzOpen(true); }}
-              onBlur={() => setTimeout(() => setTzOpen(false), 200)}
-              placeholder="Search timezones..."
-              className="font-mono text-sm"
-            />
-            {tzOpen && filteredTimezones.length > 0 && (
-              <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-md">
-                {filteredTimezones.slice(0, 50).map(tz => (
-                  <button
-                    key={tz}
-                    type="button"
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={() => {
-                      updateSetting("timezone", tz);
-                      setTzOpen(false);
-                      setTzSearch("");
-                    }}
-                    className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-accent transition-colors ${tz === timezone ? "bg-accent/50 font-medium" : ""}`}
-                  >
-                    {tz}
-                  </button>
-                ))}
-              </div>
-            )}
+        {/* Timezone — per-org setting (v2: stored in the org's settings JSON). */}
+        {activeOrgId && (
+          <div className="space-y-2">
+            <Label>Timezone</Label>
+            <p className="text-xs text-muted-foreground">Used for scheduling jobs and displaying times in this organization.</p>
+            <div className="relative">
+              <Input
+                value={tzOpen ? tzSearch : timezone}
+                onChange={e => { setTzSearch(e.target.value); setTzOpen(true); }}
+                onFocus={() => { setTzSearch(""); setTzOpen(true); }}
+                onBlur={() => setTimeout(() => setTzOpen(false), 200)}
+                placeholder="Search timezones..."
+                className="font-mono text-sm"
+              />
+              {tzOpen && filteredTimezones.length > 0 && (
+                <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-md">
+                  {filteredTimezones.slice(0, 50).map(tz => (
+                    <button
+                      key={tz}
+                      type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => {
+                        updateTimezone(tz);
+                        setTzOpen(false);
+                        setTzSearch("");
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-accent transition-colors ${tz === timezone ? "bg-accent/50 font-medium" : ""}`}
+                    >
+                      {tz}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Recent Runs Limit */}
         <div className="space-y-2">
@@ -419,20 +425,6 @@ export default function SettingsPage() {
 
         {/* Video Processing */}
         <VideoProcessingSettings settings={settings || {}} updateSetting={updateSetting} />
-
-        {/* Signup */}
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <Label>Allow Signup</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">When disabled, new users cannot register.</p>
-          </div>
-          <button
-            onClick={() => updateSetting("signup_enabled", signupEnabled ? "false" : "true")}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${signupEnabled ? "bg-primary" : "bg-muted"}`}
-          >
-            <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${signupEnabled ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`} />
-          </button>
-        </div>
 
         {/* Admin API Keys */}
         <div className="rounded-lg border p-4 space-y-4">

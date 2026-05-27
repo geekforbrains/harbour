@@ -39,8 +39,8 @@ type Activity = {
 type Run = {
   id: string; job_id: string; agent_id: string | null; status: string;
   title: string | null;
-  job_name: string; agent_name: string | null; agent_type: string | null; agent_cli: string | null;
-  session_id: string | null; session_cwd: string | null; one_off: number; job_workflow_only: number;
+  job_name: string; agent_name: string | null; agent_cli: string | null;
+  session_id: string | null; session_cwd: string | null;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
   activity: Activity[];
@@ -528,7 +528,7 @@ export default function RunDetailPage() {
   // Kill button should only be clickable once per run — derive the visible
   // "killing" state from the server flag so it survives page refreshes too.
   const killInFlight = killing || !!run.kill_requested_at;
-  const canKill = run.status === "running" && run.agent_type === "harbour";
+  const canKill = run.status === "running" && !!run.agent_id;
 
   return (
     <div className="space-y-6">
@@ -718,8 +718,8 @@ export default function RunDetailPage() {
         </form>
       )}
 
-      {/* Live Output (harbour agents only, not workflow-only runs) */}
-      {run.agent_type === "harbour" && !run.job_workflow_only && (
+      {/* Live Output (agent runs only — workflow-only runs have no agent). */}
+      {run.agent_id && (
         <LiveOutput
           runId={run.id}
           status={run.status}

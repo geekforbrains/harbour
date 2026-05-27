@@ -7,27 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { KeyRound, Plus, Pin, Link2 } from "lucide-react";
+import { KeyRound, Plus, Pin } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ScopePrompt } from "@/components/app/scope-prompt";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useEnvVars, useCreateEnvVar } from "@/lib/hooks/use-env-vars";
-import { useProjectMutations } from "@/lib/hooks/use-projects";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
-import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
 
 export default function EnvVarsPage() {
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
-  const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
-  const activeProjectId = useActiveProjectId();
+  const activeOrgId = useActiveOrgId();
   const createEnvVar = useCreateEnvVar();
-  const { link } = useProjectMutations();
 
   const { data: envVarsData = [], isLoading: loading } = useEnvVars();
   const envVars = envVarsData as EnvVar[];
@@ -36,10 +33,8 @@ export default function EnvVarsPage() {
     e.preventDefault();
     if (!newName.trim() || !newValue.trim()) return;
     try {
-      const envVar = await createEnvVar.mutateAsync({ name: newName.trim(), value: newValue });
-      if (activeProjectId) {
-        await link.mutateAsync({ projectId: activeProjectId, type: "env-var", targetId: envVar.id });
-      }
+      // Created directly in the active scope (org + project); no link step in v2.
+      await createEnvVar.mutateAsync({ name: newName.trim(), value: newValue });
       setShowNew(false);
       setNewName("");
       setNewValue("");
@@ -68,16 +63,15 @@ export default function EnvVarsPage() {
           <p className="text-sm text-muted-foreground mt-1">Encrypted variables injected at runtime.</p>
         </div>
         <div className="flex gap-2">
-          {activeProjectId && (
-            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
-              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
-            </Button>
-          )}
+          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+              project_id reparent route exists; new env vars land in the active scope. */}
           <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
         </div>
       </div>
 
-      {envVars.length === 0 ? (
+      {!activeOrgId ? (
+        <ScopePrompt need="org" entity="env vars" />
+      ) : envVars.length === 0 ? (
         <EmptyState large icon={<KeyRound className="h-10 w-10 text-muted-foreground/40" />}>
           No env vars yet.
         </EmptyState>
@@ -121,20 +115,6 @@ export default function EnvVarsPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {activeProjectId && (
-        <ProjectLinkDialog
-          open={showLinkExisting}
-          onOpenChange={setShowLinkExisting}
-          projectId={activeProjectId}
-          type="env-var"
-          queryKey="env-vars"
-          fetchAllUrl="/api/env-vars"
-          icon={KeyRound}
-          title="Add Existing Env Var"
-          nameClass="font-mono"
-        />
-      )}
     </div>
   );
 }

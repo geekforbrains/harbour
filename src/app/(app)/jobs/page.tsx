@@ -7,24 +7,26 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { ScopePrompt } from "@/components/app/scope-prompt";
 import { statusStyle } from "@/lib/status";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useJobs } from "@/lib/hooks/use-jobs";
-import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
-import { Link2 } from "lucide-react";
 
 type Job = {
   id: string; agent_id: string | null; agent_name: string | null; name: string;
   description: string | null; schedule: string;
   active: number; total_runs: number; skipped_runs: number; waiting_runs: number; pending_runs: number;
-  last_run_at: number | null; workflow_command: string | null; workflow_only: number;
+  last_run_at: number | null; workflow_command: string | null;
 };
+
+// v2 dropped the jobs.workflow_only column — a job is workflow-only iff it has
+// no agent. (workflow + agent = workflow_command set AND agent_id present.)
+const isWorkflowOnly = (j: Job) => !j.agent_id;
 
 export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
-  const [showLinkExisting, setShowLinkExisting] = useState(false);
   const activeProjectId = useActiveProjectId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
@@ -52,7 +54,7 @@ export default function JobsPage() {
                     <span className="flex items-center gap-1"><Bot className="h-3 w-3" /> {job.agent_name}</span>
                   )}
                   <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}</span>
-                  {job.workflow_command && !job.workflow_only && (
+                  {job.workflow_command && !isWorkflowOnly(job) && (
                     <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">workflow + agent</span>
                   )}
                   {(job.total_runs > 0 || job.skipped_runs > 0) && <span className="hidden sm:inline">{job.total_runs} runs{job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}</span>}
@@ -83,42 +85,28 @@ export default function JobsPage() {
           <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
         </div>
         <div className="flex gap-2">
-          {activeProjectId && (
-            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
-              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
-            </Button>
-          )}
+          {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+              project_id reparent route exists; new jobs land in the active project. */}
           <Button onClick={() => setShowCreate(true)} size="sm">
             <Plus className="h-4 w-4 mr-1.5" /> New Job
           </Button>
         </div>
       </div>
 
-      {jobs.length === 0 ? (
+      {!activeProjectId ? (
+        <ScopePrompt need="project" entity="jobs" />
+      ) : jobs.length === 0 ? (
         <EmptyState large icon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}>
           No jobs yet. Create one to get started.
         </EmptyState>
       ) : (
         <>
-          {renderJobSection("Agent Jobs", jobs.filter(j => !j.workflow_only))}
-          {renderJobSection("Workflow Jobs", jobs.filter(j => !!j.workflow_only))}
+          {renderJobSection("Agent Jobs", jobs.filter(j => !isWorkflowOnly(j)))}
+          {renderJobSection("Workflow Jobs", jobs.filter(j => isWorkflowOnly(j)))}
         </>
       )}
 
       <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />
-
-      {activeProjectId && (
-        <ProjectLinkDialog
-          open={showLinkExisting}
-          onOpenChange={setShowLinkExisting}
-          projectId={activeProjectId}
-          type="job"
-          queryKey="jobs"
-          fetchAllUrl="/api/jobs"
-          icon={Briefcase}
-          title="Add Existing Job"
-        />
-      )}
     </div>
   );
 }
