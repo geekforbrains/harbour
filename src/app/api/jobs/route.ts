@@ -17,6 +17,16 @@ export const POST = withProjectAuth(
     const projectId = req.nextUrl.searchParams.get("projectId")!;
     const body = await req.json();
     const { name, description, schedule, workflowCommand, docIds, envVarIds } = body;
+    // This endpoint only creates agentless workflow-only jobs. Agent jobs (and
+    // combined agent+workflow-gate jobs) go through POST /api/agents/:id/jobs,
+    // which enforces agent-scoped auth. Reject agentId here rather than silently
+    // dropping it and creating a surprise agentless job.
+    if (body.agentId || body.agent_id) {
+      return NextResponse.json(
+        { error: "To create an agent or combined agent+workflow job, POST to /api/agents/:id/jobs." },
+        { status: 400 }
+      );
+    }
     if (!name || !schedule || !workflowCommand) {
       return NextResponse.json({ error: "name, schedule, and workflowCommand are required" }, { status: 400 });
     }

@@ -33,6 +33,8 @@ import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
 import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
+import { POST as jobsPOST } from "@/app/api/jobs/route";
+import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -359,6 +361,34 @@ describe("POST /api/runs/[id]/activity (viewer may comment)", () => {
     });
     const res = await activityPOST(req, ctx({ id: run.id }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("job creation: workflow-only vs agent/combined", () => {
+  it("POST /api/jobs rejects an agentId (points to the agent endpoint)", async () => {
+    const { org, project, editor, agent } = fixture();
+    void org;
+    const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "X", schedule: '{"every":60}', workflowCommand: "echo hi", agentId: agent.id }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await jobsPOST(req, ctx({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/agents/:id/jobs creates a combined agent+gate job", async () => {
+    const { editor, agent } = fixture();
+    const req = userReq(editor.id, "http://x/", {
+      method: "POST",
+      body: JSON.stringify({ name: "Combined", schedule: '{"every":60}', workflowCommand: "exit 77" }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await agentJobsPOST(req, ctx({ id: agent.id }));
+    expect(res.status).toBe(201);
+    const job = await res.json();
+    expect(job.agent_id).toBe(agent.id);
+    expect(job.workflow_command).toBe("exit 77");
   });
 });
 
