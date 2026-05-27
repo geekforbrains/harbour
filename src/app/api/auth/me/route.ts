@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIdentityFromRequest } from "@/lib/auth";
-import { getUserById, getAgentById, listOrgsForUser } from "@/lib/db/queries";
+import { getUserById, getAgentById, listOrgsForUser, listOrgs } from "@/lib/db/queries";
 
 /**
  * Identity echo. Accepts any authenticated caller (user session, admin key, or
@@ -15,7 +15,9 @@ export const GET = async (req: NextRequest) => {
 
   if (identity.type === "user") {
     const user = getUserById(identity.userId);
-    const orgs = listOrgsForUser(identity.userId);
+    // Instance admins have no memberships by design but can access every org,
+    // so surface all orgs to them; regular users see only their memberships.
+    const orgs = user?.is_instance_admin ? listOrgs() : listOrgsForUser(identity.userId);
     return NextResponse.json({ type: "user", user, orgs });
   }
 
