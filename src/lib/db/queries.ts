@@ -1,4 +1,5 @@
 export * from "./users";
+export * from "./set-password-tokens";
 export * from "./orgs";
 export * from "./access";
 export * from "./agents";

@@ -1,13 +1,43 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
-import { hashSync, compareSync } from "bcryptjs";
+import { hashSync, verifySync, type Algorithm } from "@node-rs/argon2";
+
+// @node-rs/argon2 exports Algorithm as a `const enum`, which can't be referenced
+// as a value under isolatedModules. Argon2id is the numeric value 2; pin it with
+// the type so the options object stays correctly typed.
+const ARGON2ID: Algorithm = 2 as Algorithm;
+
+// ─── Password hashing (argon2id) ──────────────────────────────────────────────
+
+/**
+ * argon2id parameters. These are the encoded-string output's defaults from
+ * @node-rs/argon2 (m=19456 KiB, t=2, p=1) — a sensible interactive-login cost.
+ * We use the synchronous, self-describing PHC-string API so a stored hash
+ * carries its own parameters and the CLI bootstrap (which hashes the first
+ * instance admin) stays byte-compatible with this verifier.
+ */
+const ARGON2_OPTS = { algorithm: ARGON2ID } as const;
+
+/** Hash a plaintext password into a self-describing argon2id PHC string. */
+export function hashPassword(password: string): string {
+  return hashSync(password, ARGON2_OPTS);
+}
+
+/** Verify a plaintext password against a stored argon2id PHC string. */
+export function verifyPassword(hash: string, password: string): boolean {
+  try {
+    return verifySync(hash, password, ARGON2_OPTS);
+  } catch {
+    return false;
+  }
+}
 
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 /**
  * Create a user. In v2, an admin may create a user with no password yet
- * (password_hash stays NULL until a set-password link is consumed — that flow
- * lands in Phase 2). Passing a password hashes it immediately.
+ * (password_hash stays NULL until a set-password link is consumed). Passing a
+ * password hashes it immediately with argon2id.
  */
 export function createUser(
   email: string,
@@ -17,7 +47,7 @@ export function createUser(
 ) {
   const db = getDb();
   const id = uuid();
-  const passwordHash = password === null ? null : hashSync(password, 10);
+  const passwordHash = password === null ? null : hashPassword(password);
   db.prepare(
     `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin) VALUES (?, ?, ?, ?, ?)`
   ).run(id, email, passwordHash, displayName, opts.isInstanceAdmin ? 1 : 0);
@@ -31,7 +61,7 @@ export function authenticateUser(email: string, password: string) {
   // A null password_hash means the set-password link hasn't been consumed yet —
   // the account can't log in with a password.
   if (!user.password_hash) return null;
-  if (!compareSync(password, user.password_hash)) return null;
+  if (!verifySync(user.password_hash, password)) return null;
   return {
     id: user.id,
     email: user.email,
@@ -42,7 +72,7 @@ export function authenticateUser(email: string, password: string) {
 
 export function setUserPassword(id: string, password: string) {
   const db = getDb();
-  const passwordHash = hashSync(password, 10);
+  const passwordHash = hashSync(password);
   db.prepare(`UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(passwordHash, id);
   return getUserById(id);
 }

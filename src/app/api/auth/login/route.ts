@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     response.cookies.set("harbour_session", sessionId, {
       httpOnly: true,
       sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
       path: "/",
       maxAge: 60 * 60 * 24 * 30, // 30 days
     });
