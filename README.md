@@ -43,6 +43,8 @@ If you ever want a single agent running multiple jobs concurrently, that's a del
 
 ## Getting Started
 
+Harbour is multi-tenant: an **instance admin** owns the install, and work is organized into **orgs** → **projects**. There is no web signup — the first admin is created from the shell (the operator has host access, so first-run setup belongs there, with no unauthenticated web route to lock down). After that, admins create orgs, projects, and users from the dashboard.
+
 ### With Docker (recommended)
 
 Only requirement is Docker.
@@ -53,7 +55,13 @@ cd harbour
 make run
 ```
 
-Visit [http://localhost:3030](http://localhost:3030) and create your first account. All state (DB, uploads, encryption key) lives in `./data` — back up that directory and you have a snapshot of everything.
+Create the instance admin (one-time, interactive — runs inside the container):
+
+```bash
+docker compose exec harbour node bin/harbour.mjs setup
+```
+
+Then visit [http://localhost:3030](http://localhost:3030), log in with those credentials, and create your first org and project. All state (DB, uploads, encryption key) lives in `./data` — back up that directory and you have a snapshot of everything.
 
 ```bash
 make logs     # follow logs
@@ -77,10 +85,13 @@ git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
+npm run harbour -- setup   # one-time: create the instance admin (interactive)
 npm start
 ```
 
-Visit [http://localhost:3000](http://localhost:3000) and create your first account.
+`harbour setup` prompts for an email, display name, and password, and writes the admin straight to the database — it works whether or not the server is running. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` does the same non-interactively.)
+
+Then visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project. Once an admin exists, `setup` refuses to run again — add more users from the dashboard's **Users** page, or pass `--force` to add another admin.
 
 ### Deploy to DigitalOcean
 
@@ -258,17 +269,14 @@ Workflow-only jobs don't require an agent — they're standalone scheduled comma
 # Receives run payload on stdin, prints result to stdout
 ```
 
-## Projects
+## Orgs & Projects
 
-Projects are an optional way to organize your work. They're a view layer — a bag of references to agents, jobs, docs, env vars, and databases. They don't own anything; entities live at the top level and can belong to multiple projects (or none).
+Harbour is multi-tenant. The hierarchy is **org → project**, and every agent, job, doc, env var, and database lives inside a project. An **instance admin** (created by `harbour setup`) owns the install and can see and manage every org; other users are scoped to the orgs they belong to.
 
-- Create projects from the sidebar dropdown (desktop) or the header (mobile)
-- Switch between projects to filter all pages, or view "All Projects" to see everything
-- When viewing a project, "Add Existing" buttons let you attach existing items
-- Creating new items while in a project auto-links them
-- Adding a job to a project auto-links its agent, docs, env vars, and databases
-- Manage projects (rename, delete) in Settings while viewing a project
-- Deleting a project only removes the grouping — nothing else is affected
+- The **instance admin** is created from the shell during first-run setup. Additional users are created from the dashboard's **Users** page.
+- **Orgs** are the top-level tenant boundary — created and switched from the org switcher in the sidebar. Resources never cross org lines.
+- **Projects** group the actual work within an org. Create and switch projects from the sidebar dropdown (desktop) or the header (mobile); everything you create while a project is active belongs to that project.
+- Switch the active org/project to scope every page; deleting a project removes the project and the work scoped to it.
 
 ## Captain
 
@@ -284,13 +292,13 @@ Projects are an optional way to organize your work. They're a view layer — a b
 ## Dashboard
 
 - **Captain** — in-browser chat with a local CLI tool (see above) for managing the harbour.
-- **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
+- **Runs** — running, scheduled, waiting, pending, and recent runs, with full filterable history. Create recurring jobs from a unified dialog.
 - **Jobs** — split into Agent Jobs and Workflow Jobs. Shows run/skip counts, schedules, and linked docs/env vars.
 - **Agents** — list of agents with jobs, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
 - **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
 - **Env Vars** — encrypted variables (API keys, tokens) injected at runtime. Pin to auto-attach to all new jobs.
-- **Settings** — system timezone, signup control, project management, Captain configuration, and admin API keys.
+- **Settings** — org timezone, user & org management (instance admin), Captain configuration, and admin API keys.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
 
