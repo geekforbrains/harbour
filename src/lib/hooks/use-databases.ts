@@ -18,11 +18,12 @@ export function useDatabases(scope?: Scope, opts?: { enabled?: boolean }) {
   });
 }
 
-export function useDatabase(id: string, opts?: { enabled?: boolean }) {
+export function useDatabase(id: string, opts?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery({
     queryKey: qk.databases.detail(id),
     queryFn: () => apiFetch(`/api/databases/${id}`),
     enabled: (opts?.enabled ?? true) && !!id,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 
@@ -30,13 +31,14 @@ export function useDatabaseRows(
   id: string,
   page: number,
   pageSize: number,
-  opts?: { enabled?: boolean }
+  opts?: { enabled?: boolean; refetchInterval?: number }
 ) {
   return useQuery({
     queryKey: qk.databases.rows(id, page),
     queryFn: () =>
       apiFetch(`/api/databases/${id}/rows?limit=${pageSize}&offset=${page * pageSize}`),
     enabled: (opts?.enabled ?? true) && !!id,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 

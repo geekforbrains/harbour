@@ -83,6 +83,34 @@ export function useDeleteJob() {
   });
 }
 
+/** Link/unlink docs and env vars to a job. All invalidate the job detail. */
+export function useJobLinkMutations(id: string) {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: qk.jobs.detail(id) });
+  return {
+    linkDoc: useMutation({
+      mutationFn: (docId: string) =>
+        apiFetch(`/api/jobs/${id}/docs`, { method: "POST", body: { docId } }),
+      onSuccess: invalidate,
+    }),
+    unlinkDoc: useMutation({
+      mutationFn: (docId: string) =>
+        apiFetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" }),
+      onSuccess: invalidate,
+    }),
+    linkEnvVar: useMutation({
+      mutationFn: (envVarId: string) =>
+        apiFetch(`/api/jobs/${id}/env-vars`, { method: "POST", body: { envVarId } }),
+      onSuccess: invalidate,
+    }),
+    unlinkEnvVar: useMutation({
+      mutationFn: (envVarId: string) =>
+        apiFetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" }),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
 /** Trigger a job to create an immediate run. */
 export function useTriggerJob() {
   const qc = useQueryClient();

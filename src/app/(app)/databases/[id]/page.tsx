@@ -3,13 +3,13 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/app/back-link";
 import { Briefcase, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { useDatabase, useDatabaseRows, useDeleteDatabase } from "@/lib/hooks/use-databases";
 
 type ColumnInfo = { cid: number; name: string; type: string; notnull: number; dflt_value: any; pk: number };
 type JobRef = { id: string; name: string };
@@ -43,32 +43,24 @@ export default function DatabaseDetailPage() {
   const [page, setPage] = useState(0);
   const pageSize = 50;
 
-  const { data: db = null, isLoading: dbLoading } = useQuery<DatabaseDetail | null>({
-    queryKey: ["databases", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/databases/${id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: dbData, isLoading: dbLoading } = useDatabase(id, { refetchInterval: 5000 });
+  const db = (dbData as DatabaseDetail | undefined) ?? null;
 
-  const { data: rowsData = null, isLoading: rowsLoading } = useQuery<RowsResponse | null>({
-    queryKey: ["databases", id, "rows", page],
-    queryFn: async () => {
-      const res = await fetch(`/api/databases/${id}/rows?limit=${pageSize}&offset=${page * pageSize}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: rowsRaw, isLoading: rowsLoading } = useDatabaseRows(id, page, pageSize, { refetchInterval: 5000 });
+  const rowsData = (rowsRaw as RowsResponse | undefined) ?? null;
+
+  const deleteDatabase = useDeleteDatabase();
 
   const loading = dbLoading || rowsLoading;
 
   async function handleDelete() {
     if (!confirm(`Delete "${db?.name}"? The table and all its data will be permanently removed.`)) return;
-    const res = await fetch(`/api/databases/${id}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to delete database"); return; }
+    try {
+      await deleteDatabase.mutateAsync(id);
+    } catch {
+      alert("Failed to delete database");
+      return;
+    }
     router.push("/databases");
   }
 

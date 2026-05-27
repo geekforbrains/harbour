@@ -18,11 +18,12 @@ export function useEnvVars(scope?: Scope, opts?: { enabled?: boolean }) {
   });
 }
 
-export function useEnvVar(id: string, opts?: { enabled?: boolean }) {
+export function useEnvVar(id: string, opts?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery({
     queryKey: qk.envVars.detail(id),
     queryFn: () => apiFetch(`/api/env-vars/${id}`),
     enabled: (opts?.enabled ?? true) && !!id,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 

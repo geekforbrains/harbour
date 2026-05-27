@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,55 +9,51 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { BackLink } from "@/components/app/back-link";
 import { KeyRound, Eye, EyeOff, Pin, Pencil, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
+import { useEnvVar, useEnvVarMutations } from "@/lib/hooks/use-env-vars";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
 
 export default function EnvVarDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const queryClient = useQueryClient();
 
   const [showValue, setShowValue] = useState(false);
   const [decryptedValue, setDecryptedValue] = useState<string | null>(null);
-  const [loadingValue, setLoadingValue] = useState(false);
 
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editValue, setEditValue] = useState("");
   const [showEditValue, setShowEditValue] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   const [showDelete, setShowDelete] = useState(false);
 
-  const { data: envVar = null, isLoading: loading } = useQuery<EnvVar | null>({
-    queryKey: ["env-vars", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/env-vars/${id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: envVarData, isLoading: loading } = useEnvVar(id, { refetchInterval: 5000 });
+  const envVar = (envVarData as EnvVar | undefined) ?? null;
+
+  const { update, remove, togglePin, revealValue } = useEnvVarMutations(id);
+  const saving = update.isPending;
+  const loadingValue = revealValue.isPending;
 
   async function handleReveal() {
     if (decryptedValue !== null) {
       setShowValue(!showValue);
       return;
     }
-    setLoadingValue(true);
-    const res = await fetch(`/api/env-vars/${id}/value`);
-    if (res.ok) {
-      const data = await res.json();
+    try {
+      const data = await revealValue.mutateAsync();
       setDecryptedValue(data.value);
       setShowValue(true);
+    } catch {
+      // leave value hidden on failure
     }
-    setLoadingValue(false);
   }
 
   async function handleTogglePin() {
-    const res = await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
-    if (!res.ok) { alert("Failed to toggle pin"); return; }
-    queryClient.invalidateQueries({ queryKey: ["env-vars", id] });
+    try {
+      await togglePin.mutateAsync();
+    } catch {
+      alert("Failed to toggle pin");
+    }
   }
 
   function startEditing() {
@@ -70,31 +65,32 @@ export default function EnvVarDetailPage() {
   }
 
   async function handleSave() {
-    setSaving(true);
     const body: Record<string, string> = {};
     if (editName !== envVar?.name) body.name = editName;
     if (editValue) body.value = editValue;
     if (Object.keys(body).length > 0) {
-      const res = await fetch(`/api/env-vars/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) { setSaving(false); alert("Failed to save env var"); return; }
+      try {
+        await update.mutateAsync(body);
+      } catch {
+        alert("Failed to save env var");
+        return;
+      }
       // Clear cached decrypted value if value was changed
       if (editValue) {
         setDecryptedValue(null);
         setShowValue(false);
       }
-      queryClient.invalidateQueries({ queryKey: ["env-vars", id] });
     }
-    setSaving(false);
     setEditing(false);
   }
 
   async function handleDelete() {
-    const res = await fetch(`/api/env-vars/${id}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to delete env var"); return; }
+    try {
+      await remove.mutateAsync();
+    } catch {
+      alert("Failed to delete env var");
+      return;
+    }
     router.push("/env-vars");
   }
 

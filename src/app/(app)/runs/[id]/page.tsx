@@ -6,6 +6,8 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRun, useRunMutations } from "@/lib/hooks/use-runs";
+import { apiFetch, ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
@@ -78,13 +80,10 @@ function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: s
     async function init() {
       // Fetch existing events first
       try {
-        const res = await fetch(`/api/runs/${runId}/output`);
-        if (res.ok && !cancelled) {
-          const data = await res.json() as OutputEvent[];
-          if (data.length > 0) {
-            setEvents(data);
-            lastIdRef.current = data[data.length - 1].id;
-          }
+        const data = await apiFetch<OutputEvent[]>(`/api/runs/${runId}/output`);
+        if (!cancelled && data.length > 0) {
+          setEvents(data);
+          lastIdRef.current = data[data.length - 1].id;
         }
       } catch { /* ignore */ }
 
@@ -284,10 +283,11 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   const { data: processing, error: procError } = useQuery<ProcessingRecord | null>({
     queryKey: ["processing", attachment.id],
     queryFn: async () => {
-      const res = await fetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`);
-      if (res.status === 404) return null;
-      if (!res.ok) return null;
-      return res.json();
+      try {
+        return await apiFetch<ProcessingRecord>(`/api/runs/${runId}/attachments/${attachment.id}/processing`);
+      } catch {
+        return null;
+      }
     },
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -299,9 +299,11 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   const { data: screenshotsData } = useQuery<{ screenshots: Screenshot[]; total: number; pages: number }>({
     queryKey: ["screenshots", attachment.id],
     queryFn: async () => {
-      const res = await fetch(`/api/runs/${runId}/attachments/${attachment.id}/screenshots?limit=20`);
-      if (!res.ok) return { screenshots: [], total: 0, pages: 0 };
-      return res.json();
+      try {
+        return await apiFetch<{ screenshots: Screenshot[]; total: number; pages: number }>(`/api/runs/${runId}/attachments/${attachment.id}/screenshots?limit=20`);
+      } catch {
+        return { screenshots: [], total: 0, pages: 0 };
+      }
     },
     enabled: processing?.status === "done" && screenshotsOpen,
   });
@@ -309,16 +311,20 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   const { data: transcript } = useQuery<string>({
     queryKey: ["transcript", attachment.id],
     queryFn: async () => {
-      const res = await fetch(`/api/runs/${runId}/attachments/${attachment.id}/transcript`);
-      if (!res.ok) return "";
-      return res.text();
+      try {
+        return await apiFetch<string>(`/api/runs/${runId}/attachments/${attachment.id}/transcript`);
+      } catch {
+        return "";
+      }
     },
     enabled: processing?.status === "done" && !!processing?.transcript_path && transcriptOpen,
   });
 
   async function handleProcess() {
     setTriggering(true);
-    await fetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`, { method: "POST" });
+    try {
+      await apiFetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`, { method: "POST" });
+    } catch { /* ignore */ }
     queryClient.invalidateQueries({ queryKey: ["processing", attachment.id] });
     setTriggering(false);
   }
@@ -413,7 +419,6 @@ const MANAGEABLE_STATUSES = ["waiting", "done", "failed", "skipped", "killed"];
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -421,15 +426,9 @@ export default function RunDetailPage() {
   const [dragging, setDragging] = useState(false);
   const composerRef = useRef<AttachmentComposerHandle>(null);
 
-  const { data: run = null, isLoading: loading } = useQuery<Run | null>({
-    queryKey: ["runs", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/runs/${id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data, isLoading: loading } = useRun(id, { refetchInterval: 5000 });
+  const run = (data as Run | undefined) ?? null;
+  const mutations = useRunMutations(id);
 
   // Clear local killing state once the runner finalizes and the run is no
   // longer 'running' — keeps the button honest across refreshes.
@@ -445,15 +444,10 @@ export default function RunDetailPage() {
     if (!trimmed && attachmentIds.length === 0) return;
 
     setSending(true);
-    const res = await fetch(`/api/runs/${id}/activity`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: trimmed, attachment_ids: attachmentIds }),
-    });
-    if (res.ok) {
+    try {
+      await mutations.addActivity.mutateAsync({ content: trimmed, attachment_ids: attachmentIds });
       setMessage("");
-      queryClient.invalidateQueries({ queryKey: ["runs", id] });
-    }
+    } catch { /* ignore */ }
     setSending(false);
   }
 
@@ -487,20 +481,20 @@ export default function RunDetailPage() {
 
   async function handleRetry() {
     setRetrying(true);
-    const res = await fetch(`/api/runs/${id}/retry`, { method: "POST" });
-    if (res.ok) queryClient.invalidateQueries({ queryKey: ["runs", id] });
+    try {
+      await mutations.retry.mutateAsync();
+    } catch { /* ignore */ }
     setRetrying(false);
   }
 
   async function handleKill() {
     if (!confirm("Kill this run? The CLI session will be saved so you can resume it with a comment.")) return;
     setKilling(true);
-    const res = await fetch(`/api/runs/${id}/kill`, { method: "POST" });
-    if (res.ok) {
-      queryClient.invalidateQueries({ queryKey: ["runs", id] });
-    } else {
-      const body = await res.json().catch(() => ({ error: "Failed to kill run" }));
-      alert(body.error || "Failed to kill run");
+    try {
+      await mutations.kill.mutateAsync();
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.errorMessage : "Failed to kill run";
+      alert(msg || "Failed to kill run");
       setKilling(false);
     }
     // Leave `killing=true` while run.kill_requested_at is set — clears when
@@ -508,18 +502,17 @@ export default function RunDetailPage() {
   }
 
   async function handleChangeStatus(newStatus: string) {
-    const res = await fetch(`/api/runs/${id}/status`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (res.ok) queryClient.invalidateQueries({ queryKey: ["runs", id] });
+    try {
+      await mutations.setStatus.mutateAsync(newStatus);
+    } catch { /* ignore */ }
   }
 
   async function handleDelete() {
     if (!confirm("Delete this run? This cannot be undone.")) return;
-    const res = await fetch(`/api/runs/${id}`, { method: "DELETE" });
-    if (res.ok) router.push("/");
+    try {
+      await mutations.remove.mutateAsync();
+      router.push("/");
+    } catch { /* ignore */ }
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;

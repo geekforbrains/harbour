@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useJob, useJobRuns, useUpdateJob, useDeleteJob, useJobLinkMutations } from "@/lib/hooks/use-jobs";
+import { useAgent } from "@/lib/hooks/use-agents";
+import { useDocs } from "@/lib/hooks/use-docs";
+import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -61,59 +64,22 @@ function InstructionsBlock({ text }: { text: string }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const queryClient = useQueryClient();
   const { timezone } = useApp();
 
-  const { data: job = null, isLoading: loading } = useQuery<Job | null>({
-    queryKey: ["jobs", id],
-    queryFn: async () => {
-      const res = await fetch(`/api/jobs/${id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: jobData, isLoading: loading } = useJob(id);
+  const job = (jobData as Job | undefined) ?? null;
 
-  const { data: agent = null } = useQuery({
-    queryKey: ["agents", job?.agent_id],
-    queryFn: async () => {
-      if (!job?.agent_id) return null;
-      const res = await fetch(`/api/agents/${job.agent_id}`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!job?.agent_id,
-  });
+  const { data: agentData } = useAgent(job?.agent_id ?? "", { enabled: !!job?.agent_id });
+  const agent = (agentData as { type?: string; cli?: string | null; model?: string | null; thinking?: string | null } | undefined) ?? null;
 
-  const { data: jobRunsData = [] } = useQuery({
-    queryKey: ["jobs", id, "runs"],
-    queryFn: async () => {
-      const res = await fetch(`/api/jobs/${id}/runs?limit=10`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: jobRunsData = [] } = useJobRuns(id);
 
-  const { data: allDocs = [] } = useQuery<{ id: string; title: string; pinned: number }[]>({
-    queryKey: ["docs"],
-    queryFn: async () => {
-      const res = await fetch("/api/docs");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const { data: allDocs = [] } = useDocs();
+  const { data: allEnvVars = [] } = useEnvVars();
 
-  const { data: allEnvVars = [] } = useQuery<{ id: string; name: string; pinned: number }[]>({
-    queryKey: ["env-vars"],
-    queryFn: async () => {
-      const res = await fetch("/api/env-vars");
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
+  const updateJob = useUpdateJob();
+  const deleteJob = useDeleteJob();
+  const linkMutations = useJobLinkMutations(id);
 
   const specificRuns = Array.isArray(jobRunsData) ? jobRunsData : [];
 
@@ -136,77 +102,65 @@ export default function JobDetailPage() {
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
-    const res = await fetch(`/api/jobs/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: editName,
-        description: editDesc,
-        instructions: editInstructions,
-        schedule: serializeSchedule(editSchedule),
-        workflowCommand: editWorkflowCommand || undefined,
-        timeoutMinutes: editTimeout,
-        model: editModel || "",
-        thinking: editThinking || "",
-        titleFormat: editTitleFormat,
-        docIds: editDocIds,
-        envVarIds: editEnvVarIds,
-      }),
-    });
-    if (!res.ok) { alert("Failed to update job"); return; }
+    try {
+      await updateJob.mutateAsync({
+        id,
+        body: {
+          name: editName,
+          description: editDesc,
+          instructions: editInstructions,
+          schedule: serializeSchedule(editSchedule),
+          workflowCommand: editWorkflowCommand || undefined,
+          timeoutMinutes: editTimeout,
+          model: editModel || "",
+          thinking: editThinking || "",
+          titleFormat: editTitleFormat,
+          docIds: editDocIds,
+          envVarIds: editEnvVarIds,
+        },
+      });
+    } catch { alert("Failed to update job"); return; }
     setShowEdit(false);
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleToggleActive() {
     if (!job) return;
-    const res = await fetch(`/api/jobs/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: !job.active }),
-    });
-    if (!res.ok) { alert("Failed to update job"); return; }
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    try {
+      await updateJob.mutateAsync({ id, body: { active: !job.active } });
+    } catch { alert("Failed to update job"); }
   }
 
   async function handleLinkDoc(docId: string) {
-    const res = await fetch(`/api/jobs/${id}/docs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ docId }),
-    });
-    if (!res.ok) { alert("Failed to link doc"); return; }
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    try {
+      await linkMutations.linkDoc.mutateAsync(docId);
+    } catch { alert("Failed to link doc"); }
   }
 
   async function handleUnlinkDoc(docId: string) {
-    const res = await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to unlink doc"); return; }
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    try {
+      await linkMutations.unlinkDoc.mutateAsync(docId);
+    } catch { alert("Failed to unlink doc"); }
   }
 
   async function handleLinkEnvVar(envVarId: string) {
-    const res = await fetch(`/api/jobs/${id}/env-vars`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ envVarId }),
-    });
-    if (!res.ok) { alert("Failed to link env var"); return; }
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    try {
+      await linkMutations.linkEnvVar.mutateAsync(envVarId);
+    } catch { alert("Failed to link env var"); }
   }
 
   async function handleUnlinkEnvVar(envVarId: string) {
-    const res = await fetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to unlink env var"); return; }
-    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    try {
+      await linkMutations.unlinkEnvVar.mutateAsync(envVarId);
+    } catch { alert("Failed to unlink env var"); }
   }
 
   const [showTrigger, setShowTrigger] = useState(false);
 
   async function handleDelete() {
     if (!confirm(`Delete "${job?.name}"? All run history will be lost.`)) return;
-    const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-    if (!res.ok) { alert("Failed to delete job"); return; }
+    try {
+      await deleteJob.mutateAsync(id);
+    } catch { alert("Failed to delete job"); return; }
     router.push(`/agents/${job?.agent_id}`);
   }
 

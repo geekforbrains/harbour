@@ -18,19 +18,21 @@ export function useDocs(scope?: Scope, opts?: { enabled?: boolean }) {
   });
 }
 
-export function useDoc(id: string, opts?: { enabled?: boolean }) {
+export function useDoc(id: string, opts?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery({
     queryKey: qk.docs.detail(id),
     queryFn: () => apiFetch(`/api/docs/${id}`),
     enabled: (opts?.enabled ?? true) && !!id,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 
-export function useDocRevisions(id: string, opts?: { enabled?: boolean }) {
+export function useDocRevisions(id: string, opts?: { enabled?: boolean; refetchInterval?: number }) {
   return useQuery({
     queryKey: qk.docs.revisions(id),
     queryFn: () => apiFetch(`/api/docs/${id}/revisions`),
     enabled: (opts?.enabled ?? true) && !!id,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 
