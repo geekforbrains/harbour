@@ -1,6 +1,23 @@
 import { NextResponse } from "next/server";
-import { withOrgAuth } from "@/lib/auth";
-import { getOrgById, updateOrg, getOrgSettings } from "@/lib/db/queries";
+import { withOrgAuth, withInstanceAdmin } from "@/lib/auth";
+import { getOrgById, updateOrg, getOrgSettings, createOrg } from "@/lib/db/queries";
+
+// Create an org. Only instance admins create orgs (they manage the instance).
+// An optional `timezone` is folded into the org's `settings` JSON so a freshly
+// created org carries its schedule timezone from the start.
+export const POST = withInstanceAdmin(async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
+    return NextResponse.json({ error: "name is required" }, { status: 400 });
+  }
+  const settings: Record<string, unknown> = {};
+  if (typeof body.timezone === "string" && body.timezone.trim()) {
+    settings.timezone = body.timezone.trim();
+  }
+  const org = createOrg(name, settings);
+  return NextResponse.json(org, { status: 201 });
+});
 
 // Org settings (e.g. timezone) live in the org's `settings` JSON. The target
 // org comes from the `orgId` query param (matching the active-org scope used

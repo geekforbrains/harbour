@@ -39,6 +39,23 @@ export function orgsFromMe(me: MeResponse | undefined): Org[] {
 }
 
 /**
+ * Instance-admin-only: create an org with a name and optional timezone (folded
+ * into the org's settings server-side). Invalidates `me` (the source of the org
+ * list the switcher reads) and the orgs domain.
+ */
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; timezone?: string }) =>
+      apiFetch<Org>("/api/orgs", { method: "POST", body }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: qk.orgs.all });
+    },
+  });
+}
+
+/**
  * Update an org's name and/or settings (e.g. timezone). Settings are merged
  * server-side. Invalidates `me`, the source of the org list (and the active
  * org's settings the app shell reads its timezone from).

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApp } from "./app-context";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -18,6 +18,8 @@ import {
 import { FolderOpen, ChevronDown, Plus, Check, Building2 } from "lucide-react";
 import { SCOPED_DOMAINS, qk } from "@/lib/api/keys";
 import { useCreateProject } from "@/lib/hooks/use-projects";
+import { useCreateOrg } from "@/lib/hooks/use-orgs";
+import { apiFetch } from "@/lib/api/client";
 
 export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "mobile" }) {
   const {
@@ -31,8 +33,12 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
   } = useApp();
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
+  const createOrg = useCreateOrg();
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
+  const [showNewOrg, setShowNewOrg] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgTz, setNewOrgTz] = useState("");
 
   const isAdmin = !!user?.isInstanceAdmin;
   const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null;
@@ -66,6 +72,28 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
     setShowNew(false);
     await queryClient.invalidateQueries({ queryKey: qk.projects.all });
     handleSelectProject(project.id);
+  }
+
+  // Timezones for the New Org dialog; fetched only once the dialog is opened.
+  const { data: timezones = [] } = useQuery<string[]>({
+    queryKey: qk.settings.timezones(),
+    queryFn: () => apiFetch<string[]>("/api/settings/timezones"),
+    enabled: showNewOrg,
+    staleTime: Infinity,
+  });
+
+  async function handleCreateOrg(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newOrgName.trim()) return;
+    const org = await createOrg.mutateAsync({
+      name: newOrgName.trim(),
+      timezone: newOrgTz || undefined,
+    });
+    setNewOrgName("");
+    setNewOrgTz("");
+    setShowNewOrg(false);
+    // me/orgs are invalidated by the hook; jump straight into the new org.
+    handleSelectOrg(org.id);
   }
 
   const label = activeProject
@@ -109,6 +137,12 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
                   {activeOrgId === o.id && <Check className="h-4 w-4 ml-2 text-primary" />}
                 </DropdownMenuItem>
               ))}
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => setShowNewOrg(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  New Org
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
             </>
           )}
@@ -145,6 +179,36 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>Cancel</Button>
               <Button type="submit" disabled={createProject.isPending}>{createProject.isPending ? "Creating..." : "Create"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showNewOrg} onOpenChange={setShowNewOrg}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>New Organization</DialogTitle></DialogHeader>
+          <form onSubmit={handleCreateOrg} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={newOrgName} onChange={e => setNewOrgName(e.target.value)} placeholder="e.g. Acme Co." autoFocus required />
+            </div>
+            <div className="space-y-2">
+              <Label>Timezone</Label>
+              <select
+                value={newOrgTz}
+                onChange={e => setNewOrgTz(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="">System default</option>
+                {timezones.map(tz => (
+                  <option key={tz} value={tz}>{tz}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">Used for this org&apos;s schedule calculations.</p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setShowNewOrg(false)}>Cancel</Button>
+              <Button type="submit" disabled={createOrg.isPending}>{createOrg.isPending ? "Creating..." : "Create"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
