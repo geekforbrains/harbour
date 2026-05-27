@@ -88,6 +88,21 @@ describe("/next payload carries live agent config", () => {
     const after = buildRunPayload(createRun(job.id, agent.id)!.id)!;
     expect(after.agent?.model).toBe("opus");
   });
+
+  it("omits the agent block for an agentless workflow-only run", () => {
+    const org = createOrg("Acme")!;
+    const project = createProject(org.id, "Website")!;
+    const job = createJob(project.id, null, {
+      name: "WF",
+      schedule: '{"every":60}',
+      workflowCommand: "echo hi",
+    })!;
+    const run = createRun(job.id, null)!;
+    const payload = buildRunPayload(run.id)!;
+    // No agent → no agent block, so resolveRunConfig takes its (legacy) fallback
+    // path. Workflow-only runs never spawn a CLI, but the contract must hold.
+    expect(payload.agent).toBeUndefined();
+  });
 });
 
 describe("resolveRunConfig precedence", () => {
@@ -124,6 +139,49 @@ describe("resolveRunConfig precedence", () => {
 
   it("returns null cli when nothing provides one", () => {
     expect(resolveRunConfig({ agent: {}, job: {} }, {}).cli).toBeNull();
+  });
+});
+
+// Hardening: when the server sends an agent block (current /next), that block
+// is authoritative — including its nulls. A stale runners.json (legacy, with
+// cli/model/thinking baked in) must NOT leak old values back in, or a model
+// you cleared in the dashboard would silently come back. The fallback applies
+// ONLY when the payload has no agent block at all (a legacy server).
+describe("resolveRunConfig — agent block is authoritative", () => {
+  const legacy = { cli: "gemini", model: "legacy-model", thinking: "legacy-effort" };
+
+  it("ignores the legacy runner config entirely when an agent block is present", () => {
+    const payload = { agent: { cli: "claude", model: "opus", thinking: "high" }, job: {} };
+    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: "opus", thinking: "high" });
+  });
+
+  it("does not let a legacy model resurrect a deliberately-cleared agent model", () => {
+    const payload = { agent: { cli: "claude", model: null, thinking: null }, job: {} };
+    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: null, thinking: null });
+  });
+
+  it("honors a per-job override over the agent default within an agent block", () => {
+    const payload = {
+      agent: { cli: "claude", model: "sonnet", thinking: "low" },
+      job: { model: "opus", thinking: "high" },
+    };
+    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: "opus", thinking: "high" });
+  });
+
+  it("uses the runner-config fallback only when there is no agent block (legacy server)", () => {
+    expect(resolveRunConfig({ job: {} }, legacy)).toEqual({
+      cli: "gemini",
+      model: "legacy-model",
+      thinking: "legacy-effort",
+    });
+  });
+
+  it("still applies a per-job override against a legacy server", () => {
+    expect(resolveRunConfig({ job: { model: "opus" } }, legacy)).toEqual({
+      cli: "gemini",
+      model: "opus",
+      thinking: "legacy-effort",
+    });
   });
 });
 

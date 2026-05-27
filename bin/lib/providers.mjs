@@ -421,20 +421,21 @@ export function getProvider(cli) {
 
 /**
  * Resolve which cli/model/thinking a run should use. Harbour is the source of
- * truth: the /next payload carries the agent's live config (payload.agent) and
- * any per-job overrides (payload.job). The runner's own config is only an
- * identity record now, but older configs may still carry cli/model/thinking —
- * accept them as a last-resort fallback so a stale runner keeps working.
+ * truth: the /next payload's agent block carries the agent's live config and
+ * is authoritative when present — including its nulls, so a model you cleared
+ * in the dashboard stays cleared and a stale runners.json can't resurrect it.
+ * Only a legacy server that sends no agent block falls back to values baked
+ * into the runner config. A per-job override always wins.
  *
- * Precedence: job override → agent default (live) → runner-config fallback.
+ * Precedence: job override → (agent block if present, else runner-config fallback).
  */
 export function resolveRunConfig(payload, fallback = {}) {
-  const agent = payload?.agent || {};
   const job = payload?.job || {};
+  const agent = payload?.agent ?? fallback;
   return {
-    cli: agent.cli || fallback.cli || null,
-    model: job.model || agent.model || fallback.model || null,
-    thinking: job.thinking || agent.thinking || fallback.thinking || null,
+    cli: agent.cli ?? null,
+    model: job.model || agent.model || null,
+    thinking: job.thinking || agent.thinking || null,
   };
 }
 
