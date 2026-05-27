@@ -14,6 +14,7 @@ import { MobileBottomNav } from "./mobile-nav";
 import { useMe, userFromMe, orgsFromMe } from "@/lib/hooks/use-orgs";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { useWaitingCount } from "@/lib/hooks/use-runs";
+import { apiFetch } from "@/lib/api/client";
 
 export { useApp } from "./app-context";
 
@@ -145,7 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   });
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    await apiFetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     router.push("/login");
   }
 

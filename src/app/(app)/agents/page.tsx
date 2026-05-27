@@ -38,6 +38,7 @@ type CliTool = {
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
+import { apiFetch } from "@/lib/api/client";
 
 export default function AgentsPage() {
   const activeProjectId = useActiveProjectId();
@@ -63,8 +64,11 @@ export default function AgentsPage() {
 
   async function loadCliTools() {
     setLoadingTools(true);
-    const res = await fetch("/api/system/cli-tools");
-    if (res.ok) setCliTools(await res.json());
+    try {
+      setCliTools(await apiFetch<CliTool[]>("/api/system/cli-tools"));
+    } catch {
+      // leave cliTools unchanged on failure
+    }
     setLoadingTools(false);
   }
 

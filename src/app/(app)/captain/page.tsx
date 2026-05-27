@@ -133,11 +133,13 @@ function ChatView({
     model: string | null;
   }>({
     queryKey: ["captain-conversation", conversationId],
-    queryFn: async () => {
-      const res = await fetch(`/api/captain/conversations/${conversationId}`);
-      if (!res.ok) throw new Error("Failed to load conversation");
-      return res.json();
-    },
+    queryFn: () =>
+      apiFetch<{
+        messages: Message[];
+        title: string;
+        cli: string;
+        model: string | null;
+      }>(`/api/captain/conversations/${conversationId}`),
   });
 
   const connectStream = useCallback(
@@ -190,9 +192,10 @@ function ChatView({
     let cancelled = false;
     async function checkStatus() {
       try {
-        const res = await fetch(`/api/captain/conversations/${conversationId}/status`);
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
+        const data = await apiFetch<{ running?: boolean; activeMessageId?: string }>(
+          `/api/captain/conversations/${conversationId}/status`
+        );
+        if (cancelled) return;
         if (data.running && data.activeMessageId) {
           setStreaming(true);
           setActiveMessageId(data.activeMessageId);
@@ -262,7 +265,7 @@ function ChatView({
   }
 
   function handleStop() {
-    fetch(`/api/captain/conversations/${conversationId}/stop`, {
+    apiFetch(`/api/captain/conversations/${conversationId}/stop`, {
       method: "POST",
     }).catch(() => {});
   }
@@ -419,7 +422,7 @@ export default function CaptainPage() {
 
   // Delete conversation
   async function handleDelete(id: string) {
-    await fetch(`/api/captain/conversations/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/captain/conversations/${id}`, { method: "DELETE" });
     queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
     if (activeConversationId === id) {
       setActiveConversationId(null);
@@ -428,10 +431,9 @@ export default function CaptainPage() {
 
   // Update conversation title
   async function handleTitleUpdate(id: string, title: string) {
-    await fetch(`/api/captain/conversations/${id}`, {
+    await apiFetch(`/api/captain/conversations/${id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
+      body: { title },
     });
     queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
   }

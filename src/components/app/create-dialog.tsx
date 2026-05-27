@@ -14,9 +14,6 @@ import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
 
-type Doc = { id: string; title: string; pinned: number };
-type EnvVar = { id: string; name: string; pinned: number };
-
 // Sub-dialog for picking docs or env vars
 export function PickerDialog({
   open,

@@ -12,6 +12,7 @@ import {
 } from "@/lib/upload-client";
 import type { SerializedAttachment } from "@/lib/attachments-serialize";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api/client";
 
 type PendingStatus = "uploading" | "done" | "error";
 
@@ -85,7 +86,7 @@ export const AttachmentComposer = forwardRef<AttachmentComposerHandle, Props>(fu
 
   const { data: config } = useQuery<{ max_upload_mb: number; max_upload_bytes: number }>({
     queryKey: ["upload-config"],
-    queryFn: async () => (await fetch("/api/system/upload-config")).json(),
+    queryFn: () => apiFetch<{ max_upload_mb: number; max_upload_bytes: number }>("/api/system/upload-config"),
     staleTime: 60_000,
   });
   const maxBytes = config?.max_upload_bytes;

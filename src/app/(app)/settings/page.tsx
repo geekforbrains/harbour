@@ -36,11 +36,7 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
 
   const { data: videoCheck } = useQuery<VideoCheck>({
     queryKey: ["video-processing-check"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings/video-processing/check");
-      if (!res.ok) return null;
-      return res.json();
-    },
+    queryFn: () => apiFetch<VideoCheck>("/api/settings/video-processing/check").catch(() => null),
   });
 
   const maskedKey = provider === "openai"
@@ -207,41 +203,25 @@ export default function SettingsPage() {
 
   const { data: settings, isLoading } = useQuery<Settings>({
     queryKey: ["settings"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings");
-      if (!res.ok) return {};
-      return res.json();
-    },
+    queryFn: () => apiFetch<Settings>("/api/settings").catch(() => ({})),
   });
 
   const { data: timezones = [] } = useQuery<string[]>({
     queryKey: ["timezones"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings/timezones");
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () => apiFetch<string[]>("/api/settings/timezones").catch(() => []),
   });
 
   const { data: adminKeys = [] } = useQuery<any[]>({
     queryKey: ["admin-api-keys"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin-api-keys");
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () => apiFetch<any[]>("/api/admin-api-keys").catch(() => []),
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await fetch("/api/admin-api-keys", {
+    mutationFn: (name: string) =>
+      apiFetch<{ apiKey: string }>("/api/admin-api-keys", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) throw new Error("Failed to create key");
-      return res.json();
-    },
+        body: { name },
+      }),
     onSuccess: (data) => {
       setCreatedKey(data.apiKey);
       setNewKeyName("");
@@ -250,9 +230,8 @@ export default function SettingsPage() {
   });
 
   const deleteKeyMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await fetch(`/api/admin-api-keys/${id}`, { method: "DELETE" });
-    },
+    mutationFn: (id: string) =>
+      apiFetch(`/api/admin-api-keys/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
     },
@@ -265,12 +244,15 @@ export default function SettingsPage() {
   }, [timezones, tzSearch]);
 
   async function updateSetting(key: string, value: string) {
-    const res = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [key]: value }),
-    });
-    if (!res.ok) { alert("Failed to update setting"); return; }
+    try {
+      await apiFetch("/api/settings", {
+        method: "PUT",
+        body: { [key]: value },
+      });
+    } catch {
+      alert("Failed to update setting");
+      return;
+    }
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   }
 
