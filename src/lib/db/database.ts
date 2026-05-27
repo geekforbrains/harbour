@@ -322,6 +322,63 @@ export function deleteRow(databaseId: string, rowId: number) {
   })();
 }
 
+/**
+ * Composed databases for a job's run payload (used by /next).
+ *
+ * Composition (per the v2 resource model) = all org-level databases of the
+ * job's org + all project-level databases of the job's project + the job's
+ * explicitly linked databases, de-duplicated by id. The payload `data` map is
+ * keyed by the logical database name, so on a name collision the more-specific
+ * tier wins: job-linked > project-level > org-level. Returns the winning
+ * `{ name, table_name }` per logical name.
+ */
+export function getComposedDatabasesForJob(jobId: string): { name: string; table_name: string }[] {
+  const db = getDb();
+
+  const scope = db.prepare(`
+    SELECT j.project_id, p.org_id
+    FROM jobs j
+    JOIN projects p ON j.project_id = p.id
+    WHERE j.id = ?
+  `).get(jobId) as { project_id: string; org_id: string } | undefined;
+  if (!scope) return [];
+
+  type Row = { id: string; name: string; table_name: string; project_id: string | null; linked: number };
+
+  // Collect every candidate database across the three tiers. `linked` flags a
+  // job-linked row; `project_id` distinguishes org- vs project-level. DISTINCT
+  // de-dups the same database appearing in multiple tiers (e.g. project-level
+  // AND job-linked).
+  const rows = db.prepare(`
+    SELECT id, name, table_name, project_id,
+           MAX(CASE WHEN src = 'linked' THEN 1 ELSE 0 END) as linked
+    FROM (
+      SELECT id, name, table_name, project_id, 'tier' as src
+        FROM databases WHERE org_id = ? AND project_id IS NULL
+      UNION ALL
+      SELECT id, name, table_name, project_id, 'tier' as src
+        FROM databases WHERE org_id = ? AND project_id = ?
+      UNION ALL
+      SELECT d.id, d.name, d.table_name, d.project_id, 'linked' as src
+        FROM job_databases jd JOIN databases d ON jd.database_id = d.id
+        WHERE jd.job_id = ?
+    )
+    GROUP BY id
+  `).all(scope.org_id, scope.org_id, scope.project_id, jobId) as Row[];
+
+  // Resolve name collisions by precedence: job-linked > project-level >
+  // org-level. Rank each row, then keep the highest rank per logical name.
+  const rank = (r: Row) => (r.linked ? 2 : r.project_id ? 1 : 0);
+  const byName = new Map<string, Row>();
+  for (const r of rows) {
+    const existing = byName.get(r.name);
+    if (!existing || rank(r) > rank(existing)) byName.set(r.name, r);
+  }
+  return [...byName.values()]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(r => ({ name: r.name, table_name: r.table_name }));
+}
+
 // --- Job Linkage ---
 
 export function linkDatabaseToJob(jobId: string, databaseId: string) {

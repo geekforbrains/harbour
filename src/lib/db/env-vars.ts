@@ -122,25 +122,54 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
 }
 
 /**
- * Decrypt all env vars for a job (used by /next payload). Composition across
- * org/project/job tiers with override resolution is finalized in Phase 3; for
- * now this returns the explicitly job-linked vars, project-over-org by name.
+ * Decrypt the composed env vars for a job (used by the /next payload).
+ *
+ * Composition (per the v2 resource model) = all org-level vars of the job's org
+ * + all project-level vars of the job's project + the job's explicitly linked
+ * vars. Name collisions resolve by precedence:
+ *
+ *     job-linked  >  project-level  >  org-level   (more specific wins)
+ *
+ * Returns the final decrypted name→value map.
  */
 export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string> {
   const db = getDb();
-  const rows = db.prepare(`
-    SELECT ev.name, ev.encrypted_value, ev.project_id
+
+  // Resolve the job's scope (its project and that project's org).
+  const scope = db.prepare(`
+    SELECT j.project_id, p.org_id
+    FROM jobs j
+    JOIN projects p ON j.project_id = p.id
+    WHERE j.id = ?
+  `).get(jobId) as { project_id: string; org_id: string } | undefined;
+  if (!scope) return {};
+
+  type Row = { name: string; encrypted_value: string };
+  const env: Record<string, string> = {};
+
+  // Tier 1 — org-level (project_id IS NULL). Lowest precedence.
+  const orgRows = db.prepare(`
+    SELECT name, encrypted_value FROM env_vars
+    WHERE org_id = ? AND project_id IS NULL
+  `).all(scope.org_id) as Row[];
+  for (const r of orgRows) env[r.name] = decrypt(r.encrypted_value);
+
+  // Tier 2 — project-level. Overrides org-level on name collision.
+  const projectRows = db.prepare(`
+    SELECT name, encrypted_value FROM env_vars
+    WHERE org_id = ? AND project_id = ?
+  `).all(scope.org_id, scope.project_id) as Row[];
+  for (const r of projectRows) env[r.name] = decrypt(r.encrypted_value);
+
+  // Tier 3 — job-linked explicit attachments. Highest precedence: overrides
+  // both org- and project-level on name collision.
+  const linkedRows = db.prepare(`
+    SELECT ev.name, ev.encrypted_value
     FROM job_env_vars jev
     JOIN env_vars ev ON jev.env_var_id = ev.id
     WHERE jev.job_id = ?
-    ORDER BY (ev.project_id IS NULL) DESC
-  `).all(jobId) as { name: string; encrypted_value: string; project_id: string | null }[];
+  `).all(jobId) as Row[];
+  for (const r of linkedRows) env[r.name] = decrypt(r.encrypted_value);
 
-  // Iterate org-level first, then project-level, so project values overwrite
-  // org values of the same name (project-over-org override).
-  const env: Record<string, string> = {};
-  for (const row of rows) {
-    env[row.name] = decrypt(row.encrypted_value);
-  }
   return env;
 }

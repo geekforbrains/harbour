@@ -1,6 +1,8 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
+import { getComposedDocsForJob } from "./docs";
+import { getComposedDatabasesForJob } from "./database";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 import { defaultRunTitle } from "../run-title";
@@ -544,39 +546,27 @@ export function peekAgentNext(agentId: string) {
   return { available: false, reason: "nothing_to_do" };
 }
 
-function buildRunPayload(runId: string) {
+export function buildRunPayload(runId: string) {
   const db = getDb();
   const run = getRunWithActivity(runId);
   if (!run) return null;
 
   const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(run.job_id) as any;
 
-  // Get referenced docs
-  const docs = db.prepare(`
-    SELECT d.id, d.title, dr.content
-    FROM job_docs jd
-    JOIN docs d ON jd.doc_id = d.id
-    LEFT JOIN doc_revisions dr ON dr.doc_id = d.id
-    AND dr.created_at = (SELECT MAX(created_at) FROM doc_revisions WHERE doc_id = d.id)
-    WHERE jd.job_id = ?
-  `).all(run.job_id);
+  // Composed docs = org-level + project-level + job-linked (de-duped by id).
+  const docs = getComposedDocsForJob(run.job_id);
 
-  // Get referenced databases (recent rows from each linked table)
-  const linkedDbs = db.prepare(`
-    SELECT d.name, d.table_name
-    FROM job_databases jd
-    JOIN databases d ON jd.database_id = d.id
-    WHERE jd.job_id = ?
-  `).all(run.job_id) as { name: string; table_name: string }[];
-
+  // Composed databases = org-level + project-level + job-linked, with the
+  // recent rows of each (name collisions resolved project-over-org / linked-wins).
+  const composedDbs = getComposedDatabasesForJob(run.job_id);
   const data: Record<string, any> = {};
-  for (const d of linkedDbs) {
+  for (const d of composedDbs) {
     data[d.name] = db.prepare(
       `SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`
     ).all();
   }
 
-  // Decrypt env vars for this job
+  // Composed env vars = org-level + project-level + job-linked (job > project > org).
   const env = getDecryptedEnvVarsForJob(run.job_id);
 
   // Run attachments (raw rows; the route serializer adds absolute URLs)

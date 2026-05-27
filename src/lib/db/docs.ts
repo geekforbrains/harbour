@@ -94,6 +94,49 @@ export function listPinnedDocIds(projectId: string): string[] {
   ).all(proj.org_id, projectId) as { id: string }[]).map(r => r.id);
 }
 
+/**
+ * Composed docs for a job's run payload (used by /next).
+ *
+ * Composition (per the v2 resource model) = all org-level docs of the job's org
+ * + all project-level docs of the job's project + the job's explicitly linked
+ * docs, de-duplicated by id (a doc that is both at-tier and job-linked appears
+ * once). Each doc carries the content of its latest revision.
+ *
+ * Docs have no name/key, so there is no value-override on collision — only
+ * id de-duplication. Returned shape matches the agent contract:
+ * `{ id, title, content }`.
+ */
+export function getComposedDocsForJob(jobId: string): { id: string; title: string; content: string }[] {
+  const db = getDb();
+
+  const scope = db.prepare(`
+    SELECT j.project_id, p.org_id
+    FROM jobs j
+    JOIN projects p ON j.project_id = p.id
+    WHERE j.id = ?
+  `).get(jobId) as { project_id: string; org_id: string } | undefined;
+  if (!scope) return [];
+
+  // Union of org-level + project-level + job-linked doc ids for this job, then
+  // resolve each to its latest-revision content. DISTINCT de-dups ids that
+  // appear in more than one tier.
+  return db.prepare(`
+    SELECT d.id, d.title, dr.content
+    FROM docs d
+    LEFT JOIN doc_revisions dr ON dr.doc_id = d.id
+      AND dr.created_at = (SELECT MAX(created_at) FROM doc_revisions WHERE doc_id = d.id)
+    WHERE d.id IN (
+      SELECT id FROM docs WHERE org_id = ? AND project_id IS NULL
+      UNION
+      SELECT id FROM docs WHERE org_id = ? AND project_id = ?
+      UNION
+      SELECT doc_id FROM job_docs WHERE job_id = ?
+    )
+    ORDER BY d.title ASC
+  `).all(scope.org_id, scope.org_id, scope.project_id, jobId) as
+    { id: string; title: string; content: string }[];
+}
+
 export function getDocRevisions(docId: string) {
   const db = getDb();
   return db.prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC`).all(docId);
