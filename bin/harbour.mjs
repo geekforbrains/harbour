@@ -3,10 +3,10 @@
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
-import { runAgents } from "./lib/runner.mjs";
-import { installRunner, uninstallRunner } from "./lib/install.mjs";
-import { listRunners } from "./lib/config.mjs";
-import { connectAgent } from "./lib/connect.mjs";
+import { runAgents, runWorkflows } from "./lib/runner.mjs";
+import { installRunner, uninstallRunner, installWorkflowRunner, uninstallWorkflowRunner } from "./lib/install.mjs";
+import { listRunners, listWorkflowRunners } from "./lib/config.mjs";
+import { connectAgent, connectWorkflowRunner } from "./lib/connect.mjs";
 import { runSetup, runAdminCreate } from "./lib/bootstrap.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +29,11 @@ Usage:
                                  harbour's "Connect remote runner" panel)
   harbour agent install      Install cron job for automatic polling
   harbour agent uninstall    Remove the cron job
+  harbour workflow list      List configured workflow runners
+  harbour workflow run       Poll workflow jobs once
+  harbour workflow connect <blob> Register a workflow runner
+  harbour workflow install   Install cron job for workflow polling
+  harbour workflow uninstall Remove the workflow polling cron job
   `.trim());
 }
 
@@ -79,6 +84,30 @@ async function main() {
           break;
         default:
           console.error(`Unknown agent command: ${subcommand}`);
+          usage();
+          process.exit(1);
+      }
+      break;
+    }
+    case "workflow": {
+      switch (subcommand) {
+        case "list":
+          listWorkflowRunners();
+          break;
+        case "run":
+          await runWorkflows();
+          break;
+        case "connect":
+          await connectWorkflowRunner(rest[0]);
+          break;
+        case "install":
+          installWorkflowRunner();
+          break;
+        case "uninstall":
+          uninstallWorkflowRunner();
+          break;
+        default:
+          console.error(`Unknown workflow command: ${subcommand}`);
           usage();
           process.exit(1);
       }

@@ -21,9 +21,9 @@ export const runtime = "nodejs";
 const runOrg = (p: Record<string, string>) => orgIdForResource("run", p.id);
 
 function uploaderFromAuth(auth: AuthContext): Uploader {
-  return auth.type === "user"
-    ? { type: "user", id: auth.userId, name: auth.displayName }
-    : { type: "agent", id: auth.agentId, name: auth.agentName };
+  if (auth.type === "user") return { type: "user", id: auth.userId, name: auth.displayName };
+  if (auth.type === "workflow_runner") return { type: "agent", id: auth.runnerId, name: auth.runnerName };
+  return { type: "agent", id: auth.agentId, name: auth.agentName };
 }
 
 export const GET = withAgentOrUser(
@@ -32,7 +32,10 @@ export const GET = withAgentOrUser(
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -40,7 +43,7 @@ export const GET = withAgentOrUser(
     const base = publicBaseUrl(req);
     return NextResponse.json(rows.map(r => serializeAttachment(r, base)));
   },
-  { role: "viewer", orgFromParams: runOrg }
+  { role: "viewer", allowWorkflowRunner: true, orgFromParams: runOrg }
 );
 
 export const POST = withAgentOrUser(
@@ -49,7 +52,10 @@ export const POST = withAgentOrUser(
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -98,5 +104,5 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Upload failed" }, { status: 500 });
     }
   },
-  { role: "editor", orgFromParams: runOrg }
+  { role: "editor", allowWorkflowRunner: true, orgFromParams: runOrg }
 );

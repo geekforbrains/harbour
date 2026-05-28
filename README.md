@@ -18,7 +18,7 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 
 Harbour is a polling-based control plane. It never calls out to agents — they pull work on their own schedule.
 
-**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Jobs come in two flavors: **agent jobs** where an AI agent does the work, and **workflow jobs** where a shell command handles everything — no LLM involved. A job can also combine both: a workflow runs first as a gate, and the agent only fires if the workflow exits successfully. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
+**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Agent jobs are handled by AI agents. **Workflows** are deterministic scheduled shell commands with no LLM involved. Agent jobs can also define a **prerun command**: a cheap gate that runs before the LLM and can skip the run when there is no work.
 
 **Docs** are shared markdown documents (brand guidelines, processes, strategy) injected into runs automatically. **Databases** are SQLite tables agents create and manage through the API, also injected into runs. **Env Vars** are encrypted key-value pairs (API keys, tokens) decrypted and injected at runtime.
 
@@ -26,7 +26,7 @@ Harbour is a polling-based control plane. It never calls out to agents — they 
 
 Agent jobs are discovered through `GET /api/agents/:id/next`. The response bundles everything: run context, job instructions, docs, database rows, env vars, and an `api` section with pre-resolved endpoints and status options for the run. Agents use `?peek=true` to check for work without claiming it.
 
-Workflow-only jobs that have no agent are discovered through `GET /api/workflows/next`. The harbour runner polls both endpoints automatically.
+Workflows are discovered through `GET /api/workflows/next` by workflow runners authenticated with workflow-runner credentials.
 
 ## Designing Your Agent Team
 
@@ -119,7 +119,7 @@ Built-in support for running agents via [Claude Code](https://claude.ai/claude-c
 npm run harbour -- agent install
 ```
 
-The runner polls every 60 seconds. All configured agents and agentless workflow jobs run concurrently. Logs go to `~/.harbour/runner.log`.
+The runner polls every 60 seconds. Logs go to `~/.harbour/runner.log`.
 
 ```bash
 npm run harbour -- agent list        # show configured agents
@@ -187,9 +187,7 @@ The blob contains the agent's API key — treat it like a password. If it's ever
 
 **Two caveats worth knowing:**
 - **Reachability.** The remote machine must be able to reach harbour at the URL embedded in the blob. Tailscale or any private-mesh tool works well for home setups; otherwise expose harbour behind whatever you normally use for remote HTTP.
-- **Workflow scripts run locally.** If the agent's jobs use a workflow gate (shell command), that script must live at `~/.harbour/workflows/` on the remote machine, not on the harbour server. Keep the scripts in a git repo and sync as you would any other dotfile.
-
-Remote runners skip the agentless workflow-only poll (`/api/workflows/next`) — those jobs stay with whichever runner is co-located with the harbour server.
+- **Prerun scripts run locally.** If the agent's jobs use a prerun command, that script must live at `~/.harbour/workflows/` on the remote machine, not on the harbour server. Keep the scripts in a git repo and sync as you would any other dotfile.
 
 ### External Agents
 
@@ -218,8 +216,9 @@ Admin API documentation is served at `/api/admin-guide` and maintained in [ADMIN
 ```
 GET  /api/agents/:id/next           — get next agent run (or nothing)
 GET  /api/agents/:id/next?peek=true — check for work without claiming it
-GET  /api/workflows/next            — get next agentless workflow run (runner only)
-POST /api/jobs                      — create a workflow-only job (no agent)
+GET  /api/workflows/next            — get next workflow run (workflow runner only)
+POST /api/workflow-runners          — create workflow-runner credentials
+POST /api/jobs                      — create a deterministic workflow
 PUT  /api/runs/:id/status           — update run status
 POST /api/runs/:id/activity         — add to the run's activity log
 POST /api/runs/:id/retry            — retry a failed/skipped/killed run
@@ -251,21 +250,23 @@ Failed, skipped, and killed runs can be retried from the dashboard — the run g
 
 ## Workflows
 
-Workflows bring deterministic, shell-based execution to Harbour jobs. A workflow is a shell command that the runner executes locally — either as a pre-step before the AI agent, or as the entire job with no AI involved.
+Workflows bring deterministic, shell-based execution to Harbour. A workflow is a standalone scheduled command claimed by a workflow runner. It has no agent and never invokes an LLM.
 
-**Three execution modes:**
+Agent jobs can separately define a prerun command. Prerun commands are gates for saving tokens: exit `0` continues to the LLM, exit `77` skips, and any other exit fails the run.
 
-| Mode | Config | What happens |
-|------|--------|-------------|
-| Agent only | No workflow command | Agent runs as normal |
-| Workflow + Agent | Workflow command, workflow_only off | Workflow runs first as a gate. Exit 0 = agent runs with stdout as context. Exit 77 = skip. Other = fail. |
-| Workflow only | Workflow command, workflow_only on | Workflow is the entire job. No agent, no LLM. Exit 0 = done. Exit 77 = skip. Other = fail. |
-
-Workflow-only jobs don't require an agent — they're standalone scheduled commands. The runner receives the full run payload (JSON) on stdin and executes the command with `~/.harbour/workflows/` as the working directory.
+Workflow runners are configured independently:
 
 ```bash
-# Example: workflow-only job that checks an API
-# workflow_command: python3 check_health.py
+npm run harbour -- workflow connect <blob>
+npm run harbour -- workflow run
+npm run harbour -- workflow install
+```
+
+The runner receives the full run payload (JSON) on stdin and executes the command with `~/.harbour/workflows/` as the working directory.
+
+```bash
+# Example: workflow job that checks an API
+# command: python3 check_health.py
 # Receives run payload on stdin, prints result to stdout
 ```
 
@@ -306,7 +307,7 @@ Available as a PWA — add to your home screen on mobile for a native app experi
 
 Long-form docs live in [`docs/`](docs/). The index ([docs/README.md](docs/README.md)) groups them into:
 
-- **Concepts** — [agents](docs/concepts/agents.md), [jobs and runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs and runs](docs/concepts/jobs-and-runs.md), [workflows](docs/workflows.md), [projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
 - **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
 - **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API overview](docs/reference/api.md)
 

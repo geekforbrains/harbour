@@ -66,15 +66,15 @@ Static configuration for recurring work.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | **nullable** for workflow-only jobs |
+| `kind` | TEXT | CHECK | `agent` or `workflow` |
+| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | set for agent jobs, NULL for workflows |
 | `name` | TEXT | NN | |
 | `description` | TEXT | | |
 | `instructions` | TEXT | | the prompt body for agent jobs |
 | `schedule` | TEXT | NN | normalized JSON: `{"every":N}` or `{"days":[0-6],"time":"HH:MM"}` |
-| `workflow_command` | TEXT | | shell command (gate or full job) |
-| `workflow_only` | INTEGER | NN, default 0 | 1 = no agent involved |
+| `prerun_command` | TEXT | | agent gate before LLM |
+| `workflow_command` | TEXT | | deterministic workflow command |
 | `timeout_minutes` | INTEGER | NN, default 30 | |
-| `one_off` | INTEGER | NN, default 0 | 1 = deactivate after first run |
 | `active` | INTEGER | NN, default 1 | |
 | `last_run_at` | INTEGER | | |
 | `next_run_at` | INTEGER | | populated by schedule advance |
@@ -92,7 +92,7 @@ A single execution of a job.
 |---|---|---|---|
 | `id` | TEXT | PK | |
 | `job_id` | TEXT | NN, FK → `jobs(id)` (CASCADE) | |
-| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | nullable for agentless workflow runs |
+| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | nullable for workflow runs |
 | `status` | TEXT | NN, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
 | `scheduled_for` | INTEGER | | for one-off runs |
 | `claimed_at` | INTEGER | | set when status flips to `running` |
@@ -382,7 +382,7 @@ attachment_processing ─ run_attachments
 
 - **Polling-ladder atomicity.** The claim sequence inside `getAgentNextRun` and `getNextWorkflowRun` runs as one `db.transaction`.
 - **One-of-a-kind processing record.** `attachment_processing.attachment_id` is `UNIQUE` — a re-process deletes the old row first.
-- **Agentless jobs.** When `workflow_only=1`, `agent_id` may be NULL on both `jobs` and `runs`. Picked up by `/api/workflows/next`.
+- **Workflows.** When `jobs.kind='workflow'`, `agent_id` is NULL on both `jobs` and `runs`. Picked up by `/api/workflows/next` using workflow-runner auth.
 - **Env var encryption.** Plaintext never lands in the DB. The encryption key is read from `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
 - **Schedule normalization.** Non-JSON legacy schedule strings are coerced to canonical JSON during initialization (`src/lib/db/schema.ts:441-451`).
 
@@ -391,7 +391,7 @@ attachment_processing ─ run_attachments
 `schema.ts` follows three sections in order, all triggered by a single `initializeSchema(db)` call from `getDb()` on first use:
 
 1. **`db.exec(...)` of `CREATE TABLE IF NOT EXISTS ...`** — idempotent table and index creation. This block describes the **target shape**; running it on an empty DB creates everything from scratch.
-2. **Procedural ALTER blocks** — additive column adds (e.g. `agents.cli`, `jobs.workflow_only`) and CHECK-constraint changes (rebuilding `runs` to add `'pending'`, `'scheduled'`, `'killed'` over time). Each block guards itself with a `PRAGMA table_info` lookup or `sqlite_master.sql LIKE` test, so re-running is a no-op.
-3. **Backfills** — ensure encryption key is initialized, ensure `timezone` and `signup_enabled` settings exist.
+2. **Fresh-build schema changes** — v2 does not carry backwards-compatible migrations for pre-v2 databases. Change the target schema directly, then update tests/docs.
+3. **Backfills** — ensure encryption key is initialized.
 
-There is no separate migrations folder; the function above is the only migration runner. New schema changes go in as additional ALTER blocks — pattern: read `PRAGMA table_info`, branch on the column's existence, run the ALTER inside the same `initializeSchema` pass.
+There is no separate migrations folder; `initializeSchema` is the schema initializer for fresh installs.

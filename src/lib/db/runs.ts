@@ -26,7 +26,8 @@ export function createRun(jobId: string, agentId: string | null) {
 export function getRunById(id: string) {
   const db = getDb();
   const run = db.prepare(`
-    SELECT r.*, j.name as job_name, j.agent_id, a.name as agent_name, a.cli as agent_cli
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_command as job_prerun_command,
+           j.workflow_command as job_workflow_command, a.name as agent_name, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -113,7 +114,8 @@ export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active,
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
            a.name as agent_name, a.cli as agent_cli
     FROM runs r
@@ -130,7 +132,8 @@ export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkip
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active,
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
            a.name as agent_name, a.cli as agent_cli
     FROM runs r
@@ -149,7 +152,8 @@ export function listScheduledRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -163,7 +167,8 @@ export function listRunningRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -177,7 +182,8 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -191,7 +197,8 @@ export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -260,8 +267,8 @@ export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {},
   const safeOffset = Math.max(0, offset | 0);
 
   const rows = db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active,
-           j.workflow_command as job_workflow_command,
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command,
            a.name as agent_name, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
@@ -403,7 +410,7 @@ export function getAgentNextRun(agentId: string) {
     // 4. Any recurring job past its schedule time without an active run?
     const readyJob = db.prepare(`
       SELECT j.id, j.agent_id FROM jobs j
-      WHERE j.agent_id = ? AND j.active = 1
+      WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
@@ -427,19 +434,19 @@ export function getAgentNextRun(agentId: string) {
   return buildRunPayload(runId);
 }
 
-// Workflow polling: get next agentless workflow run (no agent assigned).
+// Workflow polling: get next deterministic workflow run (no agent assigned).
 // MANDATORY org scope: candidate runs/jobs are constrained to the caller's org
 // via project_id → projects.org_id so a runner never claims another org's work.
 export function getNextWorkflowRun(orgId: string) {
   const db = getDb();
 
-  // Fail stale agentless workflow runs (scoped to this org)
+  // Fail stale workflow runs (scoped to this org)
   const now = Math.floor(Date.now() / 1000);
   const stale = db.prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
-    WHERE r.agent_id IS NULL AND r.status = 'running' AND p.org_id = ?
+      WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND p.org_id = ?
     AND r.updated_at + (j.timeout_minutes * 60) < ?
   `).all(orgId, now) as { id: string; timeout_minutes: number }[];
   for (const run of stale) {
@@ -455,7 +462,8 @@ export function getNextWorkflowRun(orgId: string) {
     const scheduledRun = db.prepare(`
       SELECT r.id FROM runs r
       JOIN projects p ON r.project_id = p.id
-      WHERE r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
+      JOIN jobs j ON r.job_id = j.id
+      WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
       AND p.org_id = ?
       ORDER BY r.scheduled_for ASC LIMIT 1
     `).get(now, orgId) as any;
@@ -466,12 +474,11 @@ export function getNextWorkflowRun(orgId: string) {
       return scheduledRun.id as string;
     }
 
-    // Any recurring agentless workflow job past its schedule time? (scoped to this org)
-    // Workflow-only jobs are those with no agent and a workflow command.
+    // Any recurring workflow job past its schedule time? (scoped to this org)
     const readyJob = db.prepare(`
       SELECT j.id FROM jobs j
       JOIN projects p ON j.project_id = p.id
-      WHERE j.agent_id IS NULL AND j.active = 1
+      WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
       AND j.workflow_command IS NOT NULL
       AND p.org_id = ?
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
@@ -494,6 +501,43 @@ export function getNextWorkflowRun(orgId: string) {
   const runId = assignRun();
   if (!runId) return null;
   return buildRunPayload(runId);
+}
+
+export function peekWorkflowNext(orgId: string) {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+
+  const scheduledRun = db.prepare(`
+    SELECT r.id, j.name as job_name FROM runs r
+    JOIN projects p ON r.project_id = p.id
+    JOIN jobs j ON r.job_id = j.id
+    WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
+    AND p.org_id = ?
+    ORDER BY r.scheduled_for ASC LIMIT 1
+  `).get(now, orgId) as any;
+
+  if (scheduledRun) {
+    return { available: true, type: "scheduled_run", run_id: scheduledRun.id, job_name: scheduledRun.job_name };
+  }
+
+  const readyJob = db.prepare(`
+    SELECT j.id, j.name FROM jobs j
+    JOIN projects p ON j.project_id = p.id
+    WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
+    AND j.workflow_command IS NOT NULL
+    AND p.org_id = ?
+    AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+    AND NOT EXISTS (
+      SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
+    )
+    ORDER BY j.next_run_at ASC LIMIT 1
+  `).get(orgId, now) as any;
+
+  if (readyJob) {
+    return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
+  }
+
+  return { available: false, reason: "nothing_to_do" };
 }
 
 export function peekAgentNext(agentId: string) {
@@ -533,7 +577,7 @@ export function peekAgentNext(agentId: string) {
 
   const readyJob = db.prepare(`
     SELECT j.id, j.name FROM jobs j
-    WHERE j.agent_id = ? AND j.active = 1
+    WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
     AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending'))
     ORDER BY j.next_run_at ASC LIMIT 1
@@ -586,7 +630,7 @@ export function buildRunPayload(runId: string) {
       : run.extra_instructions;
   }
 
-  // Prepend the title-setting preamble for agent runs. Workflow-only runs
+  // Prepend the title-setting preamble for agent runs. Workflow runs
   // have no LLM and can't honor it.
   if (run.agent_id) {
     const formatHint = job.title_format
@@ -615,17 +659,18 @@ export function buildRunPayload(runId: string) {
       }
     : undefined;
 
-  // A job is workflow-only when it has a workflow command and no agent.
-  const workflowOnly = !!job.workflow_command && !job.agent_id;
+  const isWorkflow = job.kind === "workflow";
 
   return {
     run: { id: run.id, status: run.status, title: run.title || null, activity: run.activity },
     job: {
       id: job.id,
+      kind: job.kind,
       name: job.name,
       instructions,
-      workflow: job.workflow_command,
-      workflow_only: workflowOnly,
+      prerun: job.prerun_command,
+      command: isWorkflow ? job.workflow_command : null,
+      workflow: isWorkflow ? job.workflow_command : null,
       model: job.model || null,
       thinking: job.thinking || null,
       title_format: job.title_format || null,

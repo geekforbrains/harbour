@@ -8,6 +8,8 @@ import {
   createUser,
   createAgent,
   createJob,
+  createWorkflow,
+  createWorkflowRunner,
   createRun,
   createDoc,
   createEnvVar,
@@ -63,6 +65,12 @@ function userReq(userId: string, url: string, init: ReqInit = {}): NextRequest {
 }
 
 function agentReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${apiKey}`);
+  return new NextRequest(url, { method: init.method, body: init.body, headers });
+}
+
+function workflowRunnerReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${apiKey}`);
   return new NextRequest(url, { method: init.method, body: init.body, headers });
@@ -236,30 +244,47 @@ describe("cross-org isolation (negative tests)", () => {
     expect(ids).not.toContain(other.run.id);
   });
 
-  it("GET /api/workflows/next does not hand an org-A agent an org-B workflow run", async () => {
+  it("GET /api/workflows/next requires workflow-runner auth and respects org scope", async () => {
     const { agent: agentA } = fixture(); // org-A agent
     const other = otherOrgFixture();
 
-    // Make org-B a ready agentless workflow job, due in the past.
+    // Make org-B a ready workflow job, due in the past.
     const db = getDb();
-    const wfJobId = createJob(other.project.id, null, {
+    const wfJobId = createWorkflow(other.project.id, {
       name: "wf",
       schedule: '{"every":60}',
-      workflowCommand: "echo hi",
+      command: "echo hi",
     })!.id;
     db.prepare(`UPDATE jobs SET next_run_at = 1 WHERE id = ?`).run(wfJobId);
 
-    const res = await workflowsNextGET(
+    const agentRes = await workflowsNextGET(
       agentReq(agentA.apiKey, "http://x/api/workflows/next"),
+      ctx({})
+    );
+    expect(agentRes.status).toBe(403);
+
+    const runnerA = createWorkflowRunner(other.org.id, "Server")!;
+    const peekRes = await workflowsNextGET(
+      workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next?peek=true"),
+      ctx({})
+    );
+    expect(peekRes.status).toBe(200);
+    const peekBody = await peekRes.json();
+    expect(peekBody.available).toBe(true);
+    const afterPeek = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number };
+    expect(afterPeek.n).toBe(0);
+
+    const res = await workflowsNextGET(
+      workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next"),
       ctx({})
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    // org-A agent must see nothing — the ready workflow lives in org-B.
-    expect(body).toBeNull();
-    // and the org-B job must NOT have been claimed (no run created for it)
+    expect(body.run).toBeDefined();
+    expect(body.job.kind).toBe("workflow");
+
     const claimed = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number };
-    expect(claimed.n).toBe(0);
+    expect(claimed.n).toBe(1);
   });
 
   it("rejects linking an org-B doc to an org-A job", async () => {
@@ -364,61 +389,90 @@ describe("POST /api/runs/[id]/activity (viewer may comment)", () => {
   });
 });
 
-describe("job creation: workflow-only vs agent/combined", () => {
-  it("POST /api/jobs rejects an agentId (points to the agent endpoint)", async () => {
+describe("job creation: workflows vs agent prerun gates", () => {
+  it("POST /api/jobs creates a first-class workflow job", async () => {
+    const { project, editor } = fixture();
+    const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "X", schedule: '{"every":60}', command: "echo hi" }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await jobsPOST(req, ctx({}));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.kind).toBe("workflow");
+    expect(body.workflow_command).toBe("echo hi");
+  });
+
+  it("POST /api/jobs rejects an agentId (agent jobs use the agent endpoint)", async () => {
     const { org, project, editor, agent } = fixture();
     void org;
     const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
       method: "POST",
-      body: JSON.stringify({ name: "X", schedule: '{"every":60}', workflowCommand: "echo hi", agentId: agent.id }),
+      body: JSON.stringify({ name: "X", schedule: '{"every":60}', command: "echo hi", agentId: agent.id }),
       headers: { "content-type": "application/json" },
     });
     const res = await jobsPOST(req, ctx({}));
     expect(res.status).toBe(400);
   });
 
-  it("POST /api/agents/:id/jobs creates a combined agent+gate job", async () => {
+  it("POST /api/agents/:id/jobs creates an agent job with a prerun gate", async () => {
     const { editor, agent } = fixture();
     const req = userReq(editor.id, "http://x/", {
       method: "POST",
-      body: JSON.stringify({ name: "Combined", schedule: '{"every":60}', workflowCommand: "exit 77" }),
+      body: JSON.stringify({ name: "Combined", schedule: '{"every":60}', prerunCommand: "exit 77" }),
       headers: { "content-type": "application/json" },
     });
     const res = await agentJobsPOST(req, ctx({ id: agent.id }));
     expect(res.status).toBe(201);
     const job = await res.json();
     expect(job.agent_id).toBe(agent.id);
-    expect(job.workflow_command).toBe("exit 77");
+    expect(job.kind).toBe("agent");
+    expect(job.prerun_command).toBe("exit 77");
   });
 });
 
-describe("agentless workflow-only run reporting", () => {
-  // Workflow-only runs have agent_id = null. The polling agent (authed for the
-  // org) must be able to report their status even though it doesn't "own" them.
-  it("an in-org agent can set status on an agentless run", async () => {
-    const { project, agent } = fixture();
-    const wfJob = createJob(project.id, null, { name: "WF", schedule: '{"every":60}', workflowCommand: "echo hi" })!;
+describe("workflow run reporting", () => {
+  // Workflow runs have agent_id = null. A workflow runner scoped to the org
+  // can report their status even though no agent owns them.
+  it("an in-org workflow runner can set status on a workflow run", async () => {
+    const { project } = fixture();
+    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
     const run = createRun(wfJob.id, null)!;
-    const req = agentReq(agent.apiKey, "http://x/", {
-      method: "POST",
-      body: JSON.stringify({ status: "done" }),
-      headers: { "content-type": "application/json" },
-    });
+    const runner = createWorkflowRunner(project.org_id, "Server")!;
     // status route is PUT
-    const putReq = new NextRequest("http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: req.headers });
+    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(200);
   });
 
-  it("an out-of-org agent cannot touch an agentless run", async () => {
+  it("a workflow runner cannot set status on an agent run", async () => {
+    const { org, run } = fixture();
+    const runner = createWorkflowRunner(org.id, "Server")!;
+    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
+    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
+  });
+
+  it("an agent cannot set status on a workflow run", async () => {
+    const { project, agent } = fixture();
+    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
+    const run = createRun(wfJob.id, null)!;
+    const putReq = agentReq(agent.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
+    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
+  });
+
+  it("an out-of-org workflow runner cannot touch a workflow run", async () => {
     const { project } = fixture();
-    const wfJob = createJob(project.id, null, { name: "WF", schedule: '{"every":60}', workflowCommand: "echo hi" })!;
+    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
     const run = createRun(wfJob.id, null)!;
     const other = otherOrgFixture();
+    const runner = createWorkflowRunner(other.org.id, "Other")!;
     const putReq = new NextRequest("http://x/", {
       method: "PUT",
       body: JSON.stringify({ status: "done" }),
-      headers: { authorization: `Bearer ${other.agent.apiKey}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${runner.apiKey}`, "content-type": "application/json" },
     });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
@@ -426,6 +480,18 @@ describe("agentless workflow-only run reporting", () => {
 });
 
 describe("agent self-ownership (within an org)", () => {
+  it("a workflow runner cannot trigger an agent job", async () => {
+    const { org, job } = fixture();
+    const runner = createWorkflowRunner(org.id, "Server")!;
+    const req = workflowRunnerReq(runner.apiKey, "http://x/", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await jobTriggerPOST(req, ctx({ id: job.id }));
+    expect(res.status).toBe(403);
+  });
+
   it("an agent cannot trigger another agent's job in the same org", async () => {
     const { project, job } = fixture();           // job belongs to agent A
     const agentB = createAgent(project.id, "DevB"); // same project/org, different agent

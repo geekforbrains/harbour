@@ -32,8 +32,8 @@ import { StatusDot } from "@/components/app/run-status";
 import { agentColor } from "@/lib/agent-color";
 
 type Job = {
-  id: string; agent_id: string | null; agent_name: string | null; name: string; description: string | null;
-  instructions: string | null; schedule: string; workflow_command: string | null;
+  id: string; kind: "agent" | "workflow"; agent_id: string | null; agent_name: string | null; name: string; description: string | null;
+  instructions: string | null; schedule: string; prerun_command: string | null; workflow_command: string | null;
   timeout_minutes: number; model: string | null; thinking: string | null;
   title_format: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
@@ -104,19 +104,21 @@ export default function JobDetailPage() {
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
+    const editingWorkflow = job?.kind === "workflow";
     try {
       await updateJob.mutateAsync({
         id,
         body: {
           name: editName,
           description: editDesc,
-          instructions: editInstructions,
+          instructions: editingWorkflow ? "" : editInstructions,
           schedule: serializeSchedule(editSchedule),
-          workflowCommand: editWorkflowCommand || undefined,
+          command: editingWorkflow ? editWorkflowCommand : undefined,
+          prerunCommand: editingWorkflow ? undefined : editWorkflowCommand,
           timeoutMinutes: editTimeout,
-          model: editModel || "",
-          thinking: editThinking || "",
-          titleFormat: editTitleFormat,
+          model: editingWorkflow ? "" : (editModel || ""),
+          thinking: editingWorkflow ? "" : (editThinking || ""),
+          titleFormat: editingWorkflow ? "" : editTitleFormat,
           docIds: editDocIds,
           envVarIds: editEnvVarIds,
         },
@@ -163,14 +165,13 @@ export default function JobDetailPage() {
     try {
       await deleteJob.mutateAsync(id);
     } catch { alert("Failed to delete job"); return; }
-    router.push(`/agents/${job?.agent_id}`);
+    router.push(job?.agent_id ? `/agents/${job.agent_id}` : "/jobs");
   }
 
   if (loading) return <PageLoading />;
   if (!job) return <div className="text-sm text-muted-foreground py-12 text-center">Job not found.</div>;
 
-  // v2 dropped jobs.workflow_only — a job is workflow-only iff it has no agent.
-  const isWorkflowOnly = !job.agent_id;
+  const isWorkflow = job.kind === "workflow";
 
   return (
     <div className="space-y-6">
@@ -191,20 +192,26 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.kind === "workflow" ? (job.workflow_command || "") : (job.prerun_command || "")); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-3 gap-x-4 rounded-lg border p-3">
-        <div className="flex items-center gap-2 text-sm">
-          <span
-            className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-            style={{ backgroundColor: agentColor(job.agent_name) }}
-          />
-          <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
-        </div>
+        {!isWorkflow ? (
+          <div className="flex items-center gap-2 text-sm">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
+              style={{ backgroundColor: agentColor(job.agent_name) }}
+            />
+            <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground truncate">Workflow</span>
+          </div>
+        )}
         {(job.model || job.thinking) && (
           <div className="flex items-center gap-2 text-sm">
             <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -225,19 +232,19 @@ export default function JobDetailPage() {
         </div>
       </div>
 
-      {job.instructions && <InstructionsBlock text={job.instructions} />}
+      {!isWorkflow && job.instructions && <InstructionsBlock text={job.instructions} />}
 
-      {job.workflow_command && (
+      {(isWorkflow ? job.workflow_command : job.prerun_command) && (
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Workflow</p>
-            {isWorkflowOnly ? (
-              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow Only</span>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">{isWorkflow ? "Workflow" : "Prerun"}</p>
+            {isWorkflow ? (
+              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Deterministic</span>
             ) : (
-              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow + Agent</span>
+              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Agent Gate</span>
             )}
           </div>
-          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">{job.workflow_command}</code>
+          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">{isWorkflow ? job.workflow_command : job.prerun_command}</code>
         </div>
       )}
 
@@ -422,35 +429,37 @@ export default function JobDetailPage() {
               <Label>Description</Label>
               <Input value={editDesc} onChange={e => setEditDesc(e.target.value)} />
             </div>
-            <div className="space-y-2">
-              <Label>Instructions</Label>
-              <Textarea value={editInstructions} onChange={e => setEditInstructions(e.target.value)} rows={4} className="max-h-[30vh] break-all" />
-            </div>
-            <div className="space-y-2">
-              <Label>Title Format</Label>
-              <Input
-                value={editTitleFormat}
-                onChange={e => setEditTitleFormat(e.target.value)}
-                placeholder={`e.g. "Issue #XXX — short summary"`}
-              />
-              <p className="text-xs text-muted-foreground">Optional. Tells the agent how to phrase each run title. Leave blank for a generic short sentence.</p>
-            </div>
+            {!isWorkflow && (
+              <>
+                <div className="space-y-2">
+                  <Label>Instructions</Label>
+                  <Textarea value={editInstructions} onChange={e => setEditInstructions(e.target.value)} rows={4} className="max-h-[30vh] break-all" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Title Format</Label>
+                  <Input
+                    value={editTitleFormat}
+                    onChange={e => setEditTitleFormat(e.target.value)}
+                    placeholder={`e.g. "Issue #XXX — short summary"`}
+                  />
+                  <p className="text-xs text-muted-foreground">Optional. Tells the agent how to phrase each run title. Leave blank for a generic short sentence.</p>
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label>Schedule</Label>
               <SchedulePicker schedule={editSchedule} onChange={setEditSchedule} />
             </div>
             <div className="space-y-2">
-              <Label>Workflow Command</Label>
+              <Label>{isWorkflow ? "Command" : "Prerun Command"}</Label>
               <Input value={editWorkflowCommand} onChange={e => setEditWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" />
-              <p className="text-xs text-muted-foreground">Exit 0 = success, 77 = skip, other = fail.</p>
-              {/* v2: whether a job is workflow-only is determined by absence of
-                  an agent, set at creation — not an editable toggle here. */}
+              <p className="text-xs text-muted-foreground">{isWorkflow ? "Exit 0 = done, 77 = skip, other = fail." : "Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."}</p>
             </div>
             <div className="space-y-2">
               <Label>Timeout (minutes)</Label>
               <Input type="number" min={1} value={editTimeout} onChange={e => setEditTimeout(parseInt(e.target.value) || 30)} />
             </div>
-            {agent?.type === "harbour" && agent.cli && (
+            {!isWorkflow && agent?.cli && (
               <ModelThinkingSelect
                 cli={agent.cli}
                 model={editModel}
@@ -509,7 +518,7 @@ export default function JobDetailPage() {
       />
 
       {/* Trigger Dialog */}
-      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflowOnly={isWorkflowOnly} />
+      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflow={isWorkflow} />
     </div>
   );
 }

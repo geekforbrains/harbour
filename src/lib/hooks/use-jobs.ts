@@ -35,7 +35,7 @@ export function useJobRuns(id: string, opts?: { enabled?: boolean }) {
   });
 }
 
-/** Create a workflow-only job (no agent). For agent jobs, POST to /api/agents/:id/jobs. */
+/** Create a deterministic workflow (no agent). For agent jobs, POST to /api/agents/:id/jobs. */
 export function useCreateWorkflowJob() {
   const qc = useQueryClient();
   const { projectId } = useScope();

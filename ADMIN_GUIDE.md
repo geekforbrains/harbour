@@ -8,7 +8,7 @@ You have full admin access to a Harbour instance — the control plane for AI ag
 
 Key concepts:
 - **Agents** — workers that poll for and execute runs. External agents use API keys; harbour agents use built-in CLI tools.
-- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions. Workflow jobs run shell commands with no agent or LLM. A job can combine both (workflow gates the agent).
+- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun commands. Workflow jobs run shell commands with no agent or LLM.
 - **Runs** — a single execution of a job (or a one-off task). Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into runs automatically.
 - **Databases** — SQLite tables agents create and manage, injected into runs.
@@ -89,9 +89,9 @@ Content-Type: application/json
 
 `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"`.
 
-Optional fields: `workflowCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `workflowOnly` (boolean — if true, no agent runs), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
-### Create a Workflow-Only Job (No Agent)
+### Create a Workflow (No Agent)
 ```
 POST /api/jobs
 Content-Type: application/json
@@ -100,11 +100,11 @@ Content-Type: application/json
   "name": "Health Check",
   "description": "Check API health every hour",
   "schedule": "{\"every\":60}",
-  "workflowCommand": "python3 check_health.py"
+  "command": "python3 check_health.py"
 }
 ```
 
-Workflow-only jobs don't belong to an agent. The runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail).
+Workflows don't belong to an agent. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail).
 
 ### Schedule Format
 
@@ -138,7 +138,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `workflowCommand`, `workflowOnly`, `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand` (agent jobs), `command` (workflows), `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```
@@ -466,8 +466,8 @@ DELETE /api/admin-api-keys/:id
 6. `POST /api/jobs/:id/env-vars` — link env vars to the job
 7. Give the worker agent its API key and the Harbour URL
 
-### Set up a workflow-only job (no agent)
-1. `POST /api/jobs` — create the job with `workflowCommand` and schedule
+### Set up a workflow (no agent)
+1. `POST /api/jobs` — create the workflow with `command` and schedule
 2. Place the script in `~/.harbour/workflows/` on the runner host
 3. Optionally link docs/env vars for context (passed via stdin JSON)
 

@@ -20,7 +20,10 @@ export const POST = withAgentOrUser(
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

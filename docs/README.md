@@ -8,7 +8,7 @@ How the pieces fit together. Read these to build your mental model.
 
 - [Agents](concepts/agents.md) — external vs. harbour, polling, the work-claim model
 - [Jobs and runs](concepts/jobs-and-runs.md) — schedules, the lifecycle, retries
-- [Workflows](concepts/workflows.md) — deterministic shell-command jobs, the three execution modes
+- [Workflows](workflows.md) — deterministic shell-command jobs and agent prerun commands
 - [Projects](concepts/projects.md) — the optional view-layer grouping
 - [Shared context](concepts/shared-context.md) — docs, databases, env vars, and how pinning works
 - [Captain](concepts/captain.md) — the in-browser CLI for operating the harbour

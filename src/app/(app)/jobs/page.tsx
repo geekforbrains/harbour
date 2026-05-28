@@ -15,15 +15,13 @@ import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useJobs } from "@/lib/hooks/use-jobs";
 
 type Job = {
-  id: string; agent_id: string | null; agent_name: string | null; name: string;
+  id: string; kind: "agent" | "workflow"; agent_id: string | null; agent_name: string | null; name: string;
   description: string | null; schedule: string;
   active: number; total_runs: number; skipped_runs: number; waiting_runs: number; pending_runs: number;
-  last_run_at: number | null; workflow_command: string | null;
+  last_run_at: number | null; prerun_command: string | null; workflow_command: string | null;
 };
 
-// v2 dropped the jobs.workflow_only column — a job is workflow-only iff it has
-// no agent. (workflow + agent = workflow_command set AND agent_id present.)
-const isWorkflowOnly = (j: Job) => !j.agent_id;
+const isWorkflow = (j: Job) => j.kind === "workflow";
 
 export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
@@ -54,8 +52,8 @@ export default function JobsPage() {
                     <span className="flex items-center gap-1"><Bot className="h-3 w-3" /> {job.agent_name}</span>
                   )}
                   <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}</span>
-                  {job.workflow_command && !isWorkflowOnly(job) && (
-                    <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">workflow + agent</span>
+                  {job.prerun_command && !isWorkflow(job) && (
+                    <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>
                   )}
                   {(job.total_runs > 0 || job.skipped_runs > 0) && <span className="hidden sm:inline">{job.total_runs} runs{job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}</span>}
                   {job.last_run_at && <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>}
@@ -101,8 +99,8 @@ export default function JobsPage() {
         emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No jobs yet. Create one to get started."
       >
-        {renderJobSection("Agent Jobs", jobs.filter(j => !isWorkflowOnly(j)))}
-        {renderJobSection("Workflow Jobs", jobs.filter(j => isWorkflowOnly(j)))}
+        {renderJobSection("Agent Jobs", jobs.filter(j => !isWorkflow(j)))}
+        {renderJobSection("Workflows", jobs.filter(j => isWorkflow(j)))}
       </ListState>
 
       <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />

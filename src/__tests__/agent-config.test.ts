@@ -6,6 +6,7 @@ import {
   createProject,
   createAgent,
   createJob,
+  createWorkflow,
   createRun,
   buildRunPayload,
 } from "@/lib/db/queries";
@@ -89,19 +90,20 @@ describe("/next payload carries live agent config", () => {
     expect(after.agent?.model).toBe("opus");
   });
 
-  it("omits the agent block for an agentless workflow-only run", () => {
+  it("omits the agent block for a deterministic workflow run", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Website")!;
-    const job = createJob(project.id, null, {
+    const job = createWorkflow(project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      workflowCommand: "echo hi",
+      command: "echo hi",
     })!;
     const run = createRun(job.id, null)!;
     const payload = buildRunPayload(run.id)!;
-    // No agent → no agent block, so resolveRunConfig takes its (legacy) fallback
-    // path. Workflow-only runs never spawn a CLI, but the contract must hold.
+    // No agent → no agent block. Workflow runs never spawn a CLI.
     expect(payload.agent).toBeUndefined();
+    expect(payload.job.kind).toBe("workflow");
+    expect(payload.job.command).toBe("echo hi");
   });
 });
 

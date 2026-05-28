@@ -232,7 +232,7 @@ Whichever path you took, harbour's state lives in one directory:
 | Terraform droplet | `/home/harbour/.harbour/` |
 | Bare-metal macOS | `~/.harbour/` |
 
-What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runners.json` (server-side runner config), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow gate scripts).
+What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runners.json` (server-side runner config), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
 
 Backup strategy: snapshot the directory. Restoring is "put it back, restart the service".
 
@@ -246,7 +246,7 @@ Backup strategy: snapshot the directory. Restoring is "put it back, restart the 
 | TLS / cert handling | Bring your own proxy | Caddy + Let's Encrypt baked in |
 | Auth gate | Bring your own | Basic Auth + fail2ban baked in |
 | Updates | `git pull && make rebuild` | `git pull && npm ci && npm run build && systemctl restart` |
-| Hosts the runner too | No (workflow-only jobs polled by `harbour-remote` if you enable the profile) | Yes (`harbour-agent-runner.service`) |
+| Hosts the runner too | Optional (`harbour agent run` / `harbour workflow run`) | Yes (install agent and workflow runner services as needed) |
 | Cost | Whatever your host costs | ~$12–24/mo droplet + DNS |
 
 If you start with Docker and outgrow it, the data directory is portable — copy `./data/` to the new host, point the new install at it, and you're moved.

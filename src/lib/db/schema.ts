@@ -119,15 +119,29 @@ export function initializeSchema(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    CREATE TABLE IF NOT EXISTS workflow_runners (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      api_key_hash TEXT NOT NULL UNIQUE,
+      labels TEXT NOT NULL DEFAULT '[]',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_polled_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,   -- nullable = workflow-only
+      kind TEXT NOT NULL DEFAULT 'agent' CHECK(kind IN ('agent','workflow')),
+      agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,   -- set for agent jobs, NULL for workflow jobs
       name TEXT NOT NULL,
       description TEXT,
       instructions TEXT,
       schedule TEXT NOT NULL,
-      workflow_command TEXT,
+      prerun_command TEXT,                  -- agent job gate: exit 0 continues, 77 skips, other fails
+      workflow_command TEXT,                -- workflow job command: no agent/LLM involved
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       model TEXT,
       thinking TEXT,
@@ -335,9 +349,10 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id);
 
     CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
+    CREATE INDEX IF NOT EXISTS idx_workflow_runners_org ON workflow_runners(org_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
-    CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(kind, agent_id, active, next_run_at);
 
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);

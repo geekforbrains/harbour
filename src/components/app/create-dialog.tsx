@@ -125,7 +125,7 @@ export function SelectedItems({
 /**
  * New Job dialog. v2 removed one-off "New Run" creation — ad-hoc runs now come
  * from triggering a scheduled job (see TriggerDialog / RunRow). This dialog
- * creates either an agent job (POST /api/agents/:id/jobs) or a workflow-only
+ * creates either an agent job (POST /api/agents/:id/jobs) or a workflow
  * job (POST /api/jobs).
  */
 export function CreateDialog({
@@ -163,9 +163,8 @@ export function CreateDialog({
   // Job fields
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
-  const [workflowCommand, setWorkflowCommand] = useState("");
-  const [agentEnabled, setAgentEnabled] = useState(true);
-  const [workflowEnabled, setWorkflowEnabled] = useState(false);
+  const [command, setCommand] = useState("");
+  const [kind, setKind] = useState<"agent" | "workflow">("agent");
   const [titleFormat, setTitleFormat] = useState("");
 
   // Default the agent select to the first agent once the list loads.
@@ -193,9 +192,8 @@ export function CreateDialog({
     setSubmitting(false);
     setDescription("");
     setSchedule(parseSchedule(null));
-    setWorkflowCommand("");
-    setAgentEnabled(true);
-    setWorkflowEnabled(false);
+    setCommand("");
+    setKind("agent");
     setTitleFormat("");
   }
 
@@ -210,20 +208,20 @@ export function CreateDialog({
 
   async function handleCreateJob(e: React.FormEvent) {
     e.preventDefault();
-    const isWorkflowOnly = workflowEnabled && !agentEnabled;
-    if (!name.trim() || (!isWorkflowOnly && !agentId) || submitting) return;
+    const isWorkflow = kind === "workflow";
+    if (!name.trim() || (!isWorkflow && !agentId) || (isWorkflow && !command.trim()) || submitting) return;
     setSubmitting(true);
 
     const body = {
       name,
       description: description || undefined,
-      instructions: agentEnabled ? (instructions || undefined) : undefined,
+      instructions: !isWorkflow ? (instructions || undefined) : undefined,
       schedule: serializeSchedule(schedule),
-      workflowCommand: workflowEnabled && workflowCommand ? workflowCommand : undefined,
-      workflowOnly: isWorkflowOnly ? true : undefined,
-      model: agentEnabled ? (model || undefined) : undefined,
-      thinking: agentEnabled ? (thinking || undefined) : undefined,
-      titleFormat: agentEnabled ? (titleFormat.trim() || undefined) : undefined,
+      command: isWorkflow ? command : undefined,
+      prerunCommand: !isWorkflow && command ? command : undefined,
+      model: !isWorkflow ? (model || undefined) : undefined,
+      thinking: !isWorkflow ? (thinking || undefined) : undefined,
+      titleFormat: !isWorkflow ? (titleFormat.trim() || undefined) : undefined,
       docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
       envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
     };
@@ -231,7 +229,7 @@ export function CreateDialog({
     try {
       // Workflow jobs are created in the active project (scoped POST); agent
       // jobs inherit their agent's project. v2 has no separate link step.
-      if (isWorkflowOnly) {
+      if (isWorkflow) {
         await createWorkflowJob.mutateAsync(body);
       } else {
         await createAgentJob.mutateAsync({ agentId, body });
@@ -248,9 +246,8 @@ export function CreateDialog({
     setAgentId(id);
     setModel("");
     setThinking("");
-    setAgentEnabled(true);
-    setWorkflowEnabled(false);
-    setWorkflowCommand("");
+    setKind("agent");
+    setCommand("");
   }
 
   const selectedAgent = agents.find(a => a.id === agentId);
@@ -309,7 +306,7 @@ export function CreateDialog({
           </DialogHeader>
 
           <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
-            {agentEnabled && sharedFields}
+            {kind === "agent" && sharedFields}
 
             <div className="space-y-2">
               <Label>Name</Label>
@@ -324,8 +321,8 @@ export function CreateDialog({
             <div className="space-y-2">
               <Label>Type</Label>
               <div className="flex gap-2">
-                <button type="button" onClick={() => { if (!agentEnabled || workflowEnabled) setAgentEnabled(!agentEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${agentEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Bot className="h-3.5 w-3.5" />Agent</button>
-                <button type="button" onClick={() => { if (!workflowEnabled || agentEnabled) setWorkflowEnabled(!workflowEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${workflowEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Terminal className="h-3.5 w-3.5" />Workflow</button>
+                <button type="button" onClick={() => setKind("agent")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${kind === "agent" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Bot className="h-3.5 w-3.5" />Agent Job</button>
+                <button type="button" onClick={() => setKind("workflow")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${kind === "workflow" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Terminal className="h-3.5 w-3.5" />Workflow</button>
               </div>
             </div>
 
@@ -334,21 +331,26 @@ export function CreateDialog({
               <SchedulePicker schedule={schedule} onChange={setSchedule} />
             </div>
 
-            {workflowEnabled && (
+            {kind === "workflow" && (
               <div className="space-y-2">
-                <Label>Workflow Command</Label>
-                <Input value={workflowCommand} onChange={e => setWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" required />
+                <Label>Command</Label>
+                <Input value={command} onChange={e => setCommand(e.target.value)} placeholder="e.g. python3 check_health.py" className="font-mono text-xs" required />
                 <p className="text-xs text-muted-foreground">
                   Exit 0 = success, 77 = skip, other = fail.
                 </p>
               </div>
             )}
 
-            {agentEnabled && (
+            {kind === "agent" && (
               <>
                 <div className="space-y-2">
                   <Label>Instructions</Label>
                   <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Prerun Command</Label>
+                  <Input value={command} onChange={e => setCommand(e.target.value)} placeholder="Optional, e.g. python3 check_prs.py" className="font-mono text-xs" />
+                  <p className="text-xs text-muted-foreground">Optional gate before the LLM. Exit 0 continues, 77 skips, other fails.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Title Format</Label>

@@ -95,10 +95,12 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   },
   "job": {
     "id": "uuid",
+    "kind": "agent",
     "name": "Morning Tweet",
     "instructions": "Before doing anything else, set a short title ...\n\n---\n\nWrite an engaging tweet about...",
+    "prerun": null,
+    "command": null,
     "workflow": null,
-    "workflow_only": false,
     "model": null,
     "thinking": null,
     "title_format": null,

@@ -21,6 +21,17 @@ export const GET = async (req: NextRequest) => {
     return NextResponse.json({ type: "user", user, orgs });
   }
 
+  if (identity.type === "workflow_runner") {
+    return NextResponse.json({
+      type: "workflow_runner",
+      runner: {
+        id: identity.runnerId,
+        name: identity.runnerName,
+        org_id: identity.orgId,
+      },
+    });
+  }
+
   const agent = getAgentById(identity.agentId);
   return NextResponse.json({ type: "agent", agent });
 };

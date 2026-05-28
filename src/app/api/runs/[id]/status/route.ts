@@ -14,13 +14,17 @@ export const GET = withAgentOrUser(
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     return NextResponse.json({ status: run.status });
   },
   {
     role: "viewer",
+    allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
   }
 );
@@ -31,7 +35,10 @@ export const PUT = withAgentOrUser(
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -47,6 +54,7 @@ export const PUT = withAgentOrUser(
   },
   {
     role: "editor",
+    allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
   }
 );

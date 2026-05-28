@@ -79,7 +79,7 @@ Step 4  Recurring schedule-triggered job past next_run_at? -> create run, advanc
 
 **Atomicity.** The whole sequence is a `db.transaction(() => ...)`.
 
-**Workflow-only counterpart.** `getNextWorkflowRun()` in `src/lib/db/runs.ts` runs the same shape for agentless `workflow_only=1` jobs (no agent_id), exposed at `GET /api/workflows/next`.
+**Workflow counterpart.** `getNextWorkflowRun()` in `src/lib/db/runs.ts` runs the same shape for `kind='workflow'` jobs, exposed at `GET /api/workflows/next` and authenticated with workflow-runner credentials.
 
 ## Run lifecycle
 
@@ -146,7 +146,7 @@ Key files:
 
 The runner streams CLI output to the server in batches (750 ms flush). All three providers emit normalized event types: `text_delta`, `tool_start`, `tool_end`, `thinking`, `info`, `error`, `result`. Frontend consumes these via SSE at `/api/runs/:id/output/stream`.
 
-Workflow-only jobs are handled in the same poll cycle (`runAgentlessWorkflows`); only the runner whose `url` resolves to `localhost`/`127.0.0.1`/`::1`/`0.0.0.0` picks those up — see `isLocalUrl` and `runAgents` in `bin/lib/runner.mjs` (around lines 775-808). Remote runners deliberately skip the agentless workflow queue because the workflow scripts live on the harbour host.
+Workflows are handled by `harbour workflow run`, which reads `~/.harbour/workflow-runners.json` and polls `/api/workflows/next` with workflow-runner credentials. Agent runners no longer claim deterministic workflow work.
 
 ## Frontend layout
 

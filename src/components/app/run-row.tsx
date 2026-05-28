@@ -15,9 +15,11 @@ export type RunRowData = {
   status: string;
   job_id: string;
   job_name: string;
+  job_kind?: "agent" | "workflow" | null;
   title?: string | null;
   job_active?: number;
   agent_name?: string | null;
+  job_prerun_command?: string | null;
   job_workflow_command?: string | null;
   created_at: number;
   updated_at: number;
@@ -34,9 +36,7 @@ export function RunRow({ run, showActions = true }: Props) {
   const [triggerOpen, setTriggerOpen] = useState(false);
   const updateJob = useUpdateJob();
   const toggling = updateJob.isPending;
-  // v2: workflow-only runs have no agent. (workflow + agent runs still have an
-  // agent_name and show the agent dot plus a terminal glyph.)
-  const isWorkflowOnly = !run.agent_name;
+  const isWorkflow = run.job_kind === "workflow" || !run.agent_name;
 
   async function handleToggleActive(e: React.MouseEvent) {
     e.preventDefault();
@@ -56,7 +56,7 @@ export function RunRow({ run, showActions = true }: Props) {
           <div className="text-sm font-medium truncate">{run.title || run.job_name}</div>
           <div className="text-xs text-muted-foreground truncate mt-0.5">{run.job_name}</div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground flex-wrap">
-            {isWorkflowOnly ? (
+            {isWorkflow ? (
               <><Terminal className="h-3 w-3" /><span>Workflow</span></>
             ) : (
               <>
@@ -64,7 +64,7 @@ export function RunRow({ run, showActions = true }: Props) {
                   className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
                   style={{ backgroundColor: agentColor(run.agent_name) }}
                 />
-                {run.job_workflow_command && <Terminal className="h-3 w-3" />}
+                {run.job_prerun_command && <Terminal className="h-3 w-3" />}
                 <span className="font-mono">{run.agent_name}</span>
               </>
             )}
@@ -92,7 +92,7 @@ export function RunRow({ run, showActions = true }: Props) {
         )}
       </Link>
       {showActions && (
-        <TriggerDialog jobId={run.job_id} jobName={run.job_name} open={triggerOpen} onOpenChange={setTriggerOpen} />
+        <TriggerDialog jobId={run.job_id} jobName={run.job_name} open={triggerOpen} onOpenChange={setTriggerOpen} workflow={isWorkflow} />
       )}
     </>
   );

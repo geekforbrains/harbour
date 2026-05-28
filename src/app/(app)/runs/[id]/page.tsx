@@ -712,7 +712,7 @@ export default function RunDetailPage() {
         </form>
       )}
 
-      {/* Live Output (agent runs only — workflow-only runs have no agent). */}
+      {/* Live Output (agent runs only — workflows have no agent). */}
       {run.agent_id && (
         <LiveOutput
           runId={run.id}

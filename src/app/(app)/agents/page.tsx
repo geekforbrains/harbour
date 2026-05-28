@@ -254,7 +254,7 @@ export default function AgentsPage() {
                   {getConnectCommand()}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  The command contains the agent API key — treat it like a password. Model, effort, and CLI tool are set here in harbour and applied on every run, so you never have to reconfigure the remote machine. If this agent&apos;s jobs use workflow gates, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour-agent/workflows/</code> there.
+                  The command contains the agent API key — treat it like a password. Model, effort, and CLI tool are set here in harbour and applied on every run, so you never have to reconfigure the remote machine. If this agent&apos;s jobs use prerun commands, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> there.
                 </p>
                 <DialogFooter>
                   <Button variant="outline" onClick={handleCopy}>

@@ -1,4 +1,4 @@
-import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
+import { loadRunnerConfigs, loadWorkflowRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
 import { getProvider, ensureWorkingDir, runCliTool, resolveRunConfig } from "./providers.mjs";
 import { spawn } from "child_process";
 import { mkdirSync } from "fs";
@@ -201,8 +201,7 @@ function buildPrompt(payload, apiKey, isResume) {
     prompt += "\n";
   }
 
-  // Workflow output is appended by the runner after executing the workflow command
-  // (see runSingleAgent — workflows are run as shell processes, not by the LLM)
+  // Prerun output is appended by the runner after executing the prerun command.
 
   prompt += apiPrompt;
 
@@ -215,7 +214,7 @@ function buildPrompt(payload, apiKey, isResume) {
  * Returns { code, stdout, stderr }.
  *
  * @param {object} opts
- * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow-only)
+ * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
  */
 function runWorkflow(command, payloadJson, cwd, opts = {}) {
@@ -301,7 +300,7 @@ export function shouldContinueEagerLoop(outcome, eager) {
  *   'poll-error' — fetch threw (network/server error)
  *   'done'       — run finished normally
  *   'waiting'    — run paused for human input
- *   'skipped'    — workflow gate exited 77, or run skipped
+ *   'skipped'    — prerun/workflow command exited 77, or run skipped
  *   'failed'     — CLI/workflow error, agent didn't set status, etc.
  *   'killed'     — user requested kill mid-run
  * `eager` reflects the live `agent.eager` flag from the /next payload (or the
@@ -357,19 +356,16 @@ async function processNextRun(runner) {
 
   console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
 
-  // Execute workflow command (if defined)
-  let workflowOutput = "";
-  const isWorkflowOnly = !!payload.job?.workflow_only;
-  if (!isResume && payload.job?.workflow) {
-    const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
-    mkdirSync(workflowDir, { recursive: true });
+  // Execute agent prerun command (if defined). This is a cheap gate to avoid
+  // spending LLM tokens when there is no work.
+  let prerunOutput = "";
+  if (!isResume && payload.job?.prerun) {
+    const prerunDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
+    mkdirSync(prerunDir, { recursive: true });
 
-    // Timeout: 30s for gate (workflow+agent), job timeout for workflow-only
-    const workflowTimeoutMs = isWorkflowOnly
-      ? (payload.job.timeout_minutes || 30) * 60 * 1000
-      : 30_000;
+    const prerunTimeoutMs = 30_000;
 
-    // Kill polling for workflow execution
+    // Kill polling for prerun execution
     const workflowKillController = new AbortController();
     let workflowKilled = false;
     const workflowKillPoll = setInterval(async () => {
@@ -379,14 +375,14 @@ async function processNextRun(runner) {
         if (res?.kill_requested) {
           workflowKilled = true;
           workflowKillController.abort();
-          console.log(`  [${agentName}] Kill requested during workflow — stopping`);
+          console.log(`  [${agentName}] Kill requested during prerun — stopping`);
         }
       } catch { /* best effort */ }
     }, KILL_POLL_INTERVAL_MS);
 
     try {
-      const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
-        timeoutMs: workflowTimeoutMs,
+      const wfResult = await runWorkflow(payload.job.prerun, JSON.stringify(payload), prerunDir, {
+        timeoutMs: prerunTimeoutMs,
         signal: workflowKillController.signal,
       });
       clearInterval(workflowKillPoll);
@@ -400,7 +396,7 @@ async function processNextRun(runner) {
 
       if (wfResult.code === 77) {
         // Skip — no work to do
-        console.log(`  [${agentName}] Workflow exited 77 — skipping`);
+        console.log(`  [${agentName}] Prerun exited 77 — skipping`);
         if (wfResult.stderr?.trim()) {
           try {
             await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() });
@@ -414,8 +410,8 @@ async function processNextRun(runner) {
 
       if (wfResult.code !== 0) {
         // Error — any non-zero except 77
-        console.error(`  [${agentName}] Workflow exited ${wfResult.code} — failed`);
-        const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
+        console.error(`  [${agentName}] Prerun exited ${wfResult.code} — failed`);
+        const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Prerun exited with code ${wfResult.code}`;
         try {
           await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
@@ -423,48 +419,23 @@ async function processNextRun(runner) {
         return { outcome: "failed", eager };
       }
 
-      // Exit 0 — success
-      if (isWorkflowOnly) {
-        // Workflow-only: log output and mark done
-        const output = wfResult.stdout?.trim();
-        if (output) {
-          try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
-          } catch { /* best effort */ }
-        }
-        try {
-          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
-        } catch { /* best effort */ }
-        console.log(`  [${agentName}] Workflow-only run ${runId} completed.`);
-        return { outcome: "done", eager };
-      }
-
-      // Workflow + agent: capture output for prompt context
-      workflowOutput = wfResult.stdout?.trim() || "";
+      // Exit 0 — success, capture output for prompt context
+      prerunOutput = wfResult.stdout?.trim() || "";
     } catch (err) {
       clearInterval(workflowKillPoll);
-      console.error(`  [${agentName}] Workflow command failed: ${err.message}`);
+      console.error(`  [${agentName}] Prerun command failed: ${err.message}`);
       try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Prerun error: ${err.message}` });
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
       return { outcome: "failed", eager };
     }
   }
 
-  // Workflow-only jobs should have returned above; if we get here with no CLI, fail
-  if (isWorkflowOnly) {
-    console.error(`  [${agentName}] Workflow-only job has no workflow command — failing`);
-    try {
-      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
-    return { outcome: "failed", eager };
-  }
-
-  // Build prompt — append workflow output as additional context
+  // Build prompt — append prerun output as additional context
   let prompt = buildPrompt(payload, apiKey, isResume);
-  if (workflowOutput) {
-    prompt += `## Workflow Output\n\n${workflowOutput}\n\n`;
+  if (prerunOutput) {
+    prompt += `## Prerun Output\n\n${prerunOutput}\n\n`;
   }
 
   // model/thinking were already resolved (job override > agent default) above.
@@ -752,31 +723,33 @@ async function runSingleAgent(runner) {
   console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
 }
 
-async function runAgentlessWorkflows(url, apiKey) {
-  console.log(`  [workflows] Polling...`);
+async function processNextWorkflow(runner) {
+  const { apiKey, name = "workflow", url } = runner;
+  console.log(`  [${name}] Polling workflows...`);
 
   let payload;
   try {
     payload = await apiCall(`${url}/api/workflows/next`, apiKey);
   } catch (err) {
-    console.error(`  [workflows] Poll failed: ${err.message}`);
-    return;
+    console.error(`  [${name}] Workflow poll failed: ${err.message}`);
+    return { outcome: "poll-error" };
   }
 
   if (!payload || !payload.run) {
-    console.log(`  [workflows] Nothing to do.`);
-    return;
+    console.log(`  [${name}] No workflow work.`);
+    return { outcome: "no-work" };
   }
 
   const runId = payload.run.id;
-  console.log(`  [workflows] Starting run ${runId} (${payload.job?.name || "unnamed"})`);
+  console.log(`  [${name}] Starting workflow run ${runId} (${payload.job?.name || "unnamed"})`);
 
-  if (!payload.job?.workflow) {
-    console.error(`  [workflows] No workflow command — failing`);
+  const command = payload.job?.command || payload.job?.workflow;
+  if (!command) {
+    console.error(`  [${name}] No workflow command — failing`);
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
-    return;
+    return { outcome: "failed" };
   }
 
   const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
@@ -794,13 +767,13 @@ async function runAgentlessWorkflows(url, apiKey) {
       if (res?.kill_requested) {
         killed = true;
         killController.abort();
-        console.log(`  [workflows] Kill requested — stopping`);
+      console.log(`  [${name}] Kill requested — stopping`);
       }
     } catch { /* best effort */ }
   }, KILL_POLL_INTERVAL_MS);
 
   try {
-    const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
+    const wfResult = await runWorkflow(command, JSON.stringify(payload), workflowDir, {
       timeoutMs: workflowTimeoutMs,
       signal: killController.signal,
     });
@@ -808,26 +781,26 @@ async function runAgentlessWorkflows(url, apiKey) {
 
     if (killed) {
       try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
-      return;
+      return { outcome: "killed" };
     }
 
     if (wfResult.code === 77) {
-      console.log(`  [workflows] Workflow exited 77 — skipping`);
+      console.log(`  [${name}] Workflow exited 77 — skipping`);
       if (wfResult.stderr?.trim()) {
         try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
       }
       try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" }); } catch { /* best effort */ }
-      return;
+      return { outcome: "skipped" };
     }
 
     if (wfResult.code !== 0) {
-      console.error(`  [workflows] Workflow exited ${wfResult.code} — failed`);
+      console.error(`  [${name}] Workflow exited ${wfResult.code} — failed`);
       const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
       try {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
-      return;
+      return { outcome: "failed" };
     }
 
     // Exit 0 — success
@@ -836,28 +809,26 @@ async function runAgentlessWorkflows(url, apiKey) {
       try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output }); } catch { /* best effort */ }
     }
     try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" }); } catch { /* best effort */ }
-    console.log(`  [workflows] Run ${runId} completed.`);
+    console.log(`  [${name}] Workflow run ${runId} completed.`);
+    return { outcome: "done" };
   } catch (err) {
     clearInterval(killPoll);
-    console.error(`  [workflows] Workflow command failed: ${err.message}`);
+    console.error(`  [${name}] Workflow command failed: ${err.message}`);
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
+    return { outcome: "failed" };
   }
 }
 
-// Workflow-only jobs (agentless) are meant to run on the server host, not on
-// remote worker machines. If every configured runner points at a remote URL
-// (non-localhost), we skip the /api/workflows/next poll so remote workers
-// don't grab jobs intended for the server box.
-function isLocalUrl(url) {
-  try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
-  } catch {
-    return false;
+async function runSingleWorkflowRunner(runner) {
+  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
+    const { outcome } = await processNextWorkflow(runner);
+    if (outcome !== "done" && outcome !== "skipped") return;
+    console.log(`  [${runner.name}] Continuing to next workflow (iter ${i + 1})...`);
   }
+  console.warn(`  [${runner.name}] Hit workflow iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
 }
 
 export async function runAgents() {
@@ -874,15 +845,19 @@ export async function runAgents() {
     work.push(runSingleAgent(runner));
   }
 
-  // Poll workflow-only jobs only against URLs this host is "local" to.
-  // A runner pointing at localhost means the server is on this machine, so
-  // we own the workflow-only queue for that URL. Remote runners skip it.
-  const localRunner = runners.find(r => isLocalUrl(r.url));
-  if (localRunner) {
-    work.push(runAgentlessWorkflows(localRunner.url, localRunner.apiKey));
-  }
-
   await Promise.allSettled(work);
 
+  console.log("Done.");
+}
+
+export async function runWorkflows() {
+  const runners = loadWorkflowRunnerConfigs();
+  if (runners.length === 0) {
+    console.log("No harbour workflow runners configured. Create and connect one from the dashboard.");
+    return;
+  }
+
+  console.log(`Polling ${runners.length} harbour workflow runner(s)...`);
+  await Promise.allSettled(runners.map(runSingleWorkflowRunner));
   console.log("Done.");
 }

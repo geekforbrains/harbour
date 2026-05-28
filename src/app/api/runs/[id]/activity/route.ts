@@ -27,7 +27,10 @@ export const POST = withAgentOrUser(
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== null && run.agent_id !== auth.agentId) {
+    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -40,8 +43,16 @@ export const POST = withAgentOrUser(
     }
 
     const authorType = auth.type === "user" ? "user" : "agent";
-    const authorId = auth.type === "user" ? auth.userId : auth.agentId;
-    const authorName = auth.type === "user" ? auth.displayName : auth.agentName;
+    const authorId = auth.type === "user"
+      ? auth.userId
+      : auth.type === "workflow_runner"
+        ? auth.runnerId
+        : auth.agentId;
+    const authorName = auth.type === "user"
+      ? auth.displayName
+      : auth.type === "workflow_runner"
+        ? auth.runnerName
+        : auth.agentName;
 
     const entry = addRunActivity(id, authorType, authorId, authorName, content);
 
@@ -60,6 +71,7 @@ export const POST = withAgentOrUser(
   },
   {
     role: "viewer",
+    allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
   }
 );

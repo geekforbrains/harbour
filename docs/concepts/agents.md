@@ -74,7 +74,7 @@ A harbour agent is the same agent record plus `type='harbour'` and a `cli`. When
 For each agent on each tick, the runner:
 
 1. `GET /api/agents/:id/next` — claim a run if one exists.
-2. If the run's job has a workflow command, run it (see [Workflows](workflows.md)).
+2. If the run's job has a prerun command, run it as a gate before invoking the LLM (see [Workflows](workflows.md)).
 3. Spawn the CLI tool with the prompt — instructions, docs, data, env vars, activity, attachments, and the API cheat-sheet.
 4. Stream JSONL output back via `POST /api/runs/:id/output` in 750ms-batched flushes.
 5. After the CLI exits, post the final summary as activity. If the agent didn't already set a terminal status, mark the run `failed` (the failsafe).
@@ -163,9 +163,9 @@ Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac
 Two operational notes:
 
 - **Reachability.** The remote machine has to reach the harbour URL embedded in the blob. Tailscale or any private mesh is the common pattern.
-- **Workflow scripts are local to the runner.** A workflow command is a shell command that the runner executes; the runner only knows about its own filesystem. Scripts under `~/.harbour/workflows/` need to exist on the remote machine, not on the harbour server. See [Workflows](workflows.md).
+- **Prerun scripts are local to the runner.** A prerun command is a shell command that the agent runner executes before the LLM; the runner only knows about its own filesystem. Scripts under `~/.harbour/workflows/` need to exist on the remote machine, not on the harbour server. See [Workflows](workflows.md).
 
-The runner also auto-detects whether *any* configured runner points at a localhost URL. If yes, that runner additionally polls `/api/workflows/next` for agentless workflow runs (see [Workflows](workflows.md)). Pure-remote installs skip that poll, since agentless workflow jobs are presumed to belong to the server's box.
+Deterministic workflows use separate workflow runners and are not polled by agent runners.
 
 ## Designing an agent team
 

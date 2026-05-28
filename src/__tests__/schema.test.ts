@@ -20,6 +20,8 @@ import {
   getAgentById,
   deleteAgent,
   createJob,
+  createWorkflow,
+  createWorkflowRunner,
   getJobById,
   createRun,
   getRunById,
@@ -209,20 +211,28 @@ describe("soft delete (archive)", () => {
 });
 
 // ===========================================================================
-// Workflow-only jobs (nullable agent_id)
+// Workflows and workflow runners
 // ===========================================================================
 
-describe("workflow-only jobs", () => {
-  it("allows a job with a null agent_id and a workflow command", () => {
+describe("workflows", () => {
+  it("creates workflows independently of agent jobs", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Ops")!;
-    const job = createJob(project.id, null, {
+    const workflow = createWorkflow(project.id, {
       name: "Health Check",
       schedule: '{"every":60}',
-      workflowCommand: "bash check.sh",
+      command: "bash check.sh",
     })!;
-    expect(job.agent_id).toBeNull();
-    expect(job.workflow_command).toBe("bash check.sh");
-    expect(job.project_id).toBe(project.id);
+    expect(workflow.agent_id).toBeNull();
+    expect(workflow.kind).toBe("workflow");
+    expect(workflow.workflow_command).toBe("bash check.sh");
+    expect(workflow.project_id).toBe(project.id);
+  });
+
+  it("creates workflow runner credentials scoped to an org", () => {
+    const org = createOrg("Acme")!;
+    const runner = createWorkflowRunner(org.id, "Server")!;
+    expect(runner.org_id).toBe(org.id);
+    expect(runner.apiKey).toMatch(/^hwf_/);
   });
 });

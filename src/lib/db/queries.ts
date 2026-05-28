@@ -3,6 +3,7 @@ export * from "./set-password-tokens";
 export * from "./orgs";
 export * from "./access";
 export * from "./agents";
+export * from "./workflow-runners";
 export * from "./jobs";
 export * from "./runs";
 export * from "./docs";

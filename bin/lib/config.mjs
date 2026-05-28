@@ -4,6 +4,7 @@ import os from "os";
 
 const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 const RUNNERS_FILE = path.join(HARBOUR_DIR, "runners.json");
+const WORKFLOW_RUNNERS_FILE = path.join(HARBOUR_DIR, "workflow-runners.json");
 const SESSIONS_FILE = path.join(HARBOUR_DIR, "sessions.json");
 
 export function getHarbourDir() {
@@ -20,6 +21,15 @@ export function loadRunnerConfigs() {
   if (!fs.existsSync(RUNNERS_FILE)) return [];
   try {
     return JSON.parse(fs.readFileSync(RUNNERS_FILE, "utf-8")).runners || [];
+  } catch {
+    return [];
+  }
+}
+
+export function loadWorkflowRunnerConfigs() {
+  if (!fs.existsSync(WORKFLOW_RUNNERS_FILE)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(WORKFLOW_RUNNERS_FILE, "utf-8")).runners || [];
   } catch {
     return [];
   }
@@ -51,6 +61,21 @@ export function listRunners() {
   console.log(`  ${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(15)} ${"─".repeat(10)} ${"─".repeat(30)}`);
   for (const r of runners) {
     console.log(`  ${(r.name || r.agentId).padEnd(20)} ${(r.cli || "—").padEnd(10)} ${(r.model || "—").padEnd(15)} ${(r.thinking || "—").padEnd(10)} ${r.url}`);
+  }
+  console.log();
+}
+
+export function listWorkflowRunners() {
+  const runners = loadWorkflowRunnerConfigs();
+  if (runners.length === 0) {
+    console.log("No harbour workflow runners configured.");
+    console.log("Create one from the dashboard and connect it with: harbour workflow connect <blob>");
+    return;
+  }
+  console.log(`\n  ${"NAME".padEnd(20)} URL`);
+  console.log(`  ${"─".repeat(20)} ${"─".repeat(30)}`);
+  for (const r of runners) {
+    console.log(`  ${(r.name || r.runnerId).padEnd(20)} ${r.url}`);
   }
   console.log();
 }

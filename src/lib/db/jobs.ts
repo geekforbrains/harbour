@@ -12,7 +12,7 @@ export function createJob(projectId: string, agentId: string | null, data: {
   description?: string;
   instructions?: string;
   schedule: string;
-  workflowCommand?: string;
+  prerunCommand?: string;
   model?: string;
   thinking?: string;
   titleFormat?: string;
@@ -26,18 +26,58 @@ export function createJob(projectId: string, agentId: string | null, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, agent_id, name, description, instructions, schedule, workflow_command, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, projectId, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
-      data.workflowCommand || null,
+      data.prerunCommand || null,
       data.model || null, data.thinking || null,
       data.titleFormat?.trim() || null,
       data.active !== false ? 1 : 0, nextRunAt
     );
 
     // Merge explicitly selected docs/env vars with pinned ones (within this project's scope)
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
+    if (allDocIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of allDocIds) linkStmt.run(id, docId);
+    }
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
+    if (allEnvVarIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of allEnvVarIds) linkStmt.run(id, envId);
+    }
+  });
+
+  create();
+  return getJobById(id);
+}
+
+export function createWorkflow(projectId: string, data: {
+  name: string;
+  description?: string;
+  schedule: string;
+  command: string;
+  timeoutMinutes?: number;
+  docIds?: string[];
+  envVarIds?: string[];
+  active?: boolean;
+}) {
+  const db = getDb();
+  const id = uuid();
+  const nextRunAt = data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
+
+  const create = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_command, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?)
+    `).run(
+      id, projectId, data.name, data.description || null, data.schedule,
+      data.command, data.timeoutMinutes ?? 30,
+      data.active !== false ? 1 : 0, nextRunAt
+    );
+
     const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
     if (allDocIds.size > 0) {
       const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
@@ -93,7 +133,7 @@ export function listJobsByAgent(agentId: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs
-    FROM jobs j WHERE j.agent_id = ? ORDER BY j.name
+    FROM jobs j WHERE j.kind = 'agent' AND j.agent_id = ? ORDER BY j.name
   `).all(agentId);
 }
 
@@ -117,7 +157,8 @@ export function updateJob(id: string, data: {
   description?: string;
   instructions?: string;
   schedule?: string;
-  workflowCommand?: string;
+  prerunCommand?: string;
+  command?: string;
   model?: string;
   thinking?: string;
   titleFormat?: string;
@@ -134,7 +175,8 @@ export function updateJob(id: string, data: {
   if (data.description !== undefined) { fields.push("description = ?"); values.push(data.description); }
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
-  if (data.workflowCommand !== undefined) { fields.push("workflow_command = ?"); values.push(data.workflowCommand); }
+  if (data.prerunCommand !== undefined) { fields.push("prerun_command = ?"); values.push(data.prerunCommand || null); }
+  if (data.command !== undefined) { fields.push("workflow_command = ?"); values.push(data.command || null); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.titleFormat !== undefined) { fields.push("title_format = ?"); values.push(data.titleFormat?.trim() || null); }

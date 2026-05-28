@@ -46,7 +46,7 @@ type Agent = {
   last_polled_at: number | null;
   created_at: number;
 };
-type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
+type Job = { id: string; kind: "agent" | "workflow"; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; prerun_command: string | null; workflow_command: string | null };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
 export default function AgentDetailPage() {
@@ -221,6 +221,7 @@ export default function AgentDetailPage() {
                   <span className="text-sm font-medium">{job.name}</span>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 mt-1 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}</span>
+                    {job.prerun_command && <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>}
                     {job.total_runs > 0 && <span className="hidden sm:inline">{job.total_runs} runs</span>}
                     {job.last_run_at && <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>}
                   </div>
@@ -367,7 +368,7 @@ export default function AgentDetailPage() {
                 {connectCommand()}
               </div>
               <p className="text-xs text-muted-foreground">
-                The command contains the agent API key. Treat it like a password. If this agent&apos;s jobs use workflow gates, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour-agent/workflows/</code> on that machine.
+                The command contains the agent API key. Treat it like a password. If this agent&apos;s jobs use prerun commands, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on that machine.
               </p>
               <DialogFooter>
                 <Button variant="outline" onClick={handleCopyConnect}>

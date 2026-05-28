@@ -50,7 +50,7 @@ function hashString(input: string): number {
  * column (editable), with this hash as the default/fallback.
  */
 export function agentColor(key: string | null | undefined): string {
-  if (!key) return "#71717a"; // neutral zinc — for agentless / workflow-only
+  if (!key) return "#71717a"; // neutral zinc for workflows/no-agent rows
   const idx = Math.floor((hashString(key) / 0x100000000) * AGENT_COLORS.length);
   return AGENT_COLORS[idx];
 }

@@ -48,7 +48,7 @@ Both `GET /api/agents/:id/next` and `GET /api/workflows/next` return either `nul
 ```
 {
   run:   { id, status, activity }
-  job:   { id, name, instructions, workflow, workflow_only,
+  job:   { id, kind, name, instructions, prerun, command,
            model, thinking, timeout_minutes }
   docs:  [ { id, title, content } ]
   data:  { <database name>: [ ...rows ] }
@@ -99,8 +99,8 @@ Both accept `?after=<id>` to resume from an integer cursor. `Content-Type: text/
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET | `/api/jobs` | `withAuth` | List all jobs (agent + workflow-only); honors `?projectId=` |
-| POST | `/api/jobs` | `withUserAuth` | Create an **agentless** workflow-only job |
+| GET | `/api/jobs` | `withAuth` | List agent jobs and workflows; honors `?projectId=` |
+| POST | `/api/jobs` | `withUserAuth` | Create a deterministic workflow |
 | GET | `/api/jobs/:id` | `withAuth` | Fetch one job |
 | PUT | `/api/jobs/:id` | `withAuth` | Update job |
 | DELETE | `/api/jobs/:id` | `withAuth` | Delete job |
@@ -237,7 +237,8 @@ Both accept `?after=<id>` to resume from an integer cursor. `Content-Type: text/
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET | `/api/workflows/next` | `withAuth` | Polling endpoint for **agentless** workflow runs (the runner calls this from the harbour-host machine only) |
+| GET | `/api/workflows/next` | `withWorkflowRunnerAuth` | Polling endpoint for workflow runners (`?peek=true` checks without claiming) |
+| GET/POST | `/api/workflow-runners` | `withOrgAuth` | List/create workflow runner credentials |
 
 ### Misc
 

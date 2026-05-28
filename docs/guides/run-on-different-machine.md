@@ -117,7 +117,7 @@ The split is straightforward but worth being explicit about.
 - The runner process itself.
 - The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever you picked.
 - Working directories at `~/.harbour/agents/<slugified-name>/` — this is where the CLI's `cwd` lives. Clone repos here.
-- **Workflow gate scripts.** If a job uses a workflow command (a shell command that runs as a gate before the LLM, see [Workflows](../concepts/workflows.md) when that page lands), the script must exist at `~/.harbour/workflows/` on the **remote**, not on the harbour server. The runner cd's into that directory and runs the command there. Recommendation: keep `~/.harbour/workflows/` in a git repo and sync it across machines like any other dotfile.
+- **Prerun scripts.** If a job uses a prerun command (a shell command that runs as a gate before the LLM), the script must exist at `~/.harbour/workflows/` on the **remote**, not on the harbour server. The runner cd's into that directory and runs the command there. Recommendation: keep `~/.harbour/workflows/` in a git repo and sync it across machines like any other dotfile.
 - Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the `/next` payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
 
 **On the harbour server:**
@@ -126,16 +126,16 @@ The split is straightforward but worth being explicit about.
 - The encryption key at `<HARBOUR_HOME>/encryption.key`.
 - Database (`harbour.db`) and uploads.
 
-## Agentless workflow jobs and remote runners
+## Workflows and remote runners
 
-Workflow-only jobs (no agent — just a shell command on a schedule, see the README's Workflows section) are picked up via `GET /api/workflows/next`. **The remote runner skips this endpoint.** Confirmed in [`bin/lib/runner.mjs`](../../bin/lib/runner.mjs) at `runAgents()`: it only polls `/api/workflows/next` if at least one configured runner has a `localhost`/`127.0.0.1` URL — i.e. the harbour server is on this same machine.
+Workflows (no agent, just a shell command on a schedule) are picked up via `GET /api/workflows/next` by workflow runners connected with `harbour workflow connect <blob>`.
 
 So:
 
-- Agentless workflow-only jobs always run on whichever machine has a runner pointed at `localhost`. Usually that's the harbour server box itself.
-- Remote runners pick up only the runs for the specific agents they were connected for.
+- Agent runners pick up only the runs for the specific agents they were connected for.
+- Workflow runners pick up deterministic workflow runs for their org.
 
-This is intentional — agentless workflow jobs (cron-style "ping this URL every hour") have no notion of "which machine should this run on", so they stay glued to the harbour server.
+Run the workflow runner on whatever machine owns the scripts and local dependencies for those deterministic jobs.
 
 ## Rotating the connect blob
 

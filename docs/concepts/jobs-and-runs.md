@@ -16,9 +16,9 @@ Jobs don't *do* anything on their own. They sit in the database and wait. When a
 Jobs come in two flavors:
 
 - **Agent jobs** — `agent_id` is set. The owning agent picks them up via `/api/agents/:id/next`.
-- **Workflow-only jobs** — `agent_id IS NULL`, `workflow_only = 1`. No LLM. The local runner picks these up via `/api/workflows/next`. See [Workflows](workflows.md).
+- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Workflow runners pick these up via `/api/workflows/next`. See [Workflows](workflows.md).
 
-A third shape, **workflow + agent**, is an agent job whose `workflow_command` runs first as a gate. Same job row, just with both fields populated.
+Agent jobs can also define a `prerun_command`, a gate that runs before the LLM and can skip the run.
 
 ## Triggers
 
@@ -47,7 +47,7 @@ Jobs fire on a schedule. `next_run_at` is set when the job is created and advanc
 | `0 */N * * *` | `{"every": N*60}` |
 | `M H * * 1-5` (and other DOW patterns) | `{"days": [...], "time": "HH:MM"}` |
 
-Anything that doesn't match returns `null` and the API rejects it with 400. `POST /api/agents/:id/jobs` and `PUT /api/jobs/:id` write the normalized JSON; `POST /api/jobs` (workflow-only) only validates via `isValidSchedule`, so a non-JSON string can still land in the column there. A startup migration normalizes any non-JSON `schedule` rows on schema init.
+Anything that doesn't match returns `null` and the API rejects it with 400. `POST /api/agents/:id/jobs`, `POST /api/jobs`, and `PUT /api/jobs/:id` write the normalized JSON.
 
 Intervals are timezone-agnostic: every 5 minutes is every 5 minutes wall-clock. Weekly schedules use the system timezone for the day-of-week and time matching, and `getNextRunTime` walks forward up to 7 days, then wraps.
 
@@ -78,7 +78,7 @@ Step 0 is important: if a previous `running` run is wedged past its job's `timeo
 
 `peek=true` runs the same checks read-only — useful as a guard before invoking your CLI tool.
 
-There's a parallel ladder for agentless workflow runs (`getNextWorkflowRun`) — same shape, but filtered to `agent_id IS NULL AND workflow_only = 1`. See [Workflows](workflows.md).
+There's a parallel ladder for workflow runs (`getNextWorkflowRun`) — same shape, but filtered to `kind = 'workflow'` and authenticated with workflow-runner credentials. See [Workflows](workflows.md).
 
 ## The run lifecycle
 

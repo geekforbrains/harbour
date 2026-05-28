@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getSession,
   authenticateAgent,
+  authenticateWorkflowRunner,
   authenticateAdminApiKey,
 } from "./db/queries";
 import {
@@ -35,7 +36,14 @@ type AgentIdentity = {
   projectId: string;
 };
 
-export type Identity = UserIdentity | AgentIdentity;
+type WorkflowRunnerIdentity = {
+  type: "workflow_runner";
+  runnerId: string;
+  runnerName: string;
+  orgId: string;
+};
+
+export type Identity = UserIdentity | AgentIdentity | WorkflowRunnerIdentity;
 
 // ── Authorized auth context handed to route handlers ─────────────────────────
 
@@ -58,7 +66,14 @@ export type AgentAuth = {
   projectId: string;
 };
 
-export type AuthContext = UserAuth | AgentAuth;
+export type WorkflowRunnerAuth = {
+  type: "workflow_runner";
+  runnerId: string;
+  runnerName: string;
+  orgId: string;
+};
+
+export type AuthContext = UserAuth | AgentAuth | WorkflowRunnerAuth;
 
 type RouteContext = { params: Promise<Record<string, string>> };
 
@@ -82,6 +97,16 @@ export function getIdentityFromRequest(req: NextRequest): Identity | null {
         agentId: agent.id,
         agentName: agent.name,
         projectId: agent.project_id,
+      };
+    }
+
+    const workflowRunner = authenticateWorkflowRunner(apiKey);
+    if (workflowRunner) {
+      return {
+        type: "workflow_runner",
+        runnerId: workflowRunner.id,
+        runnerName: workflowRunner.name,
+        orgId: workflowRunner.org_id,
       };
     }
 
@@ -306,6 +331,25 @@ export function withAgentAuth(handler: Handler<AgentAuth>) {
   };
 }
 
+export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
+  return async (req: NextRequest, ctx: RouteContext) => {
+    const identity = getIdentityFromRequest(req);
+    if (!identity) return unauthorized();
+    if (identity.type !== "workflow_runner") return forbidden();
+
+    return handler(
+      req,
+      {
+        type: "workflow_runner",
+        runnerId: identity.runnerId,
+        runnerName: identity.runnerName,
+        orgId: identity.orgId,
+      },
+      ctx
+    );
+  };
+}
+
 /**
  * Dual-identity authorization for resource routes that BOTH dashboard users and
  * harbour agents call (docs create/update, databases create + rows + columns,
@@ -321,6 +365,8 @@ export function withAgentOrUser(
   handler: Handler<AuthContext>,
   opts: {
     role: Role;
+    /** Permit workflow-runner credentials. Use only on workflow-run endpoints. */
+    allowWorkflowRunner?: boolean;
     /** Resolve the target org from route params; null if not yet known. */
     orgFromParams?: (params: Record<string, string>) => string | null;
   }
@@ -353,6 +399,24 @@ export function withAgentOrUser(
       );
     }
 
+    if (identity.type === "workflow_runner") {
+      if (!opts.allowWorkflowRunner) return forbidden();
+      if (resolvedOrg !== undefined) {
+        if (resolvedOrg === null) return forbidden();
+        if (resolvedOrg !== identity.orgId) return forbidden();
+      }
+      return handler(
+        req,
+        {
+          type: "workflow_runner",
+          runnerId: identity.runnerId,
+          runnerName: identity.runnerName,
+          orgId: identity.orgId,
+        },
+        ctx
+      );
+    }
+
     // User path
     let orgId = resolvedOrg ?? undefined;
     if (orgId === undefined) {
@@ -370,7 +434,7 @@ export function withAgentOrUser(
 /**
  * Verify a resource's owning project matches the calling agent's project.
  * Returns a 403 response on mismatch, or null when access is allowed.
- * A null resource project (e.g. an agentless workflow run) passes through.
+ * A null resource project (e.g. a workflow run with no agent) passes through.
  */
 export function requireAgentProject(
   auth: AgentAuth,
@@ -426,6 +490,9 @@ export function getActorFromAuth(auth: AuthContext): {
 } {
   if (auth.type === "user") {
     return { actorType: "user", actorId: auth.userId };
+  }
+  if (auth.type === "workflow_runner") {
+    return { actorType: "agent", actorId: auth.runnerId };
   }
   return { actorType: "agent", actorId: auth.agentId };
 }
