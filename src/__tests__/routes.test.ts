@@ -37,6 +37,7 @@ import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
 import { PUT as runStatusPUT, GET as runStatusGET } from "@/app/api/runs/[id]/status/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
+import { POST as workflowRunnersPOST } from "@/app/api/workflow-runners/route";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -545,5 +546,66 @@ describe("agent self-ownership (within an org)", () => {
     });
     const res = await agentDataPOST(req, ctx({ id: agent.id }));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/workflow-runners (create runner)", () => {
+  it("editor creates a runner; the connect blob decodes to {url,runnerId,apiKey,name}", async () => {
+    const { org, editor } = fixture();
+    const req = userReq(editor.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "CI", labels: ["linux"] }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await workflowRunnersPOST(req, ctx({}));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.name).toBe("CI");
+    expect(body.connect).toMatch(/^harbour workflow connect /);
+
+    const blob = body.connect.replace("harbour workflow connect ", "");
+    const decoded = JSON.parse(Buffer.from(blob, "base64").toString("utf-8"));
+    expect(decoded).toMatchObject({
+      runnerId: body.id,
+      apiKey: body.apiKey,
+      name: "CI",
+    });
+    expect(typeof decoded.url).toBe("string");
+  });
+
+  it("rejects an empty name with 400", async () => {
+    const { org, editor } = fixture();
+    const req = userReq(editor.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "   " }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await workflowRunnersPOST(req, ctx({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("a viewer cannot create a runner (editor role enforced)", async () => {
+    const { org, viewer } = fixture();
+    const req = userReq(viewer.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "CI" }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await workflowRunnersPOST(req, ctx({}));
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/runs/:id/activity (workflow_runner guard)", () => {
+  it("a workflow runner cannot post to an agent run's thread (403)", async () => {
+    const { org, run } = fixture(); // run belongs to an agent job (kind 'agent')
+    const runner = createWorkflowRunner(org.id, "CI");
+    const req = workflowRunnerReq(runner.apiKey, "http://x/", {
+      method: "POST",
+      body: JSON.stringify({ content: "hello" }),
+      headers: { "content-type": "application/json" },
+    });
+    const res = await activityPOST(req, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
   });
 });

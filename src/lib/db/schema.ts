@@ -10,6 +10,12 @@ export function getDb(): Database.Database {
     _db = new Database(dbPath());
     _db.pragma("journal_mode = WAL");
     _db.pragma("foreign_keys = ON");
+    // Two runners polling one org can race to claim the same run. With a busy
+    // timeout the loser waits for the winner's claim write instead of failing
+    // immediately with SQLITE_BUSY; the guarded claim UPDATEs in runs.ts (which
+    // only flip a run to 'running' while it is still scheduled/pending) then make
+    // the lost claim a no-op rather than a double-claim.
+    _db.pragma("busy_timeout = 5000");
     initializeSchema(_db);
   }
   return _db;

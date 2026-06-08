@@ -403,7 +403,11 @@ export function getAgentNextRun(agentId: string) {
     `).get(agentId) as any;
 
     if (pendingRun) {
-      db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ?`).run(pendingRun.id);
+      // Guard the claim: only flip it if it is still 'pending'. If a concurrent
+      // runner already claimed it, changes === 0 — back off this poll rather
+      // than double-claim a run another runner is now executing.
+      const claimed = db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ? AND status = 'pending'`).run(pendingRun.id);
+      if (claimed.changes !== 1) return null;
       return pendingRun.id as string;
     }
 
@@ -417,7 +421,9 @@ export function getAgentNextRun(agentId: string) {
     `).get(agentId, now) as any;
 
     if (scheduledRun) {
-      db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
+      // Guarded claim — see the pending branch above.
+      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`).run(scheduledRun.id);
+      if (claimed.changes !== 1) return null;
       db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
       return scheduledRun.id as string;
     }
@@ -484,7 +490,11 @@ export function getNextWorkflowRun(orgId: string) {
     `).get(now, orgId) as any;
 
     if (scheduledRun) {
-      db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
+      // Guarded claim — only if still 'scheduled', so a runner that lost the
+      // race to a sibling runner in the same org backs off instead of
+      // re-claiming a run that is already executing.
+      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`).run(scheduledRun.id);
+      if (claimed.changes !== 1) return null;
       db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
       return scheduledRun.id as string;
     }
