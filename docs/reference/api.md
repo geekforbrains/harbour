@@ -122,13 +122,13 @@ Both accept `?after=<id>` to resume from an integer cursor. `Content-Type: text/
 | DELETE | `/api/runs/:id` | `withUserAuth` | Delete run + uploads dir |
 | PUT | `/api/runs/:id/status` | `withAuth` + `requireAgentOwnership` | Set run status |
 | GET | `/api/runs/:id/activity` | `withAuth` | List activity entries |
-| POST | `/api/runs/:id/activity` | `withAuth` + `requireAgentOwnership` | Append activity. User comments on terminal runs flip status to `pending` for resume |
+| POST | `/api/runs/:id/activity` | `withAuth` + `requireAgentOwnership` | Append activity. User comments on terminal agent runs flip status to `pending` for resume; workflow runs accept runner output only (user comments → 400) |
 | GET | `/api/runs/:id/output` | `withAuth` | Buffered output events with `?after=<id>` cursor |
 | POST | `/api/runs/:id/output` | `withAuth` + `requireAgentOwnership` | Runner streams output here. Response includes `kill_requested` (piggyback) |
 | GET | `/api/runs/:id/output/stream` | `withAuth` | SSE stream of output events; emits `done` on terminal status |
 | GET | `/api/runs/:id/kill` | `withAuth` + `requireAgentOwnership` | Lightweight kill-flag poll for runner fallback |
-| POST | `/api/runs/:id/kill` | `withUserAuth` | Request kill (sets `kill_requested_at`); 400 for non-harbour agents, 409 for non-running runs |
-| POST | `/api/runs/:id/retry` | `withUserAuth` | Retry `failed`/`skipped`/`killed` → `pending` |
+| POST | `/api/runs/:id/kill` | `withUserAuth` | Request kill (sets `kill_requested_at`); applies to runner-backed agent and workflow runs; 409 for non-running runs |
+| POST | `/api/runs/:id/retry` | `withUserAuth` | Retry `failed`/`skipped`/`killed` — agent runs → `pending`, workflow runs → `scheduled` |
 | PUT | `/api/runs/:id/session` | `withAuth` + `requireAgentOwnership` | Runner reports the CLI session ID + cwd for resume |
 
 ### Run attachments

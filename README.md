@@ -241,12 +241,14 @@ Full API documentation is served at `/api/guide` and maintained in [GUIDE.md](GU
 ```
 scheduled → running → done
                     → failed
-                    → killed (harbour agent stopped mid-run)
+                    → killed (stopped mid-run from the dashboard)
                     → skipped (workflow determined nothing to do)
                     → waiting (needs human) → pending (human responded) → running → ...
 ```
 
-Failed, skipped, and killed runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll. Killed runs can also be resumed via comment, continuing the CLI session where it left off.
+The `waiting`/`pending` loop is for agent runs only — workflow runs are non-interactive, so they have no message thread and only move between `scheduled`, `running`, and the terminal statuses.
+
+Failed, skipped, and killed runs can be retried from the dashboard. An agent run goes back to `pending` and the agent picks it up on next poll; a workflow run is requeued as `scheduled` and the workflow runner claims a fresh attempt. Killed agent runs can also be resumed via comment, continuing the CLI session where it left off.
 
 ## Workflows
 

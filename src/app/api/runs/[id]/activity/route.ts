@@ -20,7 +20,8 @@ export const GET = withResourceAuth("run", "id", { role: "viewer" })(
 );
 
 // Viewers may comment (intentional — comments can resume a waiting run), and
-// agents post activity as they work.
+// agents post activity as they work. Workflow runs are the exception: their
+// activity log is runner output only, never a conversation (see guard below).
 export const POST = withAgentOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
@@ -33,6 +34,11 @@ export const POST = withAgentOrUser(
     if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    // Workflow runs are non-interactive: their activity log is runner output,
+    // not a message thread. Only the workflow runner may write to it.
+    if (run.job_kind === "workflow" && auth.type !== "workflow_runner") {
+      return NextResponse.json({ error: "Workflow runs do not have a message thread" }, { status: 400 });
+    }
 
     const body = await req.json() as { content?: string; attachment_ids?: string[] };
     const content = (body.content ?? "").trim();
@@ -42,7 +48,11 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "content or attachment_ids required" }, { status: 400 });
     }
 
-    const authorType = auth.type === "user" ? "user" : "agent";
+    const authorType = auth.type === "user"
+      ? "user"
+      : auth.type === "workflow_runner"
+        ? "workflow"
+        : "agent";
     const authorId = auth.type === "user"
       ? auth.userId
       : auth.type === "workflow_runner"

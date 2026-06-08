@@ -175,7 +175,7 @@ export function initializeSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS run_activity (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      author_type TEXT NOT NULL CHECK(author_type IN ('agent','user','system')),
+      author_type TEXT NOT NULL CHECK(author_type IN ('agent','user','system','workflow')),
       author_id TEXT,
       author_name TEXT,
       content TEXT,
@@ -379,6 +379,47 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
   `);
 
+  ensureRunActivityAuthorTypes(db);
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
+}
+
+/**
+ * In-place fix-up for databases created before 'workflow' was a valid
+ * run_activity.author_type. CREATE TABLE IF NOT EXISTS leaves the original
+ * CHECK in place and SQLite can't ALTER one, so rebuild the table once.
+ * Runs on every startup; no-op when the DDL already allows 'workflow'.
+ */
+function ensureRunActivityAuthorTypes(db: Database.Database) {
+  const row = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_activity'`
+  ).get() as { sql: string } | undefined;
+  if (!row || row.sql.includes("'workflow'")) return;
+
+  // FKs off so DROP TABLE doesn't fire run_attachments' ON DELETE SET NULL
+  // (pragma changes are illegal inside a transaction, so toggle outside it).
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE run_activity_v2 (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        author_type TEXT NOT NULL CHECK(author_type IN ('agent','user','system','workflow')),
+        author_id TEXT,
+        author_name TEXT,
+        content TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO run_activity_v2 SELECT id, run_id, author_type, author_id, author_name, content, created_at FROM run_activity;
+      DROP TABLE run_activity;
+      ALTER TABLE run_activity_v2 RENAME TO run_activity;
+      CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
+      CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
+      COMMIT;
+    `);
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
 }

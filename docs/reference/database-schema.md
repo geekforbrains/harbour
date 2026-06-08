@@ -107,13 +107,13 @@ A single execution of a job.
 Indexes: `idx_runs_job(job_id)`, `idx_runs_agent(agent_id)`, `idx_runs_status(status)`.
 
 ### `run_activity`
-Ordered log of human/agent/system messages on a run.
+Ordered log of human/agent/system messages on a run. On workflow runs this is runner output only (`workflow`/`system` authors) — never a conversation.
 
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
 | `run_id` | TEXT | NN, FK → `runs(id)` (CASCADE) | |
-| `author_type` | TEXT | NN, CHECK in (`agent`, `user`, `system`) | |
+| `author_type` | TEXT | NN, CHECK in (`agent`, `user`, `system`, `workflow`) | `workflow` = workflow-runner output |
 | `author_id` | TEXT | | |
 | `author_name` | TEXT | | |
 | `content` | TEXT | | |

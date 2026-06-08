@@ -42,7 +42,7 @@ type Activity = {
 type Run = {
   id: string; job_id: string; agent_id: string | null; status: string;
   title: string | null;
-  job_name: string; agent_name: string | null; agent_cli: string | null;
+  job_name: string; job_kind: string; agent_name: string | null; agent_cli: string | null;
   session_id: string | null; session_cwd: string | null;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
@@ -63,6 +63,7 @@ function AuthorIcon({ type }: { type: string }) {
   switch (type) {
     case "agent": return <Bot className="h-4 w-4" />;
     case "user": return <User className="h-4 w-4" />;
+    case "workflow": return <Terminal className="h-4 w-4" />;
     default: return <Cog className="h-4 w-4" />;
   }
 }
@@ -417,6 +418,8 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
 }
 
 const MANAGEABLE_STATUSES = ["waiting", "done", "failed", "skipped", "killed"];
+// Workflow runs are non-interactive — 'waiting' (needs human) doesn't apply.
+const WORKFLOW_MANAGEABLE_STATUSES = ["done", "failed", "skipped", "killed"];
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -489,7 +492,10 @@ export default function RunDetailPage() {
   }
 
   async function handleKill() {
-    if (!confirm("Kill this run? The CLI session will be saved so you can resume it with a comment.")) return;
+    const message = run?.job_kind === "workflow"
+      ? "Kill this run? The workflow command will be stopped — retry to run it again."
+      : "Kill this run? The CLI session will be saved so you can resume it with a comment.";
+    if (!confirm(message)) return;
     setKilling(true);
     try {
       await mutations.kill.mutateAsync();
@@ -522,7 +528,11 @@ export default function RunDetailPage() {
   // Kill button should only be clickable once per run — derive the visible
   // "killing" state from the server flag so it survives page refreshes too.
   const killInFlight = killing || !!run.kill_requested_at;
-  const canKill = run.status === "running" && !!run.agent_id;
+  const isWorkflow = run.job_kind === "workflow";
+  // Agent runs and workflow runs are both killable (the runner polls the kill
+  // flag for each); an agent run whose agent was deleted has no runner to stop.
+  const canKill = run.status === "running" && (!!run.agent_id || isWorkflow);
+  const manageableStatuses = isWorkflow ? WORKFLOW_MANAGEABLE_STATUSES : MANAGEABLE_STATUSES;
 
   return (
     <div className="space-y-6">
@@ -567,13 +577,13 @@ export default function RunDetailPage() {
                 <Button variant="outline" size="sm">View Job</Button>
               </Link>
             )}
-            {MANAGEABLE_STATUSES.includes(run.status) && (
+            {manageableStatuses.includes(run.status) && (
               <DropdownMenu>
                 <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
                   <MoreVertical className="h-3.5 w-3.5" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {MANAGEABLE_STATUSES.filter(s => s !== run.status).map(s => (
+                  {manageableStatuses.filter(s => s !== run.status).map(s => (
                     <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
                       Mark as {s}
                     </DropdownMenuItem>
@@ -617,12 +627,13 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      {/* Activity Log */}
+      {/* Activity Log — for workflow runs this is captured runner output, not
+          a conversation, so label it accordingly. */}
       <div className="space-y-1">
-        <SectionHeader>Activity</SectionHeader>
+        <SectionHeader>{isWorkflow ? "Output" : "Activity"}</SectionHeader>
         <div className="space-y-3">
           {run.activity.length === 0 ? (
-            <EmptyState>No activity yet.</EmptyState>
+            <EmptyState>{isWorkflow ? "No output yet." : "No activity yet."}</EmptyState>
           ) : (
             run.activity.map(entry => {
               const entryAttachments = (run.attachments ?? []).filter(a => a.activity_id === entry.id);
@@ -675,8 +686,10 @@ export default function RunDetailPage() {
         );
       })()}
 
-      {/* Reply Form (waiting, pending, done, failed — but not running) */}
-      {(run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
+      {/* Reply Form (waiting, pending, done, failed — but not running).
+          Workflow runs have no message thread — their activity log is runner
+          output only, so there is nothing to reply to. */}
+      {!isWorkflow && (run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
         <form
           onSubmit={handleSend}
           className={cn(

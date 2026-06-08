@@ -224,9 +224,11 @@ Valid statuses (the API accepts any of these in the body):
 
 `scheduled` is a server-managed status (assigned when a run is created from the dashboard or via `POST /api/jobs/:id/trigger`) and cannot be set by an agent.
 
+**Workflow runs are non-interactive.** Runs of workflow jobs (`kind: "workflow"`) accept only `running`, `done`, `failed`, `skipped`, and `killed` — submitting `waiting` or `pending` returns 400. They have no message thread: their activity log is runner output only, and user comments are rejected.
+
 When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
 
-**Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. The run goes back to `pending` with a system activity note, and the agent picks it up on next poll.
+**Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. An agent run goes back to `pending` with a system activity note, and the agent picks it up on next poll. A workflow run is requeued as `scheduled` so a workflow runner claims a fresh attempt.
 
 **Timeouts:** Each job has a configurable `timeout_minutes` (default 30). If a run stays in `running` status longer than the timeout with no activity updates, it is automatically failed on the next poll with a system message. This prevents stuck runs from blocking the agent.
 

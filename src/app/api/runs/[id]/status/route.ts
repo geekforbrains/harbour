@@ -3,7 +3,10 @@ import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 
-const VALID_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
+const AGENT_RUN_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
+// Workflow runs are non-interactive: no message thread, so the human-loop
+// statuses (waiting/pending) don't apply. Retry requeues them as 'scheduled'.
+const WORKFLOW_RUN_STATUSES = ["running", "done", "failed", "skipped", "killed"];
 
 // Lightweight status read. The full run detail (GET /api/runs/:id) is
 // withResourceAuth (user/admin only), so a runner can't use it to check the
@@ -43,8 +46,9 @@ export const PUT = withAgentOrUser(
     }
 
     const body = await req.json();
-    if (!body.status || !VALID_STATUSES.includes(body.status)) {
-      return NextResponse.json({ error: `status must be one of: ${VALID_STATUSES.join(", ")}` }, { status: 400 });
+    const validStatuses = run.job_kind === "workflow" ? WORKFLOW_RUN_STATUSES : AGENT_RUN_STATUSES;
+    if (!body.status || !validStatuses.includes(body.status)) {
+      return NextResponse.json({ error: `status must be one of: ${validStatuses.join(", ")}` }, { status: 400 });
     }
 
     const updated = updateRunStatus(id, body.status);

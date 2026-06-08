@@ -206,17 +206,19 @@ Content-Type: application/json
 
 Use this to respond to runs in `waiting` status. The run automatically transitions to `pending` when you post a response. `attachment_ids` is optional — upload attachments first, then reference them here.
 
+Workflow runs have no message thread — their activity log is runner output only, and posting to it returns 400.
+
 ### Retry a Failed/Skipped/Killed Run
 ```
 POST /api/runs/:id/retry
 ```
-Only works for runs whose status is `failed`, `skipped`, or `killed` — other statuses return 400. The run transitions back to `pending` for the agent to pick up.
+Only works for runs whose status is `failed`, `skipped`, or `killed` — other statuses return 400. An agent run transitions back to `pending` for the agent to pick up; a workflow run is requeued as `scheduled` for a workflow runner to claim.
 
-### Kill a Running Harbour-Agent Run
+### Kill a Running Run
 ```
 POST /api/runs/:id/kill
 ```
-Only works for `harbour`-type agent runs in `running` status. External-agent runs and non-running statuses return 400/409. The runner polls for the kill flag and exits its CLI session; commenting on a killed run resumes the session where it left off.
+Only works for runs in `running` status handled by a runner — `harbour`-type agent runs and workflow runs. External-agent runs and non-running statuses return 400/409. The runner polls for the kill flag and stops its child process; commenting on a killed agent run resumes the CLI session where it left off, while a killed workflow run is re-run via retry.
 
 ### Delete a Run
 ```

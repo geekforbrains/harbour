@@ -65,6 +65,21 @@ export function updateRunStatus(id: string, status: string) {
 }
 
 /**
+ * Requeue a workflow run for a fresh attempt. Workflow runs have no agent to
+ * resume a 'pending' run, so retries go back to 'scheduled' with
+ * scheduled_for = now — the next workflow runner poll claims it.
+ */
+export function requeueWorkflowRun(id: string) {
+  const db = getDb();
+  db.prepare(`
+    UPDATE runs SET status = 'scheduled', scheduled_for = unixepoch(),
+      completed_at = NULL, kill_requested_at = NULL, updated_at = unixepoch()
+    WHERE id = ?
+  `).run(id);
+  return getRunById(id);
+}
+
+/**
  * Mark a run for kill. The runner picks this up on its next kill-check and
  * SIGTERMs the CLI child. Returns true if the kill was recorded, false if the
  * run isn't in a killable state.

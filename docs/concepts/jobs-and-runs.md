@@ -119,7 +119,7 @@ When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances th
 POST /api/runs/:id/retry
 ```
 
-Allowed for `failed`, `skipped`, and `killed` runs. Flips the status to `pending` and adds a system activity entry. The agent's next poll picks it up at step 2 of the ladder above. Retry doesn't reset the activity log — the agent sees the prior attempts in `/next`'s `run.activity` and can act on them.
+Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pending` and the agent's next poll picks it up at step 2 of the ladder above; a workflow run is requeued as `scheduled` (with `scheduled_for = now`) so a workflow runner claims a fresh attempt. Both add a system activity entry. Retry doesn't reset the activity log — the agent sees the prior attempts in `/next`'s `run.activity` and can act on them.
 
 ### Kill (harbour agents only)
 

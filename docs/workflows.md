@@ -124,9 +124,10 @@ The workflow runner executes the command with:
 |---|---|
 | Working directory | `$HARBOUR_HOME/workflows`, default `~/.harbour/workflows` |
 | stdin | Full run payload JSON |
-| stdout | Captured at process exit |
+| stdout | Captured at process exit, posted as the final `workflow` activity entry |
 | stderr | Captured at process exit |
 | timeout | `job.timeout_minutes`, default 30 |
+| env | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY`, `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME` |
 
 Example script:
 
@@ -143,6 +144,29 @@ print(f"Checked external system for run {run_id}")
 ```
 
 The command should be idempotent. A retry starts the command fresh, not from a CLI session.
+
+## Live Progress Updates
+
+Workflow runs have no message thread — but a long-running script can still post breadcrumbs to its **Output** log so a human can watch progress before it exits. The runner injects the run's credentials into the script's environment:
+
+| Variable | Value |
+|---|---|
+| `HARBOUR_RUN_ID` | The current run's id |
+| `HARBOUR_API_KEY` | The workflow runner's API key |
+| `HARBOUR_URL` | Base URL of the Harbour server |
+
+Post an update any time during the run:
+
+```bash
+curl -s -X POST "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity" \
+  -H "Authorization: Bearer $HARBOUR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Fetched 42 rows, syncing..."}'
+```
+
+Each call appends a `workflow`-authored entry to the run's Output, visible on the dashboard immediately. These are status breadcrumbs only — there is no reply, and posting more than once is expected. The script's stdout is still captured and posted as a final entry when the command exits, so simple scripts need none of this.
+
+This is the same `POST /api/runs/:id/activity` endpoint agents use, but on a workflow run only the workflow runner key is accepted (user comments return 400). Keep updates terse and never echo secrets — Output is visible in the dashboard.
 
 ## Payload Shape
 
@@ -182,7 +206,7 @@ Linked docs, env vars, databases, and attachments are composed the same way as a
 | `77` | Mark run `skipped`; stderr is posted as activity if present |
 | other | Mark run `failed`; stderr is preferred, then stdout |
 
-There is no streaming for workflow output. If a command runs for ten minutes, the dashboard updates when it exits or times out.
+Stdout is not streamed line-by-line; the trimmed buffer is posted once when the command exits or times out. For mid-run visibility on a long command, have the script post breadcrumbs itself — see [Live Progress Updates](#live-progress-updates).
 
 ## Status, Kill, And Retry
 
@@ -197,7 +221,11 @@ Terminal statuses:
 | `failed` | Command exited non-zero, timed out, or runner hit an execution error |
 | `killed` | User requested kill while the command was running |
 
-Retrying a workflow run creates a fresh scheduled run for the same command. There is no agent session to resume.
+These are the only statuses a workflow run moves through (plus `scheduled` and `running`). The human-loop statuses — `waiting` and `pending` — are agent-run concepts and are rejected with 400 on workflow runs.
+
+Workflow runs also have no message thread. The activity log on a workflow run is captured runner output (stdout/stderr, recorded with author type `workflow`); user comments are rejected. If a workflow needs a human decision, that's a sign the work belongs in an agent job.
+
+Retrying a workflow run requeues the same run as `scheduled` with an immediate `scheduled_for`, so the next workflow runner poll claims a fresh attempt of the command. There is no agent session to resume.
 
 ## Agent Prerun Commands
 

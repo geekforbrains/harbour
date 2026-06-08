@@ -216,12 +216,16 @@ function buildPrompt(payload, apiKey, isResume) {
  * @param {object} opts
  * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
+ * @param {Record<string,string>} [opts.extraEnv] - env vars layered onto the
+ *   child's environment (job-linked secrets + HARBOUR_* run credentials), so a
+ *   script can expand `$VAR` and post live progress updates to its run.
  */
-function runWorkflow(command, payloadJson, cwd, opts = {}) {
-  const { timeoutMs = 30_000, signal } = opts;
+export function runWorkflow(command, payloadJson, cwd, opts = {}) {
+  const { timeoutMs = 30_000, signal, extraEnv } = opts;
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", command], {
       cwd,
+      env: { ...process.env, ...(extraEnv || {}) },
       stdio: ["pipe", "pipe", "pipe"],
       timeout: timeoutMs,
     });
@@ -772,10 +776,25 @@ async function processNextWorkflow(runner) {
     } catch { /* best effort */ }
   }, KILL_POLL_INTERVAL_MS);
 
+  // Run-scoped env handed to the script. HARBOUR_* let a script post live
+  // progress updates to its own Output log while it runs (workflow runs have
+  // no message thread — these breadcrumbs are the only mid-run visibility):
+  //   curl -X POST "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity" \
+  //     -H "Authorization: Bearer $HARBOUR_API_KEY" -d '{"content":"..."}'
+  // Job-linked env vars are layered in first (parity with agent runs, so
+  // scripts can expand `$SECRET`); HARBOUR_* win on any name collision.
+  const extraEnv = {
+    ...(payload.env || {}),
+    HARBOUR_RUN_ID: runId,
+    HARBOUR_API_KEY: apiKey,
+    HARBOUR_URL: url,
+  };
+
   try {
     const wfResult = await runWorkflow(command, JSON.stringify(payload), workflowDir, {
       timeoutMs: workflowTimeoutMs,
       signal: killController.signal,
+      extraEnv,
     });
     clearInterval(killPoll);
 
