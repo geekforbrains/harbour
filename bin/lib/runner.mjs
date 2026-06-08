@@ -216,12 +216,13 @@ function buildPrompt(payload, apiKey, isResume) {
  * @param {object} opts
  * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
+ * @param {number} [opts.killGraceMs] - ms to wait after SIGTERM before SIGKILL on abort
  * @param {Record<string,string>} [opts.extraEnv] - env vars layered onto the
  *   child's environment (job-linked secrets + HARBOUR_* run credentials), so a
  *   script can expand `$VAR` and post live progress updates to its run.
  */
 export function runWorkflow(command, payloadJson, cwd, opts = {}) {
-  const { timeoutMs = 30_000, signal, extraEnv } = opts;
+  const { timeoutMs = 30_000, signal, extraEnv, killGraceMs = 3000 } = opts;
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", command], {
       cwd,
@@ -234,6 +235,7 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     let stderr = "";
     let closeFired = false;
     let postExitTimer = null;
+    let sigkillTimer = null;
     // Workflows can background processes (dev servers, docker) that inherit
     // our stdout/stderr. Guard against "close" never firing by destroying
     // the pipes shortly after the workflow process itself exits.
@@ -243,6 +245,7 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     child.stderr.on("data", (data) => { stderr += data.toString(); });
     child.on("error", (err) => {
       if (postExitTimer) clearTimeout(postExitTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
       reject(err);
     });
     child.on("exit", () => {
@@ -255,21 +258,31 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     child.on("close", (code) => {
       closeFired = true;
       if (postExitTimer) clearTimeout(postExitTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
       resolve({ code, stdout, stderr });
     });
 
-    // Kill on abort signal
+    // Kill on abort: SIGTERM, then SIGKILL after a grace period in case the
+    // child traps/ignores SIGTERM (mirrors runCliTool). Without escalation a
+    // workflow that swallows SIGTERM would hang until the job timeout, leaving
+    // the run stuck `running` with the dashboard Kill button frozen.
     if (signal) {
-      if (signal.aborted) {
-        child.kill("SIGTERM");
-      } else {
-        signal.addEventListener("abort", () => child.kill("SIGTERM"), { once: true });
-      }
+      const terminate = () => {
+        try { child.kill("SIGTERM"); } catch {}
+        sigkillTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, killGraceMs);
+      };
+      if (signal.aborted) terminate();
+      else signal.addEventListener("abort", terminate, { once: true });
     }
 
-    // Pipe the payload to stdin
-    child.stdin.write(payloadJson);
-    child.stdin.end();
+    // Pipe the payload to stdin. A script that never reads stdin (or exits
+    // before we finish writing) closes the pipe early; swallow the resulting
+    // EPIPE rather than letting it surface as an unhandled stream error.
+    child.stdin.on("error", () => {});
+    try {
+      child.stdin.write(payloadJson);
+      child.stdin.end();
+    } catch { /* pipe already closed */ }
   });
 }
 
@@ -727,7 +740,25 @@ async function runSingleAgent(runner) {
   console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
 }
 
-async function processNextWorkflow(runner) {
+/**
+ * Map a finished workflow command to its terminal run status.
+ * Exit 0 = done, 77 = skip, any other non-zero = failed. A kill only wins when
+ * the command did NOT exit cleanly — a clean exit 0 that races a late kill
+ * request still counts as success, so a completed run is never mislabeled
+ * `killed`.
+ *
+ * @param {{ killed: boolean, code: number|null }} result
+ * @returns {'killed'|'skipped'|'done'|'failed'}
+ */
+export function workflowOutcome({ killed, code }) {
+  if (killed && code !== 0) return "killed";
+  if (code === 77) return "skipped";
+  if (code === 0) return "done";
+  return "failed";
+}
+
+export async function processNextWorkflow(runner, opts = {}) {
+  const { killPollIntervalMs = KILL_POLL_INTERVAL_MS } = opts;
   const { apiKey, name = "workflow", url } = runner;
   console.log(`  [${name}] Polling workflows...`);
 
@@ -774,7 +805,7 @@ async function processNextWorkflow(runner) {
       console.log(`  [${name}] Kill requested — stopping`);
       }
     } catch { /* best effort */ }
-  }, KILL_POLL_INTERVAL_MS);
+  }, killPollIntervalMs);
 
   // Run-scoped env handed to the script. HARBOUR_* let a script post live
   // progress updates to its own Output log while it runs (workflow runs have
@@ -798,12 +829,17 @@ async function processNextWorkflow(runner) {
     });
     clearInterval(killPoll);
 
-    if (killed) {
+    // A kill only wins if the command didn't already exit cleanly — see
+    // workflowOutcome. This stops a successful run that finished in the kill
+    // poll window from being mislabeled `killed`.
+    const outcome = workflowOutcome({ killed, code: wfResult.code });
+
+    if (outcome === "killed") {
       try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
       return { outcome: "killed" };
     }
 
-    if (wfResult.code === 77) {
+    if (outcome === "skipped") {
       console.log(`  [${name}] Workflow exited 77 — skipping`);
       if (wfResult.stderr?.trim()) {
         try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
@@ -812,7 +848,7 @@ async function processNextWorkflow(runner) {
       return { outcome: "skipped" };
     }
 
-    if (wfResult.code !== 0) {
+    if (outcome === "failed") {
       console.error(`  [${name}] Workflow exited ${wfResult.code} — failed`);
       const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
       try {
