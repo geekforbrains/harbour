@@ -1,6 +1,9 @@
 @README.md
 
-Harbour is a control plane for AI agents doing ongoing work. See README.md for full architecture, API surface, and design rationale.
+Harbour is a control plane for AI agents doing ongoing work. The product north
+star — vision, principles, requirements, and scope — is
+[docs/PRD.md](docs/PRD.md). README.md is the front door; [docs/](docs/README.md)
+maps every doc to its role (concepts, guides, and the technical reference).
 
 ## Tech
 

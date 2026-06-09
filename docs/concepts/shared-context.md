@@ -2,12 +2,14 @@
 
 Three top-level entities — markdown documents, agent-managed SQLite tables, and encrypted key-value pairs — that share one job: get the right context into a run without the agent having to ask. They're discussed together because the contract is the same:
 
-- They live at the **top level** of the data model. No `agent_id`, no `project_id`. Anyone can reference anyone.
-- They're **linked to jobs** via three identical junction tables: `job_docs`, `job_databases`, `job_env_vars`.
-- They're **injected into `/next`** when an agent polls — docs as content, databases as recent rows, env vars as a decrypted map.
-- Two of them (docs and env vars) support **pinning** for "auto-attach to all new things."
+- They belong to an **org** (`org_id`), optionally narrowed to a **project** (`project_id` is nullable — `NULL` means org-level, usable by every project in the org). See [Orgs & projects](projects.md).
+- They're **linked to a job** via three identical junction tables: `job_docs`, `job_databases`, `job_env_vars`.
+- They're **injected into `/next`** when an agent polls — docs as content, databases as recent rows, secrets as a decrypted map.
+- Two of them (docs and secrets) support **pinning** for "auto-attach to all new jobs."
 
-The differences are in *what* gets injected. Docs are full text. Databases are the last 100 rows of each linked table. Env vars are decrypted only at the moment of polling and never stored in plaintext.
+The differences are in *what* gets injected. Docs are full text. Databases are the last 100 rows of each linked table. Secrets are decrypted only at the moment of polling and never stored in plaintext.
+
+(The UI labels env vars **Secrets**; the table is still `env_vars`.)
 
 ## A worked example
 
@@ -128,7 +130,7 @@ Encryption is AES-256-GCM (`src/lib/encryption.ts`):
 | On-disk format | `<iv-hex>:<authTag-hex>:<ciphertext-hex>` (single TEXT column) |
 | Key location | `HARBOUR_ENCRYPTION_KEY` env var (preferred) or `~/.harbour/encryption.key` (auto-generated, mode 0600) |
 
-Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the `/next` payload, and an explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance. List endpoints never include the encrypted blob; you have to ask for a single var by id, and the request is gated by `withUserAuth`.
+Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the `/next` payload, and an explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance. List endpoints never include the encrypted blob; you have to ask for a single var by id, and the request is gated by `withResourceAuth` (editor role in the resource's org).
 
 Losing the key (deleting `~/.harbour/encryption.key` without a backup) renders all encrypted_value blobs unreadable. There is no recovery — back the file up, or set `HARBOUR_ENCRYPTION_KEY` from a secrets store.
 
