@@ -95,28 +95,20 @@ function prompt(rl, question) {
   return new Promise((resolve) => rl.question(question, (a) => resolve(a)));
 }
 
-// Hidden password prompt (no echo).
+// Hidden password prompt (no echo). Mutes readline's echo entirely while the
+// user types, then emits exactly one newline so the following prompt sits on
+// the line directly below. Letting the Enter echo through as well would print
+// a second newline and leave a blank line between the two password prompts.
 function promptHidden(rl, question) {
   return new Promise((resolve) => {
-    const stdin = process.stdin;
     process.stdout.write(question);
-    const onData = (char) => {
-      const s = char.toString();
-      if (s === "\n" || s === "\r" || s === "") return; // handled by line
-    };
-    // Mute echo by overriding the output write while typing.
     const origWrite = rl.output.write.bind(rl.output);
-    rl.output.write = (chunk) => {
-      // Allow the newline through so the prompt advances.
-      if (chunk.includes("\n")) origWrite(chunk);
-    };
+    rl.output.write = () => {}; // swallow echo, including the Enter newline
     rl.question("", (answer) => {
       rl.output.write = origWrite;
-      stdin.removeListener("data", onData);
       process.stdout.write("\n");
       resolve(answer);
     });
-    stdin.on("data", onData);
   });
 }
 
@@ -167,11 +159,21 @@ export async function runSetup(argv = []) {
     console.log("Harbour first-run setup — create the instance admin.\n");
     const email = (await prompt(rl, "Email: ")).trim();
     const displayName = (await prompt(rl, "Display name: ")).trim();
-    const password = await promptHidden(rl, "Password (min 8 chars): ");
-    const confirm = await promptHidden(rl, "Confirm password: ");
-    if (password !== confirm) {
-      console.error("Passwords do not match.");
-      process.exit(1);
+    // Loop on the password pair: a typo or mismatch warns and re-prompts from
+    // the main password rather than exiting and discarding the email/name above.
+    let password;
+    for (;;) {
+      password = await promptHidden(rl, "Password (min 8 chars): ");
+      if (password.length < 8) {
+        console.error("⚠ Password must be at least 8 characters. Try again.");
+        continue;
+      }
+      const confirm = await promptHidden(rl, "Confirm password: ");
+      if (password !== confirm) {
+        console.error("⚠ Passwords do not match. Try again.");
+        continue;
+      }
+      break;
     }
 
     const { email: created } = createAdmin({ email, displayName, password, force });
