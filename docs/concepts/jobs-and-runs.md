@@ -51,13 +51,11 @@ Anything that doesn't match returns `null` and the API rejects it with 400. `POS
 
 Intervals are timezone-agnostic: every 5 minutes is every 5 minutes wall-clock. Weekly schedules use the system timezone for the day-of-week and time matching, and `getNextRunTime` walks forward up to 7 days, then wraps.
 
-## One-off and triggered runs
+## Triggered runs
 
-Most runs come from a recurring job firing on schedule. Two other paths exist:
+Most runs come from a recurring job firing on schedule. For an ad-hoc run, **trigger an existing job**: `POST /api/jobs/:id/trigger` with optional `{"instructions": "..."}`. It inserts a fresh `scheduled` run with `extra_instructions` saved on the run; the runner appends those to `job.instructions` and adds an "Additional instructions: ..." system activity entry. The recurring schedule keeps ticking — a triggered run is one extra firing on top of the regular cadence.
 
-**One-off runs** — created from the dashboard's New Run dialog. `createOneOffRun` writes a hidden `one_off=1` job (so it's hidden from the Jobs page) and a `scheduled` run pointing at it. When the run reaches a terminal state, the backing job gets `active=0` and `next_run_at=NULL`, so it's truly one-shot.
-
-**Triggered runs** — `POST /api/jobs/:id/trigger` with optional `{"instructions": "..."}`. Inserts a fresh `scheduled` run for an existing recurring job, with `extra_instructions` saved on the run. The runner appends those to `job.instructions` in the prompt and adds a "Additional instructions: ..." system activity entry. The recurring schedule keeps ticking — a triggered run is one extra firing on top of the regular cadence.
+(v2 removed standalone "New Run" one-off creation; ad-hoc work is always a trigger on a job, so every run traces back to a job.)
 
 ## The polling ladder
 
@@ -98,7 +96,7 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 
 | Status | Meaning |
 |---|---|
-| `scheduled` | One-off or triggered, waiting for `scheduled_for <= now`. Recurring schedule-trigger jobs skip this and go straight to `running` on creation. |
+| `scheduled` | Triggered (or recurring not-yet-claimed), waiting for `scheduled_for <= now`. Recurring schedule-trigger jobs may go straight to `running` on creation. |
 | `running` | Agent is working. Activity is updating. Counts toward the "agent busy" check. |
 | `waiting` | Agent paused for human input. Surfaces on the dashboard. Doesn't block other jobs from firing. |
 | `pending` | Human responded — flipped automatically when a user posts activity to a `waiting` run. Next poll claims it. |
@@ -107,7 +105,7 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 | `skipped` | Workflow returned exit 77 — "nothing to do." |
 | `killed` | A user clicked Kill on a harbour-agent run. Resumable via comment. |
 
-When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances the job's `next_run_at` (or deactivates the job if it's `one_off`). `killed` is **terminal for the run but does not advance the job's schedule** — the user stopped it intentionally and may resume.
+When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances the job's `next_run_at`. `killed` is **terminal for the run but does not advance the job's schedule** — the user stopped it intentionally and may resume. Transitions are validated against a `LEGAL_RUN_TRANSITIONS` map at the single `updateRunStatus` chokepoint; an illegal edge returns **409**.
 
 ### Timeouts
 
@@ -127,14 +125,14 @@ Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pendi
 POST /api/runs/:id/kill
 ```
 
-Only allowed for runs whose agent has `type = 'harbour'` and whose status is `running`. Sets `runs.kill_requested_at`. The runner notices via two channels:
+Allowed on a `running` run. Sets `runs.kill_requested_at`; a Harbour runner polling the run picks up the flag and stops the CLI. The runner notices via two channels:
 
 1. **Piggyback** — every `POST /api/runs/:id/output` flush returns `{kill_requested: bool}`. While the CLI streams, this is hot-path latency (~750ms).
 2. **Fallback poll** — `GET /api/runs/:id/kill` every 10s. Catches stretches where the CLI is silent (long thinking, model-side stalls).
 
 Either fires an `AbortController` that SIGTERMs the CLI, waits 3s, then SIGKILLs. The runner saves the CLI session ID, posts a "Run killed by user. Comment on this run to resume…" activity message, and sets status `killed`. A user comment flips it back through `pending → running` and resumes the CLI session.
 
-External-agent runs return 400 from this endpoint — Harbour has no process to signal.
+An external agent doesn't poll the kill signal, so there's no process for Harbour to stop.
 
 ## What the agent gets
 

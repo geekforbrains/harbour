@@ -66,48 +66,19 @@ Databases don't pin. They're heavier — typically you want a job to see only th
 
 Markdown documents, stored revisioned. Each `docs` row has a title and metadata; each edit appends a new `doc_revisions` row with the full content. The latest revision's content is what gets injected into `/next` (resolved with a correlated subquery on `MAX(created_at)`).
 
-```sql
-CREATE TABLE docs (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  pinned INTEGER NOT NULL DEFAULT 0,
-  created_by_type TEXT,    -- 'user' or 'agent'
-  created_by_id TEXT,
-  ...
-);
-CREATE TABLE doc_revisions (
-  id TEXT PRIMARY KEY,
-  doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
-  content TEXT NOT NULL,
-  author_type TEXT, author_id TEXT,
-  created_at INTEGER NOT NULL
-);
-```
+(Columns — including the `org_id` / `project_id` dual-tier — in
+[database-schema.md](../reference/database-schema.md#docs).)
 
 Agents can create and update docs through `POST /api/docs` and `PUT /api/docs/:id`. Updates are revisions — there's no destructive edit. If an agent maintains a "Daily summary" doc, every day's update is a new row; the dashboard's revision viewer can walk the history.
 
 ## Databases
 
-Agent-managed SQLite tables that live in the same `harbour.db` file. The agent calls `POST /api/databases` with a name and column definitions; harbour creates a real table named `d_<sanitized_name>` (lowercase, alphanumeric, underscores, capped at 64 chars) with an auto-incrementing `_id INTEGER PRIMARY KEY` plus the agent's columns.
+Agent-managed SQLite tables that live in the same `harbour.db` file. The agent calls `POST /api/databases` with a name and column definitions; harbour creates a real table with a sanitized, globally-unique physical name and an auto-incrementing `_id INTEGER PRIMARY KEY` plus the agent's columns.
 
 Two tables track the metadata:
 
-```sql
-CREATE TABLE databases (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  table_name TEXT NOT NULL UNIQUE,   -- always 'd_<sanitized>'
-  ...
-);
-CREATE TABLE database_migrations (
-  id TEXT PRIMARY KEY,
-  database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
-  version INTEGER NOT NULL,
-  description TEXT,
-  sql TEXT NOT NULL,
-  ...
-);
-```
+(Columns in [database-schema.md](../reference/database-schema.md#databases).
+`databases`/`database_migrations` are dual-tier like docs and secrets.)
 
 Every schema change (CREATE, ALTER) records a `database_migrations` row, so the dashboard can show the schema's history.
 
@@ -146,7 +117,7 @@ CREATE TABLE job_env_vars   (job_id, env_var_id,   PRIMARY KEY(job_id, env_var_i
 
 All three use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/db/env var, same.
 
-Linking from the dashboard happens through the job edit page. Linking via API is `POST /api/jobs` (with `docIds`, `databaseIds`, `envVarIds` arrays) at create time, or job-edit endpoints later. Pinned ids are merged in automatically at create time as described above.
+Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs and secrets are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars}`. Pinned ids are merged in automatically at create time as described above.
 
 ## What's not shared
 

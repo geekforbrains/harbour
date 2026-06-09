@@ -78,7 +78,7 @@ For embeds: a plain `fetch` POST with JSON body.
 
 ## Auth
 
-The agent that owns the run (via `requireAgentOwnership`) can upload, as can any signed-in dashboard user. This matches the broader model: agents only manipulate runs they're actively working on; the dashboard user is privileged.
+Attachment routes use `withAgentOrUser`: an agent must belong to the run's org (it can only touch its own runs), and any org member with edit access can upload from the dashboard. See the [auth model](../reference/architecture.md#auth-model).
 
 ## Endpoints
 

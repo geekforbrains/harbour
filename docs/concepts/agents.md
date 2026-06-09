@@ -26,7 +26,8 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 |---|---|
 | `name` | Human label, also used to slugify the harbour workspace dir |
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
-| `type` | `external` or `harbour` |
+| `color` | identity hue on the agent's icon (round-robin default, user-selectable) |
+| `eager` | drain the queue back-to-back instead of waiting 60s between runs |
 | `cli` | `claude`, `codex`, or `gemini` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
@@ -53,7 +54,7 @@ The agent posts work back through endpoints baked into the `/next` payload's `ap
 
 ## Harbour agents
 
-A harbour agent is the same agent record plus `type='harbour'` and a `cli`. When you create one, the dashboard writes an entry to `~/.harbour/runners.json`:
+A harbour agent is the same agent record with a `cli` set — there's no stored `type` flag; a runner-backed agent is simply one that has a CLI (and a local or remote runner) configured. When you create one, the dashboard writes an entry to `~/.harbour/runners.json`:
 
 ```json
 {
@@ -136,7 +137,7 @@ Kill is two-tier: when the user clicks **Kill** the server sets `runs.kill_reque
 
 Killed harbour-agent runs save their session ID and post an activity message: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context." Commenting flips the run back to `pending` and the next poll resumes the CLI session.
 
-External agents can't be killed from Harbour — there's no process to signal. `POST /api/runs/:id/kill` returns 400 for `agent_type !== 'harbour'`.
+External agents can't be killed from Harbour — they don't poll the kill signal, so there's no process to stop. Kill is meaningful only for runner-backed (Harbour-run) agents.
 
 ## External agents in practice
 
@@ -158,7 +159,7 @@ External agents are scoped — the API key authenticates a single agent and can 
 
 ## Remote agents
 
-Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac, GPU work needs a workstation, scraping behind a residential IP needs a particular box. Mark an agent **remote** at creation and Harbour skips writing local runner config. You then run `harbour agent connect <base64-blob>` on the target machine; the blob carries `{url, agentId, apiKey, cli, name, model, thinking}` and writes the runner entry into the *target's* `~/.harbour/runners.json`.
+Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac, GPU work needs a workstation, scraping behind a residential IP needs a particular box. Mark an agent **remote** at creation and Harbour skips writing local runner config. You then run `harbour agent connect <base64-blob>` on the target machine; the blob is identity-only — `{url, agentId, apiKey, name}` — and writes the runner entry into the *target's* `~/.harbour/runners.json`. The agent's cli/model/thinking are resolved live from `/next`, so dashboard changes take effect without reconnecting.
 
 Two operational notes:
 
@@ -174,12 +175,12 @@ The "one run at a time" rule shapes how you scale across projects. Two patterns 
 - **One agent per role** (`Developer`, `Marketer`, `Reviewer`). Jobs queue behind each other on the same agent. Fine when work is bursty or daily.
 - **Per-project agents** (`ProjectA Developer`, `ProjectB Developer`). Each agent gets its own workspace, model, prompt context, and queue. Use [Projects](projects.md) to filter the dashboard down to one project at a time so the sidebar doesn't blow out.
 
-Docs, env vars, and databases are all top-level — you can attach the same `Brand Voice` doc and `STRIPE_API_KEY` env var to ten agents' worth of jobs without duplication.
+Docs, secrets, and databases are shared at the **org** level (or scoped to a project), so an org-level `Brand Voice` doc or `STRIPE_API_KEY` secret can serve every project in the org without duplication. See [Shared context](shared-context.md).
 
 ## Source-of-truth pointers
 
 - `src/lib/db/agents.ts` — agent CRUD, API key hashing, rotation.
-- `src/lib/db/schema.ts` — the `agents` table and the migrations that added `type`, `cli`, `model`, `thinking`, `remote`.
+- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `cli`, `model`, `thinking`, `color`, `eager`, `remote`, `runner_fingerprint`).
 - `src/app/api/agents/[id]/next/route.ts` — the polling endpoint and the `api.endpoints` builder for run payloads.
 - `src/app/api/agents/[id]/rotate-key/route.ts` — key rotation.
 - `bin/lib/runner.mjs` — the local runner: poll, spawn, stream, kill, finalize.
