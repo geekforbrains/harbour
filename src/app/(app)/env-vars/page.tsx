@@ -64,7 +64,7 @@ export default function EnvVarsPage() {
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
                 project_id reparent route exists; new env vars land in the active scope. */}
-            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
+            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Secret</Button>
           </div>
         }
       />
@@ -72,10 +72,10 @@ export default function EnvVarsPage() {
       <ListState
         scope={activeOrgId}
         scopeNeed="org"
-        scopeEntity="env vars"
+        scopeEntity="secrets"
         isEmpty={envVars.length === 0}
         emptyIcon={<KeyRound className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No env vars yet."
+        emptyMessage="No secrets yet."
       >
         <div className="space-y-2">
           {envVars.map(ev => (
@@ -99,7 +99,7 @@ export default function EnvVarsPage() {
 
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Env Var</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>New Secret</DialogTitle></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>

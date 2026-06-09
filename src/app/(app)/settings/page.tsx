@@ -288,7 +288,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
               <div>
                 <p className="text-sm font-medium">Delete project</p>
-                <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, jobs, docs, and env vars are not deleted.</p>
+                <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, jobs, docs, and secrets are not deleted.</p>
               </div>
               <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
                 <Trash2 className="h-4 w-4 mr-1.5" /> Delete
@@ -497,7 +497,7 @@ export default function SettingsPage() {
             <DialogTitle>Delete {activeProject?.name}?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove the project and all its links. Your agents, jobs, docs, and env vars will not be deleted.
+            This will remove the project and all its links. Your agents, jobs, docs, and secrets will not be deleted.
           </p>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>

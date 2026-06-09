@@ -153,13 +153,13 @@ export default function JobDetailPage() {
   async function handleLinkEnvVar(envVarId: string) {
     try {
       await linkMutations.linkEnvVar.mutateAsync(envVarId);
-    } catch { alert("Failed to link env var"); }
+    } catch { alert("Failed to link secret"); }
   }
 
   async function handleUnlinkEnvVar(envVarId: string) {
     try {
       await linkMutations.unlinkEnvVar.mutateAsync(envVarId);
-    } catch { alert("Failed to unlink env var"); }
+    } catch { alert("Failed to unlink secret"); }
   }
 
   const [showTrigger, setShowTrigger] = useState(false);
@@ -308,16 +308,16 @@ export default function JobDetailPage() {
         </section>
       )}
 
-      {/* Env Vars */}
+      {/* Secrets */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <SectionHeader>Env Vars</SectionHeader>
+          <SectionHeader>Secrets</SectionHeader>
           <Button variant="outline" size="sm" onClick={() => setShowEnvVars(true)}>
             <Plus className="h-3.5 w-3.5 mr-1" /> Add
           </Button>
         </div>
         {job.envVars.length === 0 ? (
-          <EmptyState>No env vars linked to this job.</EmptyState>
+          <EmptyState>No secrets linked to this job.</EmptyState>
         ) : (
           <div className="space-y-2">
             {job.envVars.map(ev => (
@@ -396,15 +396,15 @@ export default function JobDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Env Vars Dialog */}
+      {/* Add Secrets Dialog */}
       <Dialog open={showEnvVars} onOpenChange={setShowEnvVars}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add Env Vars</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Add Secrets</DialogTitle></DialogHeader>
           {(() => {
             const linkedIds = new Set(job.envVars.map(ev => ev.id));
             const available = allEnvVars.filter(ev => !linkedIds.has(ev.id));
             if (available.length === 0) {
-              return <p className="text-sm text-muted-foreground py-4 text-center">All env vars are already linked to this job.</p>;
+              return <p className="text-sm text-muted-foreground py-4 text-center">All secrets are already linked to this job.</p>;
             }
             return (
               <div className="space-y-1 max-h-80 overflow-y-auto">
@@ -518,7 +518,7 @@ export default function JobDetailPage() {
               onRemove={evid => setEditEnvVarIds(prev => prev.filter(i => i !== evid))}
               onAdd={() => setShowEditEnvVarPicker(true)}
               icon={KeyRound}
-              label="Env Vars"
+              label="Secrets"
               nameClass="font-mono"
             />
             <DialogFooter>
@@ -543,7 +543,7 @@ export default function JobDetailPage() {
       <PickerDialog
         open={showEditEnvVarPicker}
         onOpenChange={setShowEditEnvVarPicker}
-        title="Select Env Vars"
+        title="Select Secrets"
         items={allEnvVars}
         selectedIds={new Set(editEnvVarIds)}
         onToggle={evid => setEditEnvVarIds(prev => prev.includes(evid) ? prev.filter(i => i !== evid) : [...prev, evid])}

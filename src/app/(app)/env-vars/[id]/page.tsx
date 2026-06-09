@@ -73,7 +73,7 @@ export default function EnvVarDetailPage() {
       try {
         await update.mutateAsync(body);
       } catch {
-        alert("Failed to save env var");
+        alert("Failed to save secret");
         return;
       }
       // Clear cached decrypted value if value was changed
@@ -89,18 +89,18 @@ export default function EnvVarDetailPage() {
     try {
       await remove.mutateAsync();
     } catch {
-      alert("Failed to delete env var");
+      alert("Failed to delete secret");
       return;
     }
     router.push("/env-vars");
   }
 
   if (loading) return <PageLoading />;
-  if (!envVar) return <div className="text-sm text-muted-foreground py-12 text-center">Env var not found.</div>;
+  if (!envVar) return <div className="text-sm text-muted-foreground py-12 text-center">Secret not found.</div>;
 
   return (
     <div className="space-y-6">
-      <BackLink href="/env-vars" label="Env Vars" />
+      <BackLink href="/env-vars" label="Secrets" />
 
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
@@ -152,7 +152,7 @@ export default function EnvVarDetailPage() {
       {/* Edit Dialog */}
       <Dialog open={editing} onOpenChange={setEditing}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Edit Env Var</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Edit Secret</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
@@ -195,7 +195,7 @@ export default function EnvVarDetailPage() {
       {/* Delete Confirmation */}
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Delete Env Var</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Delete Secret</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             Delete <span className="font-mono font-medium text-foreground">{envVar.name}</span>? It will be removed from all jobs.
           </p>

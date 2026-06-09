@@ -297,7 +297,7 @@ export function CreateDialog({
         onRemove={id => setSelectedEnvVarIds(prev => prev.filter(i => i !== id))}
         onAdd={() => setShowEnvVarPicker(true)}
         icon={KeyRound}
-        label="Env Vars"
+        label="Secrets"
         nameClass="font-mono"
       />
     </>
@@ -412,7 +412,7 @@ export function CreateDialog({
       <PickerDialog
         open={showEnvVarPicker}
         onOpenChange={setShowEnvVarPicker}
-        title="Select Env Vars"
+        title="Select Secrets"
         items={envVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={new Set(selectedEnvVarIds)}
         onToggle={id => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
