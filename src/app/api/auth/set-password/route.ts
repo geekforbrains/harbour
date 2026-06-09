@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { consumeSetPasswordToken, createSession } from "@/lib/db/queries";
+import { sessionCookieOptions } from "@/lib/auth";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -43,12 +44,6 @@ export async function POST(req: NextRequest) {
 
   const sessionId = createSession(result.userId);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("harbour_session", sessionId, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30, // 30 days
-  });
+  response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req));
   return response;
 }

@@ -15,6 +15,41 @@ import {
   type ResourceKind,
 } from "./db/access";
 
+// ── Session cookie ───────────────────────────────────────────────────────────
+
+/**
+ * Whether the session cookie should carry the `Secure` attribute. Keyed to the
+ * browser-facing protocol, NOT NODE_ENV: behind a TLS-terminating proxy (Caddy)
+ * that protocol arrives via X-Forwarded-Proto; on a direct connection it's the
+ * request's own protocol.
+ *
+ * Tying `Secure` to `NODE_ENV === "production"` breaks local testing — a
+ * production build served over http://localhost would mark the cookie Secure,
+ * and browsers (notably Safari) refuse to store Secure cookies over http,
+ * silently dropping the session and bouncing the user back to /login. Chrome
+ * makes a localhost exception and accepts it, which is why it only fails in
+ * Safari.
+ */
+export function isHttpsRequest(req: NextRequest): boolean {
+  const forwarded = req.headers.get("x-forwarded-proto");
+  if (forwarded) return forwarded.split(",")[0]?.trim() === "https";
+  return req.nextUrl.protocol === "https:";
+}
+
+/** Options for the `harbour_session` cookie. `maxAge` defaults to 30 days. */
+export function sessionCookieOptions(
+  req: NextRequest,
+  maxAge: number = 60 * 60 * 24 * 30
+) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: isHttpsRequest(req),
+    path: "/",
+    maxAge,
+  };
+}
+
 // ── Identity ────────────────────────────────────────────────────────────────
 
 /**

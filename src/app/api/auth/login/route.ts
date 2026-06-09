@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser, createSession } from "@/lib/db/queries";
+import { sessionCookieOptions } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,13 +28,7 @@ export async function POST(req: NextRequest) {
       user: { id: user.id, email: user.email, displayName: user.display_name },
     });
 
-    response.cookies.set("harbour_session", sessionId, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-    });
+    response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req));
 
     return response;
   } catch {
