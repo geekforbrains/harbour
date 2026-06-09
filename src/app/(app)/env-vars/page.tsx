@@ -58,7 +58,7 @@ export default function EnvVarsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Env Vars"
+        title="Secrets"
         subtitle="Encrypted variables injected at runtime."
         actions={
           <div className="flex gap-2">

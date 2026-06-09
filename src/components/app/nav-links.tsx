@@ -26,7 +26,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/agents", label: "Agents", icon: Bot },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
-    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
+    { href: "/env-vars", label: "Secrets", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
