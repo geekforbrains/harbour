@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.0.0-beta.1 — 2026-06-09
+
+**Beta — not an official release yet.** The first public cut of the v2 rebuild. v2 is a clean break: the schema is rebuilt around multi-tenancy and there is **no v1 → v2 migration**, so v2 starts from a fresh database. First-run setup moves to the shell (`harbour setup`); web signup is gone.
+
+### Multi-tenancy (orgs & projects)
+
+- Harbour is now multi-tenant. An **instance admin** owns the install; work is organized into **orgs → projects**; and every agent, job, doc, secret, and database lives inside a project. Resources never cross org lines.
+- New v2 schema and access layer enforce the org → project hierarchy, and every API route was migrated to org/project authorization with role checks (`withUserAuth` / `withProjectAuth`).
+- Instance-admin management UI: create orgs, switch org/project from the sidebar, and manage people from a **Users** console. Instance admins see and manage every org.
+- Shared context is dual-tier: docs, secrets, and databases compose from org-level + project-level + job-linked sources into each run's `/next` payload.
+
+### Onboarding & auth
+
+- First-run setup is a shell flow (`harbour setup`, or `harbour admin create` for scripted installs) with argon2id password hashing and a token-based set-password link for inviting users. There is no unauthenticated web signup route to lock down.
+- The session cookie's `Secure` flag tracks the actual connection protocol (`X-Forwarded-Proto`, falling back to the request protocol), so a production build served over `http://localhost` works in every browser while real TLS deployments stay `Secure`.
+
+### Workflows
+
+- Standalone **workflow runners** — deterministic, shell-based scheduled jobs with no agent and no LLM, claimed via `GET /api/workflows/next` with workflow-runner credentials.
+- Non-interactive workflow runs with live runner updates, a hardened kill path (SIGTERM → SIGKILL escalation), and claim-race guards so two runners polling one org can't double-claim a run.
+
+### Runs
+
+- The run lifecycle is a mechanically-enforced state machine: a transition guard at the single `updateRunStatus` chokepoint, an execution-enforced finalize turn, and a flexible pre/postrun gate.
+
+### Agents
+
+- Per-agent **local vs. remote** choice at create time, with cli/model/thinking resolved live from the `/next` payload so a remote machine never needs reconfiguring when you change settings in the dashboard.
+- The `/next` agent block is authoritative over local runner config; runs inject database ids and columns so agents can write to shared tables.
+
+### Design & dashboard
+
+- New v2 design language — "monochrome chrome, chromatic signal" — across every page; the client data layer was rebuilt on React Query with org/project scope wiring and shared UI primitives.
+- The **Env Vars** feature is now labeled **Secrets** throughout the dashboard (the `/env-vars` route, `env_vars` table, and API are unchanged).
+
+### Fixes
+
+- `POST /api/jobs` rejects an `agentId` instead of silently dropping it; Captain requires an org scope and New Chat is deterministic; an agent can read its own run status; new users get org membership at creation; org-switcher dropdown grouping; tidier interactive `harbour setup` password prompts.
+
 ## v1.16.0 — 2026-05-20
 
 ### Runs
