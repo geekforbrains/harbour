@@ -147,6 +147,8 @@ export function initializeSchema(db: Database.Database) {
       instructions TEXT,
       schedule TEXT NOT NULL,
       prerun_command TEXT,                  -- agent job gate: exit 0 continues, 77 skips, other fails
+      postrun_command TEXT,                 -- post-agent hook (#29): runs after status finalization
+      postrun_gates INTEGER NOT NULL DEFAULT 0, -- 0 = informational (never changes status), 1 = enforcing (nonzero overrides done->failed)
       workflow_command TEXT,                -- workflow job command: no agent/LLM involved
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       model TEXT,

@@ -7,6 +7,9 @@ import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 import { defaultRunTitle } from "../run-title";
 
+// Creates a brand-new run already 'running'. There is no prior status to
+// transition from, so this INSERT is a deliberate bypass of the
+// updateRunStatus transition guard — the guard governs transitions, not births.
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
@@ -43,8 +46,68 @@ export function getRunWithActivity(id: string) {
   return { ...run, activity };
 }
 
+/**
+ * Legal run status transitions (current → set of allowed next statuses).
+ * This is the documented lifecycle made mechanical: a small lookup, enforced
+ * at the single chokepoint (updateRunStatus) so every caller — agent, user,
+ * runner — inherits it. It is NOT a state-machine engine; it is a constant.
+ *
+ *   scheduled → running                                     (poll claims it)
+ *   running   → waiting | done | failed | skipped | killed  (runner reports outcome)
+ *   waiting   → pending                                      (human responds, activity route)
+ *   pending   → running                                      (agent/runner claims, poll guard)
+ *   failed/skipped/killed → pending                          (retry route, resume)
+ *   done      → pending                                      (human resumes a finished run via comment)
+ *   done      → failed                                       (#29 postrun override)
+ *
+ * Idempotent self-transitions (e.g. running → running) are always allowed as
+ * no-ops: the runner re-reads status and must not error if it hasn't changed.
+ */
+const LEGAL_RUN_TRANSITIONS: Record<string, readonly string[]> = {
+  scheduled: ["running"],
+  running: ["waiting", "done", "failed", "skipped", "killed"],
+  waiting: ["pending"],
+  pending: ["running"],
+  failed: ["pending"],
+  skipped: ["pending"],
+  killed: ["pending"],
+  // done → pending: a finished run can be resumed by a human comment (activity
+  // route). done → failed: reserved for the postrun gate (#29) overriding a
+  // self-reported success that failed verification.
+  done: ["pending", "failed"],
+};
+
+/**
+ * Thrown when a caller asks for a run status transition that isn't in the
+ * documented lifecycle (LEGAL_RUN_TRANSITIONS). The status PUT route catches
+ * this and returns HTTP 409. `from`/`to` are exposed so callers can build a
+ * precise message without re-parsing.
+ */
+export class IllegalRunStatusTransition extends Error {
+  constructor(public readonly from: string, public readonly to: string) {
+    super(`Illegal run status transition: ${from} → ${to}`);
+    this.name = "IllegalRunStatusTransition";
+  }
+}
+
 export function updateRunStatus(id: string, status: string) {
   const db = getDb();
+
+  // Enforce the documented lifecycle at the chokepoint. Self-transitions are
+  // no-ops (the runner re-checks status). createRun (INSERT 'running') and
+  // requeueWorkflowRun (direct multi-column reset to 'scheduled') are
+  // deliberate, documented bypasses — see their comments.
+  const current = db.prepare(`SELECT status FROM runs WHERE id = ?`).get(id) as
+    | { status: string }
+    | undefined;
+  if (current) {
+    if (current.status === status) return getRunById(id); // idempotent no-op
+    const allowed = LEGAL_RUN_TRANSITIONS[current.status] ?? [];
+    if (!allowed.includes(status)) {
+      throw new IllegalRunStatusTransition(current.status, status);
+    }
+  }
+
   const completedAt = (status === "done" || status === "failed" || status === "skipped" || status === "killed")
     ? ", completed_at = unixepoch()"
     : ", completed_at = NULL";
@@ -68,6 +131,13 @@ export function updateRunStatus(id: string, status: string) {
  * Requeue a workflow run for a fresh attempt. Workflow runs have no agent to
  * resume a 'pending' run, so retries go back to 'scheduled' with
  * scheduled_for = now — the next workflow runner poll claims it.
+ *
+ * Deliberate bypass of updateRunStatus's transition guard: this is a
+ * multi-column reset (status + scheduled_for + completed_at + kill_requested_at)
+ * the single-column guard can't express, and the terminal → scheduled edge
+ * exists only here. Routing it through the guard would mean adding a
+ * terminal → scheduled edge AND still doing the column resets separately, so we
+ * keep it as one documented write.
  */
 export function requeueWorkflowRun(id: string) {
   const db = getDb();
@@ -694,6 +764,8 @@ export function buildRunPayload(runId: string) {
       name: job.name,
       instructions,
       prerun: job.prerun_command,
+      postrun: job.postrun_command,
+      postrun_gates: !!job.postrun_gates,
       command: isWorkflow ? job.workflow_command : null,
       workflow: isWorkflow ? job.workflow_command : null,
       model: job.model || null,

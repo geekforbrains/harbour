@@ -160,7 +160,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "status_options": ["done", "failed", "waiting"],
     "notes": [
       "Set a short run title via set_title before doing anything else — this is how humans identify the run on the dashboard.",
-      "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
+      "Set status to waiting if you need human input to continue (the run pauses until a human replies). The harness drives a dedicated finalize turn after your work, so you don't need to remember to set done/failed at the end.",
       "Post activity messages to log progress — these are visible on the dashboard.",
       "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
       "Full API spec available at the guide endpoint."

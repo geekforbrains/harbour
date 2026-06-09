@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
+import { getRunById, updateRunStatus, addRunActivity, IllegalRunStatusTransition } from "@/lib/db/queries";
 
 const AGENT_RUN_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
 // Workflow runs are non-interactive: no message thread, so the human-loop
@@ -47,12 +47,32 @@ export const PUT = withAgentOrUser(
 
     const body = await req.json();
     const validStatuses = run.job_kind === "workflow" ? WORKFLOW_RUN_STATUSES : AGENT_RUN_STATUSES;
+    // 400: not a valid status value. 409 (below): a valid value but an illegal
+    // transition from the run's current status (the lifecycle guard).
     if (!body.status || !validStatuses.includes(body.status)) {
       return NextResponse.json({ error: `status must be one of: ${validStatuses.join(", ")}` }, { status: 400 });
     }
 
-    const updated = updateRunStatus(id, body.status);
-    addRunActivity(id, "system", null, "System", `Status changed to **${body.status}**`);
+    const isNoOp = run.status === body.status;
+
+    let updated;
+    try {
+      updated = updateRunStatus(id, body.status);
+    } catch (err) {
+      if (err instanceof IllegalRunStatusTransition) {
+        return NextResponse.json(
+          { error: `Cannot change run status from ${err.from} to ${err.to}` },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
+    // Only log a status-change activity when the status actually changed — an
+    // idempotent self-transition is a no-op and a "Status changed" entry would
+    // be misleading.
+    if (!isNoOp) {
+      addRunActivity(id, "system", null, "System", `Status changed to **${body.status}**`);
+    }
 
     return NextResponse.json(updated);
   },

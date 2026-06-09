@@ -13,6 +13,8 @@ export function createJob(projectId: string, agentId: string | null, data: {
   instructions?: string;
   schedule: string;
   prerunCommand?: string;
+  postrunCommand?: string;
+  postrunGates?: boolean;
   model?: string;
   thinking?: string;
   titleFormat?: string;
@@ -26,12 +28,14 @@ export function createJob(projectId: string, agentId: string | null, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, postrun_command, postrun_gates, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, projectId, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
       data.prerunCommand || null,
+      data.postrunCommand || null,
+      data.postrunGates ? 1 : 0,
       data.model || null, data.thinking || null,
       data.titleFormat?.trim() || null,
       data.active !== false ? 1 : 0, nextRunAt
@@ -158,6 +162,8 @@ export function updateJob(id: string, data: {
   instructions?: string;
   schedule?: string;
   prerunCommand?: string;
+  postrunCommand?: string;
+  postrunGates?: boolean;
   command?: string;
   model?: string;
   thinking?: string;
@@ -176,6 +182,8 @@ export function updateJob(id: string, data: {
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
   if (data.prerunCommand !== undefined) { fields.push("prerun_command = ?"); values.push(data.prerunCommand || null); }
+  if (data.postrunCommand !== undefined) { fields.push("postrun_command = ?"); values.push(data.postrunCommand || null); }
+  if (data.postrunGates !== undefined) { fields.push("postrun_gates = ?"); values.push(data.postrunGates ? 1 : 0); }
   if (data.command !== undefined) { fields.push("workflow_command = ?"); values.push(data.command || null); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }

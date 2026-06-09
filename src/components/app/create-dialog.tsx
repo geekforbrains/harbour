@@ -164,6 +164,8 @@ export function CreateDialog({
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
   const [command, setCommand] = useState("");
+  const [postrunCommand, setPostrunCommand] = useState("");
+  const [postrunGates, setPostrunGates] = useState(false);
   const [kind, setKind] = useState<"agent" | "workflow">("agent");
   const [titleFormat, setTitleFormat] = useState("");
 
@@ -193,6 +195,8 @@ export function CreateDialog({
     setDescription("");
     setSchedule(parseSchedule(null));
     setCommand("");
+    setPostrunCommand("");
+    setPostrunGates(false);
     setKind("agent");
     setTitleFormat("");
   }
@@ -219,6 +223,8 @@ export function CreateDialog({
       schedule: serializeSchedule(schedule),
       command: isWorkflow ? command : undefined,
       prerunCommand: !isWorkflow && command ? command : undefined,
+      postrunCommand: !isWorkflow && postrunCommand ? postrunCommand : undefined,
+      postrunGates: !isWorkflow && postrunCommand ? postrunGates : undefined,
       model: !isWorkflow ? (model || undefined) : undefined,
       thinking: !isWorkflow ? (thinking || undefined) : undefined,
       titleFormat: !isWorkflow ? (titleFormat.trim() || undefined) : undefined,
@@ -351,6 +357,24 @@ export function CreateDialog({
                   <Label>Prerun Command</Label>
                   <Input value={command} onChange={e => setCommand(e.target.value)} placeholder="Optional, e.g. python3 check_prs.py" className="font-mono text-xs" />
                   <p className="text-xs text-muted-foreground">Optional gate before the LLM. Exit 0 continues, 77 skips, other fails.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Postrun Command</Label>
+                  <Textarea value={postrunCommand} onChange={e => setPostrunCommand(e.target.value)} placeholder="Optional, e.g. bash verify.sh" rows={2} className="font-mono text-xs max-h-[20vh]" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={postrunGates}
+                      onClick={() => setPostrunGates(v => !v)}
+                      disabled={!postrunCommand}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50 ${postrunGates ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                    >
+                      {postrunGates ? "Enforcing" : "Informational"}
+                    </button>
+                    <span className="text-xs text-muted-foreground">{postrunGates ? "Nonzero exit overrides done → failed." : "Runs on any outcome; never changes status."}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Optional hook after the run finishes. Receives the run payload on stdin.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Title Format</Label>

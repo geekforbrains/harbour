@@ -55,6 +55,11 @@ function formatToolInput(toolName, inputJson) {
 
 const PROVIDERS = {
   claude: {
+    // Resume capability: the finalize turn (issue #34) resumes the same CLI
+    // session via buildCommand(sessionId, isNewSession=false). All shipped
+    // providers support it; the flag lets the runner pick resume vs a fresh
+    // finalize turn generically without provider-specific branching.
+    canResume: true,
     generateSessionId() {
       return crypto.randomUUID();
     },
@@ -216,6 +221,7 @@ const PROVIDERS = {
   },
 
   codex: {
+    canResume: true,
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
       // generic config override instead: -c model_reasoning_effort=<level>.
@@ -329,6 +335,7 @@ const PROVIDERS = {
   },
 
   gemini: {
+    canResume: true,
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
       // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
       // by model selection) and requires --skip-trust for headless mode in

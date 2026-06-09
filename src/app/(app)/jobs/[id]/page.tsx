@@ -33,7 +33,7 @@ import { agentColor } from "@/lib/agent-color";
 
 type Job = {
   id: string; kind: "agent" | "workflow"; agent_id: string | null; agent_name: string | null; name: string; description: string | null;
-  instructions: string | null; schedule: string; prerun_command: string | null; workflow_command: string | null;
+  instructions: string | null; schedule: string; prerun_command: string | null; postrun_command: string | null; postrun_gates: number; workflow_command: string | null;
   timeout_minutes: number; model: string | null; thinking: string | null;
   title_format: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
@@ -93,6 +93,8 @@ export default function JobDetailPage() {
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   const [editWorkflowCommand, setEditWorkflowCommand] = useState("");
+  const [editPostrunCommand, setEditPostrunCommand] = useState("");
+  const [editPostrunGates, setEditPostrunGates] = useState(false);
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
@@ -115,6 +117,8 @@ export default function JobDetailPage() {
           schedule: serializeSchedule(editSchedule),
           command: editingWorkflow ? editWorkflowCommand : undefined,
           prerunCommand: editingWorkflow ? undefined : editWorkflowCommand,
+          postrunCommand: editingWorkflow ? undefined : editPostrunCommand,
+          postrunGates: editingWorkflow ? undefined : editPostrunGates,
           timeoutMinutes: editTimeout,
           model: editingWorkflow ? "" : (editModel || ""),
           thinking: editingWorkflow ? "" : (editThinking || ""),
@@ -192,7 +196,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.kind === "workflow" ? (job.workflow_command || "") : (job.prerun_command || "")); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.kind === "workflow" ? (job.workflow_command || "") : (job.prerun_command || "")); setEditPostrunCommand(job.postrun_command || ""); setEditPostrunGates(!!job.postrun_gates); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditTitleFormat(job.title_format || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -245,6 +249,16 @@ export default function JobDetailPage() {
             )}
           </div>
           <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">{isWorkflow ? job.workflow_command : job.prerun_command}</code>
+        </div>
+      )}
+
+      {!isWorkflow && job.postrun_command && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Postrun</p>
+            <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">{job.postrun_gates ? "Enforcing Gate" : "Informational"}</span>
+          </div>
+          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words">{job.postrun_command}</code>
         </div>
       )}
 
@@ -455,6 +469,26 @@ export default function JobDetailPage() {
               <Input value={editWorkflowCommand} onChange={e => setEditWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" />
               <p className="text-xs text-muted-foreground">{isWorkflow ? "Exit 0 = done, 77 = skip, other = fail." : "Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."}</p>
             </div>
+            {!isWorkflow && (
+              <div className="space-y-2">
+                <Label>Postrun Command</Label>
+                <Textarea value={editPostrunCommand} onChange={e => setEditPostrunCommand(e.target.value)} placeholder="e.g. bash verify.sh" rows={2} className="font-mono text-xs max-h-[20vh]" />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={editPostrunGates}
+                    onClick={() => setEditPostrunGates(v => !v)}
+                    disabled={!editPostrunCommand}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50 ${editPostrunGates ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                  >
+                    {editPostrunGates ? "Enforcing" : "Informational"}
+                  </button>
+                  <span className="text-xs text-muted-foreground">{editPostrunGates ? "Nonzero exit overrides done → failed." : "Runs on any outcome; never changes status."}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">Optional hook after the run finishes. Receives the run payload on stdin.</p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Timeout (minutes)</Label>
               <Input type="number" min={1} value={editTimeout} onChange={e => setEditTimeout(parseInt(e.target.value) || 30)} />
