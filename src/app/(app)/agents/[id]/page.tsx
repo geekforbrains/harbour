@@ -123,7 +123,7 @@ export default function AgentDetailPage() {
     if (!agent || !connectKey || typeof window === "undefined") return "";
     // Identity-only blob — cli/model/thinking come live from /next.
     const payload = { url: window.location.origin, agentId: agent.id, apiKey: connectKey, name: agent.name };
-    return `harbour-agent connect ${btoa(JSON.stringify(payload))}`;
+    return `npm run harbour -- agent connect ${btoa(JSON.stringify(payload))}`;
   }
 
   function handleCopyConnect() {

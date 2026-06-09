@@ -561,9 +561,9 @@ describe("POST /api/workflow-runners (create runner)", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.name).toBe("CI");
-    expect(body.connect).toMatch(/^harbour workflow connect /);
+    expect(body.connect).toMatch(/^npm run harbour -- workflow connect /);
 
-    const blob = body.connect.replace("harbour workflow connect ", "");
+    const blob = body.connect.replace("npm run harbour -- workflow connect ", "");
     const decoded = JSON.parse(Buffer.from(blob, "base64").toString("utf-8"));
     expect(decoded).toMatchObject({
       runnerId: body.id,

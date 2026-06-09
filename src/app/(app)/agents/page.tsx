@@ -146,7 +146,7 @@ export default function AgentsPage() {
   }
 
   function getConnectCommand() {
-    return `harbour-agent connect ${getConnectBlob()}`;
+    return `npm run harbour -- agent connect ${getConnectBlob()}`;
   }
 
   if (loading) {
@@ -178,7 +178,7 @@ export default function AgentsPage() {
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
           <p className="font-medium text-amber-600">Runner not active</p>
           <p className="text-muted-foreground mt-0.5">
-            You have Harbour agents but no runner polling. Run: <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour agent install</code>
+            You have Harbour agents but no runner polling. Run: <code className="text-xs bg-muted px-1 py-0.5 rounded">npm run harbour -- agent install</code>
           </p>
         </div>
       )}
@@ -248,7 +248,7 @@ export default function AgentsPage() {
               // harbour, so they stay editable here on the agent's page.
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run it, install <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour-agent</code> and run this command:
+                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run it, clone Harbour and run <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install</code>, then run this command:
                 </p>
                 <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
                   {getConnectCommand()}
@@ -270,7 +270,7 @@ export default function AgentsPage() {
                   <strong>{newAgent.name}</strong> is ready. The local runner picks it up on its next poll — no further setup needed.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  If no runner is installed yet, run <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour agent install</code> on this machine.
+                  If no runner is installed yet, run <code className="text-xs bg-muted px-1 py-0.5 rounded">npm run harbour -- agent install</code> on this machine.
                 </p>
                 <DialogFooter>
                   <Button onClick={handleCloseCreate}>Done</Button>

@@ -27,7 +27,7 @@ export const POST = withOrgAuth(
       name: runner.name,
     }), "utf-8").toString("base64");
 
-    return NextResponse.json({ ...runner, connect: `harbour workflow connect ${blob}` }, { status: 201 });
+    return NextResponse.json({ ...runner, connect: `npm run harbour -- workflow connect ${blob}` }, { status: 201 });
   },
   { role: "editor" }
 );

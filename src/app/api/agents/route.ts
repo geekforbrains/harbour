@@ -34,7 +34,8 @@ export const POST = withProjectAuth(
 
     // Local agents run on this machine, so register them with the co-located
     // runner now. Remote agents are registered on their own machine via
-    // `harbour-agent connect`. Either way the runner config is identity-only —
+    // `npm run harbour -- agent connect`. Either way the runner config is
+    // identity-only —
     // cli/model/thinking are resolved live from the /next payload, so changing
     // them in the dashboard takes effect without touching the runner.
     if (!remote) {
