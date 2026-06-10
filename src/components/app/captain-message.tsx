@@ -207,14 +207,11 @@ export function StreamingOutput({
 
   return (
     <div className="text-sm">
-      {/* Text content or thinking indicator */}
-      {textContent ? (
+      {textContent && (
         <div className="prose prose-sm dark:prose-invert max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{textContent}</ReactMarkdown>
         </div>
-      ) : streaming ? (
-        <ThinkingIndicator />
-      ) : null}
+      )}
 
       {/* Errors only — info/result are noise in chat context */}
       {errorEvents.map((evt) => (
@@ -225,6 +222,15 @@ export function StreamingOutput({
 
       {/* Tool calls collapsed behind a single summary line at the bottom */}
       <ToolCalls toolEvents={events} streaming={streaming} />
+
+      {/* Stays visible for the whole turn — providers that post complete
+          messages between long tool runs (codex) would otherwise look stalled
+          the moment the first text lands. */}
+      {streaming && (
+        <div className={textContent || events.length > 0 ? "mt-3" : ""}>
+          <ThinkingIndicator />
+        </div>
+      )}
     </div>
   );
 }

@@ -76,6 +76,34 @@ describe("codex provider (issue #24)", () => {
   });
 });
 
+describe("codex createParser", () => {
+  function agentMessage(text: string) {
+    return JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } });
+  }
+
+  it("inserts a paragraph break before each agent message after the first", () => {
+    // Codex emits complete, distinct agent_message items (narration before
+    // tool calls, then a summary). Consumers join text_delta events with "" —
+    // without separators the messages run together into one blob.
+    const parser = getProvider("codex").createParser();
+
+    const first = parser.parseLine(agentMessage("First message."));
+    const second = parser.parseLine(agentMessage("Second message."));
+
+    expect(first.events[0].content).toBe("First message.");
+    expect(second.events[0].content).toBe("\n\nSecond message.");
+  });
+
+  it("does not prefix the first message when earlier lines emitted no text", () => {
+    const parser = getProvider("codex").createParser();
+
+    parser.parseLine(JSON.stringify({ type: "thread.started", thread_id: "t-1" }));
+    const first = parser.parseLine(agentMessage("Hello."));
+
+    expect(first.events[0].content).toBe("Hello.");
+  });
+});
+
 describe("gemini provider (issue #24)", () => {
   const gemini = getProvider("gemini");
 

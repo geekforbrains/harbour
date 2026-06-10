@@ -253,6 +253,26 @@ const PROVIDERS = {
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
+    // Codex emits each agent_message as a complete, distinct message (narration
+    // before tool calls, then a final summary) — unlike claude's token deltas.
+    // Joining them with "" runs sentences together; this stateful wrapper
+    // inserts a paragraph break before every message after the first.
+    createParser() {
+      let hasEmittedText = false;
+      const base = this;
+      return {
+        parseLine(line) {
+          const parsed = base.parseLine(line);
+          for (const evt of parsed.events || []) {
+            if (evt.event_type === "text_delta" && evt.content) {
+              if (hasEmittedText) evt.content = `\n\n${evt.content}`;
+              hasEmittedText = true;
+            }
+          }
+          return parsed;
+        },
+      };
+    },
     parseLine(line) {
       try {
         const obj = JSON.parse(line);

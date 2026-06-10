@@ -124,4 +124,24 @@ describe("StreamingOutput", () => {
     // The single collapsed summary line is there instead
     expect(screen.getByText("2 tool calls")).toBeInTheDocument();
   });
+
+  it("keeps a working indicator visible while streaming even after text has arrived", () => {
+    // Providers that post complete messages between long tool runs (codex)
+    // produce text early and then go quiet — the spinner must not disappear
+    // with the first text or the turn looks stalled.
+    const { container } = render(
+      <StreamingOutput events={[evt("text_delta", "First narration message")]} streaming={true} />,
+    );
+
+    expect(screen.getByText(/First narration message/)).toBeInTheDocument();
+    expect(container.querySelector(".animate-spin")).toBeInTheDocument();
+  });
+
+  it("shows no working indicator when not streaming", () => {
+    const { container } = render(
+      <StreamingOutput events={[evt("text_delta", "Final answer")]} streaming={false} />,
+    );
+
+    expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
+  });
 });
