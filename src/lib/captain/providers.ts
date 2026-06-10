@@ -43,6 +43,10 @@ export type CliCommand = { binary: string; args: string[]; cwd: string };
 
 // Shape of a provider object from bin/lib/providers.mjs (untyped ESM).
 export type CliProvider = {
+  // Present only on providers that accept a caller-chosen session ID for new
+  // sessions (claude). Absent means the CLI mints its own ID on first run and
+  // must NOT be given one — it would be treated as a resume target.
+  generateSessionId?: () => string;
   buildCommand: (
     prompt: string,
     model: string | null,

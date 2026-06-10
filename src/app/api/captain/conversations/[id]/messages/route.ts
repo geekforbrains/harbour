@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
@@ -25,8 +24,10 @@ export const POST = withOrgAuth(
     const userMessage = createMessage(id, "user", prompt);
     const assistantMessage = createMessage(id, "assistant", "");
 
+    // Session ID generation is provider-aware and lives in spawn() — codex and
+    // gemini must start with null and capture the CLI-minted ID from output.
     const isNewSession = !conversation.session_id;
-    const sessionId = conversation.session_id || crypto.randomUUID();
+    const sessionId = conversation.session_id;
 
     spawn({
       conversationId: id,

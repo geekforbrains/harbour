@@ -70,6 +70,16 @@ export async function spawn(opts: {
   const abortController = new AbortController();
   const provider = await getProvider(opts.cli);
 
+  // Mirror the runner's session handling: only pre-generate a session ID when
+  // the provider supports caller-chosen IDs (claude's --session-id). Codex and
+  // gemini mint their own ID on first run — passing them a made-up one takes
+  // buildCommand down the resume path, which fails on a session that never
+  // existed. For those, start with null and capture the real ID from output.
+  let sessionId = opts.sessionId;
+  if (opts.isNewSession && !sessionId && provider.generateSessionId) {
+    sessionId = provider.generateSessionId();
+  }
+
   // Resolve working directory
   const defaultCwd = path.join(harbourHome(), "captain");
   const cwd = opts.cwd || defaultCwd;
@@ -81,7 +91,7 @@ export async function spawn(opts: {
     opts.prompt,
     opts.model,
     cwd,
-    opts.sessionId,
+    sessionId,
     opts.isNewSession,
     opts.thinking,
   );
@@ -89,7 +99,7 @@ export async function spawn(opts: {
   // Create stateful parser
   const parser = provider.createParser ? provider.createParser() : null;
 
-  let capturedSessionId = opts.sessionId;
+  let capturedSessionId = sessionId;
 
   console.log(
     `[captain] Spawning ${cmd.binary} with args:`,
@@ -137,6 +147,18 @@ export async function spawn(opts: {
       console.log(
         `[captain] CLI exited with code ${cliResult.code}, stderr: ${cliResult.stderr?.slice(0, 200)}`,
       );
+      // CLI errors land on stderr, not the JSONL stream — without this the
+      // conversation just sits there with an empty assistant message.
+      if (cliResult.code !== 0 && !cliResult.aborted) {
+        addCaptainOutput(opts.conversationId, opts.messageId, [
+          {
+            event_type: "error",
+            content:
+              cliResult.stderr?.trim().slice(-2000) || `CLI exited with code ${cliResult.code}`,
+            tool_name: null,
+          },
+        ]);
+      }
     } catch (err) {
       console.error(`[captain] Spawn error:`, err);
       // Process spawn error — write as error event
