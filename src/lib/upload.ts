@@ -23,6 +23,52 @@ export function sanitizeFilename(input: string): string {
   return stem + ext;
 }
 
+/**
+ * MIME types safe to render inline in the dashboard origin. The stored type is
+ * client-declared (attacker-controlled), so this is a strict allowlist:
+ * script-capable types (HTML, SVG, anything XML) must never be inline.
+ */
+const INLINE_SAFE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "application/pdf",
+  "text/plain",
+  "video/mp4",
+  "video/webm",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/wav",
+  "audio/mp4",
+]);
+
+export function isInlineSafe(mime: string | null | undefined): boolean {
+  if (!mime) return false;
+  const type = mime.split(";")[0].trim().toLowerCase();
+  // Belt-and-braces: XML can carry script even if the allowlist ever grows.
+  if (type.endsWith("+xml") || type === "text/xml" || type === "application/xml") return false;
+  return INLINE_SAFE_TYPES.has(type);
+}
+
+/**
+ * Build an RFC 6266/5987 Content-Disposition header value: an ASCII-safe
+ * quoted fallback plus filename* carrying the real (UTF-8, percent-encoded)
+ * name. No stored filename can inject headers — control chars are stripped
+ * from the fallback and percent-encoding covers everything else.
+ */
+export function contentDisposition(kind: "inline" | "attachment", filename: string): string {
+  const name = (filename || "file").replace(/[\x00-\x1f\x7f]/g, "");
+  const fallback = name
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\]/g, "") || "file";
+  // encodeURIComponent leaves !'()*~ bare; ' ( ) * are not RFC 5987 attr-chars
+  const encoded = (encodeURIComponent(name) || "file")
+    .replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+  return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 export type StagedUpload = {
   filename: string;      // original filename (sanitized)
   mimeType: string;

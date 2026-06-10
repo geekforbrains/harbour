@@ -31,6 +31,12 @@ Two cards waiting on a stuck job, you don't know why. You open Captain.
 
 Total time to fix: under a minute, no terminal opened.
 
+## The security boundary
+
+Be clear-eyed about what Captain is: a server-side shell with a chat UI in front of it. Sending a message requires the **editor** role (`role: "editor"` on the messages endpoint), and that role check is the *only* fence. The CLI it spawns runs on the harbour host as the server's own user, unsandboxed — it can `sqlite3` the entire database (every org on the instance, not just the editor's), read and write the filesystem, and read `~/.harbour/encryption.key`, which decrypts every stored secret.
+
+So: **granting the editor role is granting host-shell-equivalent access.** Only give editor to people you would hand SSH credentials to the box. Org and project boundaries hold everywhere else in Harbour, but Captain deliberately steps outside them — that's what makes it useful as an operator's console, and what makes the role grant the real decision.
+
 ## The workspace
 
 Every conversation runs with a `cwd` (working directory). If you don't override it in Settings, it defaults to `~/.harbour/captain/`. On first use of that directory, Captain auto-provisions three files:

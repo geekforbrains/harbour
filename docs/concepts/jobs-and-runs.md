@@ -72,7 +72,7 @@ Most runs come from a recurring job firing on schedule. For an ad-hoc run, **tri
 
 Order matters. Pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run. One-off scheduled runs beat recurring schedules so dashboard-created work isn't elbowed out by a chatty cron job.
 
-Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, step 1 would otherwise gate this agent forever. `failStaleRuns` checks `updated_at + (timeout_minutes * 60) < now()` and force-fails any matches with a system activity entry: "Run timed out after N minutes without completion."
+Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, step 1 would otherwise gate this agent forever. `failStaleRuns` checks `claimed_at + (timeout_minutes * 60) < now()` — a hard wallclock ceiling measured from when the current running attempt was claimed, deliberately **not** keyed on `updated_at` (streaming output refreshes `updated_at`, which would turn the check into a sliding inactivity window that never fires for a chatty-but-stuck run). Matches are force-failed with a system activity entry: "Run timed out after N minutes without completion."
 
 `peek=true` runs the same checks read-only — useful as a guard before invoking your CLI tool.
 
@@ -99,17 +99,21 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 | `scheduled` | Triggered (or recurring not-yet-claimed), waiting for `scheduled_for <= now`. Recurring schedule-trigger jobs may go straight to `running` on creation. |
 | `running` | Agent is working. Activity is updating. Counts toward the "agent busy" check. |
 | `waiting` | Agent paused for human input. Surfaces on the dashboard. Doesn't block other jobs from firing. |
-| `pending` | Human responded — flipped automatically when a user posts activity to a `waiting` run. Next poll claims it. |
-| `done` | Completed successfully. |
-| `failed` | Agent or workflow returned non-zero, or the run timed out. |
-| `skipped` | Workflow returned exit 77 — "nothing to do." |
+| `pending` | Human responded — flipped automatically when a user posts activity to a `waiting`, `done`, `failed`, or `killed` run. Next poll claims it. |
+| `done` | Completed successfully. Resumable via comment. |
+| `failed` | Agent or workflow returned non-zero, or the run timed out. Resumable via comment or retry. |
+| `skipped` | Workflow returned exit 77 — "nothing to do." Retryable, but not comment-resumable. |
 | `killed` | A user clicked Kill on a harbour-agent run. Resumable via comment. |
 
 When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances the job's `next_run_at`. `killed` is **terminal for the run but does not advance the job's schedule** — the user stopped it intentionally and may resume. Transitions are validated against a `LEGAL_RUN_TRANSITIONS` map at the single `updateRunStatus` chokepoint; an illegal edge returns **409**.
 
+### Resume via comment
+
+A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pending` (the activity route posts the comment, then calls `updateRunStatus`). The agent claims it at step 2 of the polling ladder on its next poll, with the full activity history — so "terminal" statuses other than `skipped` are really just paused: a human can always reopen the conversation. `skipped` runs are the exception (the gate said there was nothing to do); requeue one via retry instead.
+
 ### Timeouts
 
-`jobs.timeout_minutes` defaults to 30. The runner enforces it as the CLI subprocess timeout. Harbour itself enforces it via `failStaleRuns`: if `updated_at + timeout_minutes*60 < now`, the run is marked `failed` on the next poll. `updated_at` ticks every time activity, output events, or status updates happen — so a chatty run that keeps streaming isn't considered stale even if the CLI subprocess has been alive for hours.
+`jobs.timeout_minutes` defaults to 30. The runner enforces it as the CLI subprocess timeout. Harbour itself enforces it via `failStaleRuns`: if `claimed_at + timeout_minutes*60 < now`, the run is marked `failed` on the next poll. This is a hard wallclock ceiling per running attempt — `claimed_at` is stamped on every entry into `running` (the initial claim, and again on each `pending → running` resume), so a resumed run gets a fresh clock, but nothing resets it while the run stays `running`. It is deliberately not a sliding inactivity window keyed on `updated_at`: a run that keeps streaming output can still be wedged (looping, stuck repeating itself), and resetting the clock on activity would let it hold its agent forever. The ceiling guarantees a run can never stay `running` past `timeout_minutes`, so the agent is never gated indefinitely.
 
 ### Retry
 

@@ -146,9 +146,11 @@ export function updateRunStatus(id: string, status: string) {
  */
 export function requeueWorkflowRun(id: string) {
   const db = getDb();
+  // claimed_at = NULL: a scheduled run has not been claimed — the next runner
+  // poll stamps a fresh claimed_at, which the timeout hard cap measures from.
   db.prepare(`
     UPDATE runs SET status = 'scheduled', scheduled_for = unixepoch(),
-      completed_at = NULL, kill_requested_at = NULL, updated_at = unixepoch()
+      claimed_at = NULL, completed_at = NULL, kill_requested_at = NULL, updated_at = unixepoch()
     WHERE id = ?
   `).run(id);
   return getRunById(id);
@@ -431,6 +433,30 @@ export function listRunOutput(runId: string, afterId = 0) {
   `).all(runId, afterId) as RunOutputEvent[];
 }
 
+/**
+ * Fail a single timed-out run. The UPDATE's `AND status = 'running'` clause is
+ * the concurrency guard: two reapers can both SELECT the same stale candidate
+ * before either fails it, but only the one whose UPDATE actually flips the row
+ * (changes === 1) inserts the timeout activity entry — exactly one timeout
+ * message per timed-out run. Wrapped in a transaction so the status flip and
+ * its activity row land together.
+ */
+export function failTimedOutRun(runId: string, timeoutMinutes: number): boolean {
+  const db = getDb();
+  const fail = db.transaction(() => {
+    const result = db.prepare(
+      `UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'running'`
+    ).run(runId);
+    if (result.changes !== 1) return false;
+    db.prepare(`
+      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
+      VALUES (?, ?, 'system', 'System', ?, unixepoch())
+    `).run(uuid(), runId, `Run timed out after ${timeoutMinutes} minutes without completion.`);
+    return true;
+  });
+  return fail();
+}
+
 // Fail runs that have exceeded their job's timeout
 function failStaleRuns(agentId: string) {
   const db = getDb();
@@ -448,16 +474,12 @@ function failStaleRuns(agentId: string) {
     AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `).all(agentId, now) as { id: string; timeout_minutes: number }[];
 
+  let failed = 0;
   for (const run of stale) {
-    db.prepare(`UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(run.id);
-    const actId = uuid();
-    db.prepare(`
-      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
-      VALUES (?, ?, 'system', 'System', ?, unixepoch())
-    `).run(actId, run.id, `Run timed out after ${run.timeout_minutes} minutes without completion.`);
+    if (failTimedOutRun(run.id, run.timeout_minutes)) failed++;
   }
 
-  return stale.length;
+  return failed;
 }
 
 // Agent polling: get next run
@@ -557,11 +579,7 @@ export function getNextWorkflowRun(orgId: string) {
     AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `).all(orgId, now) as { id: string; timeout_minutes: number }[];
   for (const run of stale) {
-    db.prepare(`UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(run.id);
-    db.prepare(`
-      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
-      VALUES (?, ?, 'system', 'System', ?, unixepoch())
-    `).run(uuid(), run.id, `Run timed out after ${run.timeout_minutes} minutes without completion.`);
+    failTimedOutRun(run.id, run.timeout_minutes);
   }
 
   const assignRun = db.transaction(() => {

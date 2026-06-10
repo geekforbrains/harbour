@@ -121,7 +121,7 @@ stable labels for each item):
 | Authorization | Org → project roles; agents act only on their own resources; workflow runners use separate credentials | Done (v2) |
 | Onboarding | Shell-based first-run admin (no web signup); argon2id password hashing; token set-password links | Done (v2) |
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
-| Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Planned (M1) |
+| Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
 | Secrets at rest | Env-var secrets are AES-256-GCM; sensitive settings (e.g. video API keys) encrypted the same way | Partial — settings encryption planned (M3) |
 | Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Planned (H4) |
 | DB column types | Runtime-allowlist `TEXT/INTEGER/REAL` — no SQL injection via a column type | Planned (C3) |
@@ -129,7 +129,7 @@ stable labels for each item):
 | Row APIs | Clamp read limits, bound rows per insert, reject oversized bodies | Planned (M5) |
 | Uploads | Per-file cap, and reject when free disk is under 10% | Planned (H6) |
 | File paths | Verify served/deleted attachment paths stay under the uploads directory | Planned (M4) |
-| Attachment serving | Force-download untrusted types (SVG/HTML) + `X-Content-Type-Options: nosniff` | Planned (H2) |
+| Attachment serving | Force-download untrusted types (SVG/HTML) + `X-Content-Type-Options: nosniff` | Done (v2) — strict inline allowlist; everything else served as `application/octet-stream` attachment |
 | State files | `~/.harbour` is `0700`; state files are `0600` | Planned (H7) |
 
 ### Reliability & operability
@@ -154,10 +154,10 @@ stable labels for each item):
 Open requirements, prioritized. The security items are the §6 requirements.
 
 **Security hardening (next):** C3 DB column-type allowlist · H4 spawned-CLI env
-allowlist · H7 file permissions · H2 attachment force-download + nosniff · M1
-login rate-limit / lockout / password policy · H6 upload disk guard · M3 encrypt
+allowlist · H7 file permissions · H6 upload disk guard · M3 encrypt
 sensitive settings · M4 path containment · M5 row limits · H1 settings write
-allowlist.
+allowlist. (H2 attachment force-download + nosniff and M1 login rate-limit /
+password policy shipped in v2 — see §6.)
 
 **Features:** agent identity-color picker (curated ~16-color palette in the
 create/edit agent dialog).

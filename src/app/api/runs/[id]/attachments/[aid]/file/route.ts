@@ -6,15 +6,9 @@ import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, getAttachmentById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
+import { contentDisposition, isInlineSafe } from "@/lib/upload";
 
 export const runtime = "nodejs";
-
-const INLINE_TYPES = [/^image\//, /^video\//, /^audio\//, /^application\/pdf$/];
-
-function isInline(mime: string | null): boolean {
-  if (!mime) return false;
-  return INLINE_TYPES.some(re => re.test(mime));
-}
 
 export const GET = withAgentOrUser(
   async (_req, auth, { params }) => {
@@ -37,9 +31,10 @@ export const GET = withAgentOrUser(
     }
 
     const stat = fs.statSync(abs);
-    const mime = att.mime_type || "application/octet-stream";
-    const dispositionType = isInline(mime) ? "inline" : "attachment";
-    const safeFilename = (att.filename || "file").replace(/"/g, "");
+    // The stored MIME type is client-declared: only allowlisted types render
+    // inline with their declared type; everything else downloads as a blob.
+    const inline = isInlineSafe(att.mime_type);
+    const mime = inline ? (att.mime_type as string) : "application/octet-stream";
 
     const stream = Readable.toWeb(fs.createReadStream(abs)) as unknown as ReadableStream;
     return new NextResponse(stream, {
@@ -47,7 +42,8 @@ export const GET = withAgentOrUser(
       headers: {
         "Content-Type": mime,
         "Content-Length": stat.size.toString(),
-        "Content-Disposition": `${dispositionType}; filename="${safeFilename}"`,
+        "Content-Disposition": contentDisposition(inline ? "inline" : "attachment", att.filename || "file"),
+        "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, max-age=3600",
       },
     });

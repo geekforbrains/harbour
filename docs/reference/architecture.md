@@ -34,8 +34,9 @@ default):
 | `runner.log`, `runner.err.log` | launchd output for the agent runner |
 
 Override roots via `HARBOUR_HOME`, `HARBOUR_DB_PATH`, `HARBOUR_UPLOADS_DIR`,
-`HARBOUR_ENCRYPTION_KEY`, `HARBOUR_MAX_UPLOAD_MB` (default 500). See
-`src/lib/paths.ts`.
+`HARBOUR_ENCRYPTION_KEY`, `HARBOUR_MAX_UPLOAD_MB` (default 500) — see
+`src/lib/paths.ts`. `HARBOUR_SESSION_TTL_DAYS` (default 30) lives in
+`src/lib/db/users.ts`.
 
 ## Tech stack
 
@@ -62,8 +63,9 @@ which dispatches to the runner library under `bin/lib/`.
 (`getIdentityFromRequest`):
 
 1. **User session** — the `harbour_session` cookie (HttpOnly, SameSite=Lax,
-   `Secure` keyed to the request protocol via `isHttpsRequest`, 30-day). Set at
-   `POST /api/auth/login`.
+   `Secure` keyed to the request protocol via `isHttpsRequest`; lifetime
+   `HARBOUR_SESSION_TTL_DAYS`, default 30). Set at `POST /api/auth/login`,
+   which throttles failed attempts (5 per email+IP per 15 minutes → `429`).
 2. **Agent API key** — `Authorization: Bearer <key>`, sha256-hashed in
    `agents.api_key_hash`. Carries the agent's home project.
 3. **Workflow-runner key** — same header, hashed in

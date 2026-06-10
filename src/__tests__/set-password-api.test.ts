@@ -12,6 +12,7 @@ import {
 
 import { POST as setPasswordPOST } from "@/app/api/auth/set-password/route";
 import { POST as linkPOST } from "@/app/api/users/[id]/set-password-link/route";
+import { setPasswordLimiter } from "@/lib/rate-limit";
 
 // The set-password route is a plain `POST(req)` with no route params; wrap it so
 // call sites read uniformly with the [id] route's (req, ctx) signature.
@@ -30,6 +31,8 @@ beforeEach(() => {
   const db = freshDb();
   setDb(db);
   initializeSchema(db);
+  // The set-password limiter is module-level state; clear it between tests.
+  setPasswordLimiter.reset();
 });
 
 afterEach(() => {
@@ -75,8 +78,9 @@ describe("POST /api/auth/set-password", () => {
     const userId = makeUser();
     const { rawToken } = createSetPasswordToken(userId, null);
 
+    // 11 chars — one under the 12-character minimum.
     const res = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "short" })
+      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "elevenchars" })
     );
     expect(res.status).toBe(400);
     expect(getSetPasswordToken(rawToken)?.consumed_at).toBeNull();
@@ -94,17 +98,17 @@ describe("POST /api/auth/set-password", () => {
     const { rawToken } = createSetPasswordToken(userId, null);
 
     const first = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "firstpass1" })
+      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "firstpassword1" })
     );
     expect(first.status).toBe(200);
 
     const second = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "secondpass1" })
+      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "secondpassword1" })
     );
     expect(second.status).toBe(400);
     // Password unchanged.
-    expect(authenticateUser("user@example.com", "firstpass1")).not.toBeNull();
-    expect(authenticateUser("user@example.com", "secondpass1")).toBeNull();
+    expect(authenticateUser("user@example.com", "firstpassword1")).not.toBeNull();
+    expect(authenticateUser("user@example.com", "secondpassword1")).toBeNull();
   });
 
   it("rejects an expired token", async () => {
@@ -118,6 +122,55 @@ describe("POST /api/auth/set-password", () => {
       jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "newpassword1" })
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/auth/set-password rate limiting", () => {
+  it("returns 429 after 5 attempts from the same IP", async () => {
+    for (let i = 0; i < 5; i++) {
+      const res = await callSetPassword(
+        jsonReq(
+          "http://localhost/api/auth/set-password",
+          { token: "bogus-token", password: "longenoughpassword" },
+          { "x-forwarded-for": "9.9.9.9" }
+        )
+      );
+      expect(res.status).toBe(400);
+    }
+
+    const blocked = await callSetPassword(
+      jsonReq(
+        "http://localhost/api/auth/set-password",
+        { token: "bogus-token", password: "longenoughpassword" },
+        { "x-forwarded-for": "9.9.9.9" }
+      )
+    );
+    expect(blocked.status).toBe(429);
+    const data = (await blocked.json()) as { error: string };
+    expect(data.error).toBeTruthy();
+  });
+
+  it("a different IP is not affected", async () => {
+    for (let i = 0; i < 6; i++) {
+      await callSetPassword(
+        jsonReq(
+          "http://localhost/api/auth/set-password",
+          { token: "bogus-token", password: "longenoughpassword" },
+          { "x-forwarded-for": "9.9.9.9" }
+        )
+      );
+    }
+
+    const user = createUser("other@example.com", null, "Other") as { id: string };
+    const { rawToken } = createSetPasswordToken(user.id, null);
+    const res = await callSetPassword(
+      jsonReq(
+        "http://localhost/api/auth/set-password",
+        { token: rawToken, password: "longenoughpassword" },
+        { "x-forwarded-for": "8.8.8.8" }
+      )
+    );
+    expect(res.status).toBe(200);
   });
 });
 
@@ -144,10 +197,10 @@ describe("POST /api/users/:id/set-password-link", () => {
 
     // The minted token actually works.
     const redeem = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: data.token, password: "freshpass1" })
+      jsonReq("http://localhost/api/auth/set-password", { token: data.token, password: "freshpassword1" })
     );
     expect(redeem.status).toBe(200);
-    expect(authenticateUser("target@example.com", "freshpass1")).not.toBeNull();
+    expect(authenticateUser("target@example.com", "freshpassword1")).not.toBeNull();
   });
 
   it("non-admins are forbidden", async () => {

@@ -35,14 +35,14 @@ describe("CLI bootstrap helpers", () => {
   it("instanceAdminExists flips once an admin is inserted", () => {
     const db = memDb();
     expect(instanceAdminExists(db)).toBe(false);
-    insertInstanceAdmin(db, { email: "a@example.com", displayName: "A", password: "supersecret" });
+    insertInstanceAdmin(db, { email: "a@example.com", displayName: "A", password: "supersecret123" });
     expect(instanceAdminExists(db)).toBe(true);
   });
 
   it("CLI-produced hashes verify with the server's argon2id verifier (parity)", () => {
-    const hash = cliHash("supersecret");
+    const hash = cliHash("supersecret123");
     expect(hash).toMatch(/^\$argon2id\$/);
-    expect(serverVerify(hash, "supersecret")).toBe(true);
+    expect(serverVerify(hash, "supersecret123")).toBe(true);
     expect(serverVerify(hash, "wrong")).toBe(false);
   });
 });
@@ -80,10 +80,25 @@ describe("CLI `harbour admin create` (subprocess)", () => {
       "--name",
       "Admin",
       "--password",
-      "supersecret",
+      "supersecret123",
     ]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("Instance admin created");
+  });
+
+  it("rejects a password under 12 characters", () => {
+    const r = run([
+      "admin",
+      "create",
+      "--email",
+      "admin@example.com",
+      "--name",
+      "Admin",
+      "--password",
+      "elevenchars",
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stderr + r.stdout).toContain("at least 12 characters");
   });
 
   it("refuses to create a second instance admin without --force", () => {
@@ -95,7 +110,7 @@ describe("CLI `harbour admin create` (subprocess)", () => {
       "--name",
       "Admin",
       "--password",
-      "supersecret",
+      "supersecret123",
     ]);
     expect(first.code).toBe(0);
 
@@ -107,7 +122,7 @@ describe("CLI `harbour admin create` (subprocess)", () => {
       "--name",
       "Admin2",
       "--password",
-      "supersecret",
+      "supersecret123",
     ]);
     expect(second.code).toBe(1);
     expect(second.stderr + second.stdout).toContain("already exists");
@@ -121,7 +136,7 @@ describe("CLI `harbour admin create` (subprocess)", () => {
       "--name",
       "Admin2",
       "--password",
-      "supersecret",
+      "supersecret123",
       "--force",
     ]);
     expect(forced.code).toBe(0);

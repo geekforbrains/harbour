@@ -1,17 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { consumeSetPasswordToken, createSession } from "@/lib/db/queries";
+import { consumeSetPasswordToken, createSession, sessionTtlSeconds } from "@/lib/db/queries";
 import { sessionCookieOptions } from "@/lib/auth";
+import { clientIp, setPasswordLimiter } from "@/lib/rate-limit";
 
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 12;
 
 /**
  * Public endpoint to redeem a set-password / reset token. No auth wrapper: the
- * single-use token IS the credential. On success the token is consumed, the
- * user's password is set, and a session cookie is issued so the user lands
- * signed in. Token validation and the password write happen atomically inside
+ * single-use token IS the credential — token guessing is throttled instead (5
+ * attempts per IP per hour). On success the token is consumed, the user's
+ * password is set, and a session cookie is issued so the user lands signed in.
+ * Token validation and the password write happen atomically inside
  * consumeSetPasswordToken.
  */
 export async function POST(req: NextRequest) {
+  const ip = clientIp(req);
+  if (setPasswordLimiter.isLimited(ip)) {
+    return NextResponse.json(
+      { error: "Too many attempts. Try again later." },
+      { status: 429 }
+    );
+  }
+  setPasswordLimiter.record(ip);
+
   let body: { token?: unknown; password?: unknown };
   try {
     body = await req.json();
@@ -44,6 +55,6 @@ export async function POST(req: NextRequest) {
 
   const sessionId = createSession(result.userId);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req));
+  response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req, sessionTtlSeconds()));
   return response;
 }

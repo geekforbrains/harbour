@@ -241,7 +241,7 @@ Content-Type: application/json
 { "content": "Here's the info you asked for: ...", "attachment_ids": ["uuid", ...] }
 ```
 
-Use this to respond to runs in `waiting` status. The run automatically transitions to `pending` when you post a response. `attachment_ids` is optional — upload attachments first, then reference them here.
+Use this to respond to a run. Posting to a run in `waiting`, `done`, `failed`, or `killed` status automatically transitions it to `pending` — the agent resumes it (with the full activity history) on its next poll. `skipped` runs are not comment-resumable; requeue them via retry. `attachment_ids` is optional — upload attachments first, then reference them here.
 
 Workflow runs have no message thread — their activity log is runner output only, and posting to it returns 400.
 

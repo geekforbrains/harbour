@@ -26,7 +26,7 @@ There are two **kinds**:
 
 | Kind | Storage | What you see |
 |---|---|---|
-| `file` | Bytes on disk under `~/.harbour/uploads/runs/<run-id>/<uuid>__<filename>`. Row carries `filename`, `storage_path` (relative to the uploads dir), `mime_type`, `size_bytes`. | Inline preview for images/video, a download link for everything else. |
+| `file` | Bytes on disk under `~/.harbour/uploads/runs/<run-id>/<uuid>__<filename>`. Row carries `filename`, `storage_path` (relative to the uploads dir), `mime_type`, `size_bytes`. | Inline preview for types on a strict allowlist (raster images, PDF, plain text, common audio/video); everything else — including SVG and HTML, which can carry scripts — is forced to download. |
 | `embed` | Just a URL. Provider auto-detected — `youtube`, `loom`, `vimeo`, or `generic`. Row carries `url` and `embed_provider`. | An iframe for the three known providers, a plain link for `generic`. |
 
 A worked example: the agent finishes a run, uploads a Loom recording of the output. `POST /api/runs/<run-id>/attachments` with `Content-Type: application/json` and body `{"url": "https://loom.com/..."}`. Provider gets detected as `loom`, an embed row is created, the dashboard renders it as a Loom iframe inside the run's attachment panel.

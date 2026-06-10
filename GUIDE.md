@@ -235,7 +235,7 @@ When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically 
 
 **Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. An agent run goes back to `pending` with a system activity note, and the agent picks it up on next poll. A workflow run is requeued as `scheduled` so a workflow runner claims a fresh attempt.
 
-**Timeouts:** Each job has a configurable `timeout_minutes` (default 30). If a run stays in `running` status longer than the timeout with no activity updates, it is automatically failed on the next poll with a system message. This prevents stuck runs from blocking the agent.
+**Timeouts:** Each job has a configurable `timeout_minutes` (default 30). It's a hard wallclock ceiling per running attempt, measured from when the run was claimed — not an inactivity window. A run that exceeds it is automatically failed on the next poll with a system message, even if it's still streaming output (a chatty run can still be wedged; the ceiling guarantees stuck runs never block the agent). Resuming a run (`pending` → `running`) starts a fresh attempt with a fresh clock.
 
 ### Add Activity
 

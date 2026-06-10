@@ -14,9 +14,11 @@ SSH-key-only login, and automatic security updates.
   simpler to update (`git pull && npm ci && npm run build && systemctl restart`)
 - Harbour agent runner runs as a sibling systemd service (`harbour-agent-runner.service`)
   that polls every 60s and spawns the AI CLIs directly on the host
-- fail2ban bans IPs after 5 failed Basic Auth attempts in 10 minutes (1 hour ban).
-  Only real wrong-password attempts count — uncredentialed 401s (manifest.json,
-  favicons, initial page nav) are ignored so legitimate users never self-ban
+- fail2ban bans IPs after 20 failed Basic Auth attempts in 10 minutes (1 hour ban).
+  The threshold is 20, not 5, because one browser page load with a wrong stored
+  password fans out Authorization on many asset requests — 5 would self-ban a
+  legitimate user on a single mistake. Only real wrong-password attempts count —
+  uncredentialed 401s (manifest.json, favicons, initial page nav) are ignored
 - Unattended security upgrades enabled (auto-reboots at 04:30 local if needed)
 - Node 22 + Claude Code, Codex, and Gemini CLIs installed on the host
   (you log into each once after the droplet is up — no headless auth path)

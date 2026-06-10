@@ -39,9 +39,9 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/auth/login` | Verify password, set `harbour_session` cookie |
+| POST | `/api/auth/login` | Verify password, set `harbour_session` cookie. Rate-limited: 5 failed attempts per email+IP per 15 minutes → `429` |
 | POST | `/api/auth/logout` | Clear session cookie |
-| POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session |
+| POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 12 chars). Rate-limited: 5 attempts per IP per hour → `429` |
 | GET | `/api/auth/me` | Echo the current principal (resolves the caller itself) |
 | GET | `/api/guide` | Serve [GUIDE.md](../../GUIDE.md) |
 
@@ -172,7 +172,7 @@ There is **no** signup route.
 |---|---|---|
 | GET / POST | `/api/captain/conversations` | List / create a conversation |
 | GET / PUT / DELETE | `/api/captain/conversations/:id` | Fetch / rename / delete |
-| POST | `/api/captain/conversations/:id/messages` | Post a message; spawns the CLI subprocess |
+| POST | `/api/captain/conversations/:id/messages` | Post a message — returns **202** `{messageId, userMessageId}` and spawns the CLI subprocess async; output arrives via the SSE stream |
 | GET | `/api/captain/conversations/:id/status` | `{running, activeMessageId}` |
 | POST | `/api/captain/conversations/:id/stop` | SIGTERM the active subprocess |
 | GET | `/api/captain/conversations/:id/stream` | SSE output |

@@ -120,10 +120,26 @@ export function deleteUser(id: string) {
 
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
+const DEFAULT_SESSION_TTL_DAYS = 30;
+
+/**
+ * Session lifetime in days, from HARBOUR_SESSION_TTL_DAYS. Anything that isn't
+ * a positive finite number falls back to the 30-day default.
+ */
+export function sessionTtlDays(raw: string | undefined = process.env.HARBOUR_SESSION_TTL_DAYS): number {
+  const days = Number(raw);
+  return Number.isFinite(days) && days > 0 ? days : DEFAULT_SESSION_TTL_DAYS;
+}
+
+/** Session lifetime in seconds — for DB expiry and the cookie's maxAge. */
+export function sessionTtlSeconds(): number {
+  return Math.floor(sessionTtlDays() * 24 * 60 * 60);
+}
+
 export function createSession(userId: string): string {
   const db = getDb();
   const id = uuid();
-  const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30; // 30 days
+  const expiresAt = Math.floor(Date.now() / 1000) + sessionTtlSeconds();
   db.prepare(`INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`).run(id, userId, expiresAt);
   return id;
 }
