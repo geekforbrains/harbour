@@ -1,56 +1,19 @@
 @README.md
 
-Harbour is a control plane for AI agents doing ongoing work. The product north
-star — vision, principles, requirements, and scope — is
-[docs/prd.md](docs/prd.md). README.md is the front door; [docs/](docs/README.md)
-maps every doc to its role (concepts, guides, and the technical reference).
+Harbour is a control plane for AI agents doing ongoing work.
 
-## Tech
+## Where to find what
 
-Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
+One fact, one home — facts about how Harbour works live in [docs/](docs/README.md),
+not here. Don't restate them in this file; route by task and read the doc first:
 
-## Design
-
-The dashboard's visual system is documented in [docs/reference/design-language.md](docs/reference/design-language.md) — "monochrome chrome, chromatic signal." Chrome is neutral (token-driven in `src/app/globals.css`, no hardcoded palette colors); color is reserved for run **status** (`src/lib/status.ts`) and **agent identity** (`src/lib/agent-color.ts`). Shape conveys type, color conveys state/who, two color dimensions max per view. Read it before building or restyling UI.
-
-## Key paths
-
-- `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
-- `src/app/api/` — API routes (agent-facing + dashboard), all use the auth wrappers from `src/lib/auth.ts`
-- `src/lib/db/projects.ts` — project CRUD (create, rename, archive/unarchive, delete)
-- `src/components/app/project-switcher.tsx` — sidebar/mobile project dropdown with create dialog
-- `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
-- `src/lib/auth.ts` — `withOrgAuth`, `withProjectAuth`, `withResourceAuth`, `withAgentOrUser`, `withInstanceAdmin`, `withAgentAuth` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
-- `src/lib/db/admin-api-keys.ts` — admin API key CRUD + authentication
-- `docs/admin-guide.md` — admin agent onboarding guide, served at `/api/admin-guide`
-- `src/lib/db/` — database schema, queries, migrations
-- `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
-- `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
-- `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
-- `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
-- `src/components/app/create-dialog.tsx` — New Job dialog (agent job or workflow job; v2 removed one-off "New Run" — ad-hoc runs come from triggering a job)
-- `src/components/app/trigger-dialog.tsx` — shared trigger confirmation modal with optional extra instructions
-- `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
-- `bin/` — CLI entry point and agent runner (harbour agents, workflow execution, providers, launchd install)
-- `src/app/api/workflows/next/` — runner endpoint for discovering agentless workflow-only runs
-- `docs/guide.md` — agent-facing API contract, served at `/api/guide`
-
-## Conventions
-
-- Jobs are static configuration (what to do, when, which docs/databases/env vars). Runs are the dynamic unit of work.
-- Jobs are either agent jobs (belong to an agent), workflow-only jobs (no agent, shell command only), or combined (workflow gates the agent). Workflow-only jobs have nullable `agent_id`.
-- Docs, databases, and env vars are org- or project-level, linked to jobs. Injected into runs automatically via `/next`.
-- Pinned docs and env vars are auto-attached to new jobs created in their scope.
-- Agents poll for work via `/api/agents/:id/next`. Agentless workflow jobs are discovered via `/api/workflows/next`. Harbour never calls out to agents.
-- Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`/`killed`.
-- Failed/skipped/killed runs can be retried (agent runs go back to `pending`; workflow runs requeue as `scheduled`).
-- The database is a single SQLite file (default `~/.harbour/harbour.db`, override via `HARBOUR_DB_PATH`).
-- Env vars are encrypted with AES-256-GCM. Key at `~/.harbour/encryption.key` (auto-generated on first run).
-- System timezone (configured in Settings) is used for all schedule calculations.
-- Model and thinking/effort can be set per agent (default) and overridden per job.
-- API routes use the auth wrappers from `src/lib/auth.ts` (`withOrgAuth`, `withProjectAuth`, `withResourceAuth`, `withAgentOrUser`, `withInstanceAdmin`) — never inline auth checks. Agent-facing routes scope via `requireAgentProject()`/`requireAgentSelf()`.
-- Job and run creation functions (`createJob`, `createWorkflow`, `getAgentNextRun`) are wrapped in transactions.
-- Multi-tenancy: orgs → projects. Agents and jobs belong to exactly one project (`project_id`); docs, databases, and env vars are project-level or org-level (nullable `project_id`). Resources never cross org lines. Project-scoped list routes require `?projectId=`, org-scoped ones `?orgId=` (or the `harbour_org` cookie).
+- **Deciding if a change fits** → [docs/prd.md](docs/prd.md) (north star) and [docs/README.md](docs/README.md) (map of every doc)
+- **Changing code** → [docs/reference/architecture.md](docs/reference/architecture.md) first — auth model and route wrappers, polling ladder, run lifecycle, runner internals, and a ranked list of key source files
+- **Touching API routes** → [docs/reference/api.md](docs/reference/api.md) — route map, the auth wrapper each route uses, `?orgId=`/`?projectId=` scoping rules
+- **Touching the DB** → [docs/reference/database-schema.md](docs/reference/database-schema.md); the schema *is* `src/lib/db/schema.ts`
+- **Building or restyling UI** → [docs/reference/design-language.md](docs/reference/design-language.md) — required reading, the color rules are strict
+- **How a feature is meant to behave** → [docs/concepts/](docs/README.md#concepts--how-the-pieces-fit) — agents, jobs & runs, workflows, orgs & projects, shared context, Captain, attachments
+- **On-the-wire payloads** → [docs/guide.md](docs/guide.md) / [docs/admin-guide.md](docs/admin-guide.md) — served live at `/api/guide` / `/api/admin-guide`, source of truth for wire behavior
 
 ## Dev server
 
