@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
   createAgent,
   createJob,
+  createOrg,
+  createProject,
   createRun,
   getRunById,
-  updateRunStatus,
   IllegalRunStatusTransition,
+  updateRunStatus,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Setup — fresh in-memory v2 DB per test (mirrors schema.test.ts)
@@ -84,13 +84,13 @@ describe("run status transitions — legal edges", () => {
 // ===========================================================================
 
 const ILLEGAL_EDGES: [from: string, to: string][] = [
-  ["scheduled", "done"],     // can't complete what never ran
+  ["scheduled", "done"], // can't complete what never ran
   ["scheduled", "waiting"],
-  ["done", "running"],       // terminal can't go back to running
-  ["failed", "running"],     // resume goes via 'pending', not straight to running
+  ["done", "running"], // terminal can't go back to running
+  ["failed", "running"], // resume goes via 'pending', not straight to running
   ["killed", "running"],
-  ["done", "skipped"],       // only done -> pending | failed are legal out of done
-  ["waiting", "running"],    // human-loop resume goes waiting -> pending -> running
+  ["done", "skipped"], // only done -> pending | failed are legal out of done
+  ["waiting", "running"], // human-loop resume goes waiting -> pending -> running
   ["pending", "done"],
 ];
 
@@ -125,7 +125,16 @@ describe("run status transitions — illegal edges throw", () => {
 // ===========================================================================
 
 describe("run status transitions — idempotent self-edges", () => {
-  for (const status of ["scheduled", "running", "waiting", "pending", "done", "failed", "skipped", "killed"]) {
+  for (const status of [
+    "scheduled",
+    "running",
+    "waiting",
+    "pending",
+    "done",
+    "failed",
+    "skipped",
+    "killed",
+  ]) {
     it(`treats ${status} -> ${status} as a no-op`, () => {
       const id = makeRun(status);
       expect(() => updateRunStatus(id, status)).not.toThrow();

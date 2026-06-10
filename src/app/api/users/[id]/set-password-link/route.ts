@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
 import { createSetPasswordToken, getUserById } from "@/lib/db/queries";
 

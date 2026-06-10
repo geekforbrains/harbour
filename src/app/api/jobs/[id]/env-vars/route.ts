@@ -21,5 +21,5 @@ export const POST = withResourceAuth("job", "id", { role: "editor" })(
 
     linkEnvVarToJob(id, body.envVarId);
     return NextResponse.json({ ok: true });
-  }
+  },
 );

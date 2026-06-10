@@ -58,8 +58,7 @@ export const qk = {
     // The dashboard bundle (scheduled/running/waiting/recent) for a scope.
     list: (scope?: Scope) => ["runs", "list", scopeKey(scope)] as const,
     // A single named filter ("waiting" | "recent" | "waiting-count").
-    filter: (name: string, scope?: Scope) =>
-      ["runs", "filter", name, scopeKey(scope)] as const,
+    filter: (name: string, scope?: Scope) => ["runs", "filter", name, scopeKey(scope)] as const,
     history: (scope?: Scope) => ["runs", "history", scopeKey(scope)] as const,
     detail: (id: string) => ["runs", "detail", id] as const,
     output: (id: string) => ["runs", "detail", id, "output"] as const,
@@ -82,8 +81,7 @@ export const qk = {
     all: ["databases"] as const,
     list: (scope?: Scope) => ["databases", "list", scopeKey(scope)] as const,
     detail: (id: string) => ["databases", "detail", id] as const,
-    rows: (id: string, page?: number) =>
-      ["databases", "detail", id, "rows", page ?? 0] as const,
+    rows: (id: string, page?: number) => ["databases", "detail", id, "rows", page ?? 0] as const,
   },
 
   users: {
@@ -93,8 +91,7 @@ export const qk = {
 
   captain: {
     all: ["captain"] as const,
-    conversations: (scope?: Scope) =>
-      ["captain", "conversations", scopeKey(scope)] as const,
+    conversations: (scope?: Scope) => ["captain", "conversations", scopeKey(scope)] as const,
     conversation: (id: string) => ["captain", "conversation", id] as const,
   },
 

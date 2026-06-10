@@ -1,6 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 
 export async function GET() {
   const guidePath = path.join(process.cwd(), "docs", "guide.md");

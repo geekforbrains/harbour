@@ -1,20 +1,20 @@
-import { execFile, execSync } from "child_process";
-import { promisify } from "util";
-import fs from "fs";
-import path from "path";
-import { processedDir, uploadsDir, ensureDir } from "./paths";
-import { addRunActivity } from "./db/runs";
+import { execFile, execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { promisify } from "node:util";
 import { getAttachmentById } from "./db/attachments";
-import {
-  getProcessingByAttachment,
-  createProcessingRecord,
-  updateProcessingStatus,
-} from "./db/video-processing";
+import { addRunActivity } from "./db/runs";
 import {
   getVideoScreenshotInterval,
-  getVideoTranscriptProvider,
   getVideoTranscriptApiKey,
+  getVideoTranscriptProvider,
 } from "./db/settings";
+import {
+  createProcessingRecord,
+  getProcessingByAttachment,
+  updateProcessingStatus,
+} from "./db/video-processing";
+import { ensureDir, processedDir, uploadsDir } from "./paths";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,12 +40,18 @@ export function isWhisperAvailable(): boolean {
   }
 }
 
-export function isTranscriptProviderAvailable(provider: string): { available: boolean; reason?: string } {
+export function isTranscriptProviderAvailable(provider: string): {
+  available: boolean;
+  reason?: string;
+} {
   switch (provider) {
     case "whisper":
       return isWhisperAvailable()
         ? { available: true }
-        : { available: false, reason: "whisper CLI not found — install with: pip install openai-whisper" };
+        : {
+            available: false,
+            reason: "whisper CLI not found — install with: pip install openai-whisper",
+          };
     case "openai": {
       const key = getVideoTranscriptApiKey("openai");
       return key
@@ -67,7 +73,17 @@ export function isTranscriptProviderAvailable(provider: string): { available: bo
 
 // ── Processing pipeline ─────────────────────────────────────────────
 
-const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".wmv", ".flv", ".ogv"]);
+const VIDEO_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".webm",
+  ".m4v",
+  ".wmv",
+  ".flv",
+  ".ogv",
+]);
 
 export function isVideoMimeType(mimeType: string | null): boolean {
   return !!mimeType && mimeType.startsWith("video/");
@@ -86,20 +102,30 @@ export function isVideoFile(mimeType: string | null, filename: string | null): b
  */
 export async function processVideoAttachment(attachmentId: string, runId: string): Promise<void> {
   const att = getAttachmentById(attachmentId);
-  if (!att || att.kind !== "file" || !isVideoFile(att.mime_type, att.filename)) return;
+  if (att?.kind !== "file" || !isVideoFile(att.mime_type, att.filename)) return;
 
   // Don't double-process
   const existing = getProcessingByAttachment(attachmentId);
   if (existing) return;
 
   if (!isFfmpegAvailable()) {
-    addRunActivity(runId, "system", null, "System", `Video processing skipped for **${att.filename}** — ffmpeg not found.`);
+    addRunActivity(
+      runId,
+      "system",
+      null,
+      "System",
+      `Video processing skipped for **${att.filename}** — ffmpeg not found.`,
+    );
     return;
   }
 
   // Clean up any leftover processed files from a previous attempt
   const outDir = processedDir(runId, attachmentId);
-  try { fs.rmSync(outDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 
   const interval = getVideoScreenshotInterval();
   const record = createProcessingRecord(attachmentId, runId, interval);
@@ -136,7 +162,12 @@ export async function processVideoAttachment(attachmentId: string, runId: string
     // We need a base URL placeholder — the actual URL is resolved at serve time
     const screenshotsUrlPlaceholder = `{{base}}/api/runs/${runId}/attachments/${attachmentId}/screenshots`;
     if (screenshotCount > 0) {
-      const storyboard = buildStoryboard(segmentsPath, screenshotCount, interval, screenshotsUrlPlaceholder);
+      const storyboard = buildStoryboard(
+        segmentsPath,
+        screenshotCount,
+        interval,
+        screenshotsUrlPlaceholder,
+      );
       fs.writeFileSync(path.join(outDir, "storyboard.txt"), storyboard);
     }
 
@@ -162,10 +193,23 @@ export async function processVideoAttachment(attachmentId: string, runId: string
     const durationStr = formatDuration(duration);
     const parts = [`${screenshotCount} screenshots`];
     if (transcriptPath) parts.push("transcript ready");
-    addRunActivity(runId, "system", null, "System", `Video processed: ${parts.join(", ")} (${durationStr})`);
-  } catch (err: any) {
-    updateProcessingStatus(record.id, "failed", { error: err.message });
-    addRunActivity(runId, "system", null, "System", `Video processing failed for **${att.filename}**: ${err.message}`);
+    addRunActivity(
+      runId,
+      "system",
+      null,
+      "System",
+      `Video processed: ${parts.join(", ")} (${durationStr})`,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    updateProcessingStatus(record.id, "failed", { error: message });
+    addRunActivity(
+      runId,
+      "system",
+      null,
+      "System",
+      `Video processing failed for **${att.filename}**: ${message}`,
+    );
   }
 }
 
@@ -173,8 +217,10 @@ export async function processVideoAttachment(attachmentId: string, runId: string
 
 async function getVideoDuration(videoPath: string): Promise<number> {
   const { stdout } = await execFileAsync("ffprobe", [
-    "-v", "quiet",
-    "-print_format", "json",
+    "-v",
+    "quiet",
+    "-print_format",
+    "json",
     "-show_format",
     videoPath,
   ]);
@@ -182,16 +228,28 @@ async function getVideoDuration(videoPath: string): Promise<number> {
   return parseFloat(info.format?.duration || "0");
 }
 
-async function extractScreenshots(videoPath: string, outDir: string, intervalSec: number): Promise<number> {
-  await execFileAsync("ffmpeg", [
-    "-i", videoPath,
-    "-vf", `fps=1/${intervalSec}`,
-    "-q:v", "3",
-    "-frames:v", "500", // safety cap
-    path.join(outDir, "%04d.jpg"),
-  ], { timeout: 300000 }); // 5 min timeout
+async function extractScreenshots(
+  videoPath: string,
+  outDir: string,
+  intervalSec: number,
+): Promise<number> {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-i",
+      videoPath,
+      "-vf",
+      `fps=1/${intervalSec}`,
+      "-q:v",
+      "3",
+      "-frames:v",
+      "500", // safety cap
+      path.join(outDir, "%04d.jpg"),
+    ],
+    { timeout: 300000 },
+  ); // 5 min timeout
 
-  const files = fs.readdirSync(outDir).filter(f => f.endsWith(".jpg"));
+  const files = fs.readdirSync(outDir).filter((f) => f.endsWith(".jpg"));
   return files.length;
 }
 
@@ -199,27 +257,30 @@ async function extractScreenshots(videoPath: string, outDir: string, intervalSec
 
 type TranscriptSegment = { start: number; end: number; text: string };
 
-function normalizeSegments(raw: any[]): TranscriptSegment[] {
-  return raw.map(s => ({
+function normalizeSegments(
+  raw: { start?: unknown; end?: unknown; text?: unknown }[],
+): TranscriptSegment[] {
+  return raw.map((s) => ({
     start: Number(s.start) || 0,
     end: Number(s.end) || 0,
-    text: (s.text || "").trim(),
+    text: (typeof s.text === "string" ? s.text : "").trim(),
   }));
 }
 
 // ── Transcript providers ────────────────────────────────────────────
 
-async function extractTranscript(videoPath: string, outDir: string, provider: string): Promise<string> {
+async function extractTranscript(
+  videoPath: string,
+  outDir: string,
+  provider: string,
+): Promise<string> {
   // First extract audio with ffmpeg (all providers work with audio)
   const audioPath = path.join(outDir, "audio.mp3");
-  await execFileAsync("ffmpeg", [
-    "-i", videoPath,
-    "-vn",
-    "-acodec", "libmp3lame",
-    "-q:a", "4",
-    "-y",
-    audioPath,
-  ], { timeout: 300000 });
+  await execFileAsync(
+    "ffmpeg",
+    ["-i", videoPath, "-vn", "-acodec", "libmp3lame", "-q:a", "4", "-y", audioPath],
+    { timeout: 300000 },
+  );
 
   let segments: TranscriptSegment[];
 
@@ -238,7 +299,7 @@ async function extractTranscript(videoPath: string, outDir: string, provider: st
   }
 
   // Save plain transcript
-  const plainText = segments.map(s => s.text).join(" ");
+  const plainText = segments.map((s) => s.text).join(" ");
   const transcriptPath = path.join(outDir, "transcript.txt");
   fs.writeFileSync(transcriptPath, plainText);
 
@@ -246,17 +307,22 @@ async function extractTranscript(videoPath: string, outDir: string, provider: st
   fs.writeFileSync(path.join(outDir, "segments.json"), JSON.stringify(segments));
 
   // Clean up audio file
-  try { fs.unlinkSync(audioPath); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(audioPath);
+  } catch {
+    /* ignore */
+  }
 
   return transcriptPath;
 }
 
-async function transcribeWithWhisper(audioPath: string, outDir: string): Promise<TranscriptSegment[]> {
-  await execFileAsync("whisper", [
-    audioPath,
-    "--output_format", "json",
-    "--output_dir", outDir,
-  ], { timeout: 600000 }); // 10 min timeout
+async function transcribeWithWhisper(
+  audioPath: string,
+  outDir: string,
+): Promise<TranscriptSegment[]> {
+  await execFileAsync("whisper", [audioPath, "--output_format", "json", "--output_dir", outDir], {
+    timeout: 600000,
+  }); // 10 min timeout
 
   // Whisper outputs <basename>.json
   const basename = path.basename(audioPath, path.extname(audioPath));
@@ -264,7 +330,11 @@ async function transcribeWithWhisper(audioPath: string, outDir: string): Promise
   const raw = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
 
   // Clean up whisper's output file
-  try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(outputPath);
+  } catch {
+    /* ignore */
+  }
 
   return normalizeSegments(raw.segments || []);
 }
@@ -308,14 +378,18 @@ async function transcribeWithGemini(audioPath: string): Promise<TranscriptSegmen
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inline_data: { mime_type: "audio/mpeg", data: base64Audio } },
-            { text: `Transcribe this audio with timestamps. Return ONLY a JSON array of segments, no markdown fences or other text. Format: [{"start": 0.0, "end": 2.5, "text": "words spoken"}, ...]` },
-          ],
-        }],
+        contents: [
+          {
+            parts: [
+              { inline_data: { mime_type: "audio/mpeg", data: base64Audio } },
+              {
+                text: `Transcribe this audio with timestamps. Return ONLY a JSON array of segments, no markdown fences or other text. Format: [{"start": 0.0, "end": 2.5, "text": "words spoken"}, ...]`,
+              },
+            ],
+          },
+        ],
       }),
-    }
+    },
   );
 
   if (!res.ok) {
@@ -328,7 +402,10 @@ async function transcribeWithGemini(audioPath: string): Promise<TranscriptSegmen
   if (!text) throw new Error("Gemini returned no transcript text");
 
   // Gemini may wrap in markdown fences — strip them
-  const cleaned = text.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
+  const cleaned = text
+    .replace(/^```(?:json)?\s*\n?/m, "")
+    .replace(/\n?```\s*$/m, "")
+    .trim();
   try {
     return normalizeSegments(JSON.parse(cleaned));
   } catch {
@@ -348,7 +425,9 @@ function buildStoryboard(
   let segments: TranscriptSegment[] = [];
   try {
     segments = JSON.parse(fs.readFileSync(segmentsPath, "utf-8"));
-  } catch { /* no segments available */ }
+  } catch {
+    /* no segments available */
+  }
 
   const lines: string[] = [];
 
@@ -361,8 +440,8 @@ function buildStoryboard(
 
     // Collect transcript segments that overlap this window
     const windowText = segments
-      .filter(s => s.end > windowStart && s.start < windowEnd)
-      .map(s => s.text)
+      .filter((s) => s.end > windowStart && s.start < windowEnd)
+      .map((s) => s.text)
       .join(" ")
       .trim();
 
@@ -377,8 +456,8 @@ function buildStoryboard(
   if (screenshotCount > 0) {
     const lastWindowEnd = screenshotCount * interval;
     const trailing = segments
-      .filter(s => s.start >= lastWindowEnd)
-      .map(s => s.text)
+      .filter((s) => s.start >= lastWindowEnd)
+      .map((s) => s.text)
       .join(" ")
       .trim();
     if (trailing) {
@@ -406,7 +485,10 @@ export function readTranscript(transcriptPath: string, cap?: number): string {
   if (!fs.existsSync(abs)) return "";
   const text = fs.readFileSync(abs, "utf-8");
   if (cap && text.length > cap) {
-    return text.slice(0, cap) + `\n\n[Transcript truncated at ${cap} characters — fetch full transcript via the API]`;
+    return (
+      text.slice(0, cap) +
+      `\n\n[Transcript truncated at ${cap} characters — fetch full transcript via the API]`
+    );
   }
   return text;
 }
@@ -416,7 +498,11 @@ export function readTranscript(transcriptPath: string, cap?: number): string {
  * Resolves the {{base}} placeholder with the actual base URL.
  * Falls back to plain transcript if no storyboard exists.
  */
-export function readStoryboard(screenshotsDir: string, baseUrl: string, cap?: number): string | null {
+export function readStoryboard(
+  screenshotsDir: string,
+  baseUrl: string,
+  cap?: number,
+): string | null {
   // storyboard.txt lives one level up from the screenshots dir
   const parentDir = path.join(uploadsDir(), screenshotsDir, "..");
   const storyboardPath = path.join(parentDir, "storyboard.txt");
@@ -426,7 +512,10 @@ export function readStoryboard(screenshotsDir: string, baseUrl: string, cap?: nu
   text = text.replace(/\{\{base\}\}/g, baseUrl);
 
   if (cap && text.length > cap) {
-    return text.slice(0, cap) + `\n\n[Storyboard truncated at ${cap} characters — fetch full version via the API]`;
+    return (
+      text.slice(0, cap) +
+      `\n\n[Storyboard truncated at ${cap} characters — fetch full version via the API]`
+    );
   }
   return text;
 }

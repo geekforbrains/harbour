@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
+import { activeMessageId, isRunning } from "@/lib/captain/process-manager";
 import { getConversation } from "@/lib/db/captain";
-import { isRunning, activeMessageId } from "@/lib/captain/process-manager";
 
 export const GET = withOrgAuth(
   async (_req, auth, { params }) => {
@@ -16,5 +16,5 @@ export const GET = withOrgAuth(
       activeMessageId: activeMessageId(id),
     });
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );

@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { withOrgAuth, withAgentOrUser, getActorFromAuth } from "@/lib/auth";
+import { getActorFromAuth, withAgentOrUser, withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
-import { listDocs, createDoc } from "@/lib/db/queries";
+import { createDoc, listDocs } from "@/lib/db/queries";
 
 export const GET = withOrgAuth(
   async (req, auth) => {
     const projectId = req.nextUrl.searchParams.get("projectId") || null;
     return NextResponse.json(listDocs(auth.orgId, projectId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 // Docs are created by dashboard users and by agents (per the agent API guide).
@@ -35,5 +35,5 @@ export const POST = withAgentOrUser(
     const doc = createDoc(auth.orgId, projectId, body.title, body.content, actorType, actorId);
     return NextResponse.json(doc, { status: 201 });
   },
-  { role: "editor" }
+  { role: "editor" },
 );

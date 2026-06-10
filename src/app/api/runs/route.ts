@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
-import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns } from "@/lib/db/queries";
+import {
+  listRecentRuns,
+  listRunningRuns,
+  listScheduledRuns,
+  listWaitingRuns,
+} from "@/lib/db/queries";
 import { getRecentRunsLimit } from "@/lib/db/settings";
 
 // NOTE: the run list queries filter by projectId only (Phase 1). Org scoping is
@@ -24,5 +29,5 @@ export const GET = withOrgAuth(
       recent: listRecentRuns(auth.orgId, limit, projectId),
     });
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );

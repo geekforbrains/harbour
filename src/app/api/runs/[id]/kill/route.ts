@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { withResourceAuth, withAgentOrUser } from "@/lib/auth";
+import { withAgentOrUser, withResourceAuth } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, requestKillRun, addRunActivity, isKillRequested } from "@/lib/db/queries";
+import { addRunActivity, getRunById, isKillRequested, requestKillRun } from "@/lib/db/queries";
 
 /**
  * Lightweight kill-check endpoint for the runner's fallback poll. Returns just
@@ -26,7 +26,7 @@ export const GET = withAgentOrUser(
     role: "viewer",
     allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );
 
 export const POST = withResourceAuth("run", "id", { role: "editor" })(
@@ -37,7 +37,9 @@ export const POST = withResourceAuth("run", "id", { role: "editor" })(
 
     if (run.status !== "running") {
       return NextResponse.json(
-        { error: `Cannot kill a run in status '${run.status}' — only 'running' runs can be killed.` },
+        {
+          error: `Cannot kill a run in status '${run.status}' — only 'running' runs can be killed.`,
+        },
         { status: 409 },
       );
     }
@@ -50,5 +52,5 @@ export const POST = withResourceAuth("run", "id", { role: "editor" })(
     addRunActivity(id, "system", null, "System", `Kill requested by **${auth.displayName}**`);
 
     return NextResponse.json({ ok: true, kill_requested: true });
-  }
+  },
 );

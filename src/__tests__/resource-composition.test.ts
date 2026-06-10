@@ -1,21 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
+  buildRunPayload,
   createAgent,
-  createJob,
-  createRun,
+  createDatabase,
   createDoc,
   createEnvVar,
-  createDatabase,
+  createJob,
+  createOrg,
+  createProject,
+  createRun,
   insertRows,
+  linkDatabaseToJob,
   linkDocToJob,
   linkEnvVarToJob,
-  linkDatabaseToJob,
-  buildRunPayload,
 } from "@/lib/db/queries";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown — fresh in-memory v2 DB per test
@@ -75,9 +75,13 @@ describe("run payload resource composition", () => {
     // --- Databases across tiers ---
     const orgDb = createDatabase(org.id, null, "org_table", [{ name: "v", type: "TEXT" }]);
     insertRows(orgDb.id, [{ v: "org-row" }]);
-    const projDb = createDatabase(org.id, project.id, "project_table", [{ name: "v", type: "TEXT" }]);
+    const projDb = createDatabase(org.id, project.id, "project_table", [
+      { name: "v", type: "TEXT" },
+    ]);
     insertRows(projDb.id, [{ v: "project-row" }]);
-    const linkedDb = createDatabase(org.id, project.id, "linked_table", [{ name: "v", type: "TEXT" }]);
+    const linkedDb = createDatabase(org.id, project.id, "linked_table", [
+      { name: "v", type: "TEXT" },
+    ]);
     insertRows(linkedDb.id, [{ v: "linked-row" }]);
     linkDatabaseToJob(job.id, linkedDb.id);
 
@@ -99,25 +103,29 @@ describe("run payload resource composition", () => {
     expect(payload.env.JOB_OVERRIDE_HOLDER).toBe("job-wins");
 
     // (d) de-dup: a doc that is both project-tier and job-linked appears once
-    const dupCount = payload.docs.filter((d: any) => d.id === dupDoc.id).length;
+    const dupCount = payload.docs.filter((d) => d.id === dupDoc.id).length;
     expect(dupCount).toBe(1);
-    const docIds = payload.docs.map((d: any) => d.id);
+    const docIds = payload.docs.map((d) => d.id);
     expect(docIds).toContain(orgDoc.id);
     expect(docIds).toContain(projDoc.id);
     expect(docIds).toContain(dupDoc.id);
     // content carried through
-    expect(payload.docs.find((d: any) => d.id === orgDoc.id)?.content).toBe("org doc body");
+    expect(payload.docs.find((d) => d.id === orgDoc.id)?.content).toBe("org doc body");
 
     // databases: all three tiers present, each carrying id + columns + rows so
     // an agent can actually write back (not just read injected rows).
     expect(payload.data.org_table.rows).toEqual([expect.objectContaining({ v: "org-row" })]);
-    expect(payload.data.project_table.rows).toEqual([expect.objectContaining({ v: "project-row" })]);
+    expect(payload.data.project_table.rows).toEqual([
+      expect.objectContaining({ v: "project-row" }),
+    ]);
     expect(payload.data.linked_table.rows).toEqual([expect.objectContaining({ v: "linked-row" })]);
 
     // each injected database exposes the id (to target insert_rows/read_rows)
     // and its column schema (so the agent knows valid column names).
     expect(payload.data.org_table.id).toBe(orgDb.id);
-    expect(payload.data.org_table.columns).toEqual([expect.objectContaining({ name: "v", type: "TEXT" })]);
+    expect(payload.data.org_table.columns).toEqual([
+      expect.objectContaining({ name: "v", type: "TEXT" }),
+    ]);
   });
 
   it("job-linked env var overrides project- and org-level on the same name", () => {
@@ -175,7 +183,7 @@ describe("run payload resource composition", () => {
 
     // (f) org-level reaches project A
     expect(payloadA.env.ORG_VAR).toBe("org-val");
-    expect(payloadA.docs.map((d: any) => d.title)).toContain("Org Doc");
+    expect(payloadA.docs.map((d) => d.title)).toContain("Org Doc");
     expect(payloadA.data.org_data).toBeTruthy();
 
     // project A's own resources present
@@ -183,7 +191,7 @@ describe("run payload resource composition", () => {
 
     // (e) project B's project-level resources DO NOT leak into A's run
     expect(payloadA.env.B_VAR).toBeUndefined();
-    expect(payloadA.docs.map((d: any) => d.title)).not.toContain("B Doc");
+    expect(payloadA.docs.map((d) => d.title)).not.toContain("B Doc");
     expect(payloadA.data.b_data).toBeUndefined();
 
     // org-level also reaches project B (symmetry)

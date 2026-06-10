@@ -50,3 +50,6 @@ harbour.db-shm
 
 # claude code worktrees
 .claude/worktrees/
+
+# e2e
+/.e2e/

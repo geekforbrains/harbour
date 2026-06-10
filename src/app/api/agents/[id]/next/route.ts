@@ -1,9 +1,21 @@
-import { NextRequest, NextResponse } from "next/server";
-import { withAgentAuth, requireAgentSelf } from "@/lib/auth";
-import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment } from "@/lib/db/queries";
-import { serializeAttachment, SerializedAttachment } from "@/lib/attachments-serialize";
+import { type NextRequest, NextResponse } from "next/server";
+import { type SerializedAttachment, serializeAttachment } from "@/lib/attachments-serialize";
+import { requireAgentSelf, withAgentAuth } from "@/lib/auth";
+import {
+  getAgentById,
+  getAgentNextRun,
+  getProcessingByAttachment,
+  peekAgentNext,
+  type RunAttachment,
+  touchAgentPolled,
+} from "@/lib/db/queries";
 import { publicBaseUrl } from "@/lib/request-url";
-import { isVideoFile, readTranscript, readStoryboard, TRANSCRIPT_CAP } from "@/lib/video-processing";
+import {
+  isVideoFile,
+  readStoryboard,
+  readTranscript,
+  TRANSCRIPT_CAP,
+} from "@/lib/video-processing";
 
 function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
@@ -54,7 +66,9 @@ export const GET = withAgentAuth(async (req, auth, { params }) => {
   }
 
   const base = publicBaseUrl(req);
-  const serialized = (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base));
+  const serialized = (payload.attachments as RunAttachment[]).map((a) =>
+    serializeAttachment(a, base),
+  );
 
   const enriched = serialized.map((att: SerializedAttachment) => {
     if (!isVideoFile(att.mime_type, att.filename)) return att;

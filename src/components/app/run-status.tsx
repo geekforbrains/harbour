@@ -22,7 +22,9 @@ export function StatusDot({ status }: { status: string }) {
 export function StatusBadge({ status }: { status: string }) {
   const cfg = statusStyle(status);
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}
+    >
       {status}
     </span>
   );

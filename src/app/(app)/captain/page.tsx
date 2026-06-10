@@ -1,30 +1,30 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, scoped } from "@/lib/api/client";
-import { useScope } from "@/lib/hooks/use-project-filter";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { StreamingOutput, ToolCalls } from "@/components/app/captain-message";
-import { ScopePrompt } from "@/components/app/scope-prompt";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bot,
+  List,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Send,
+  Settings,
   Square,
-  PanelLeftOpen,
-  PanelLeftClose,
   Trash2,
   User,
-  Bot,
-  Settings,
-  List,
 } from "lucide-react";
 import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { StreamingOutput, ToolCalls } from "@/components/app/captain-message";
+import { ScopePrompt } from "@/components/app/scope-prompt";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
+import { apiFetch, scoped } from "@/lib/api/client";
+import { useScope } from "@/lib/hooks/use-project-filter";
 
 type Conversation = {
   id: string;
@@ -77,18 +77,28 @@ function ConversationList({
       </div>
       <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
         {conversations.map((c) => (
+          // biome-ignore lint/a11y/useSemanticElements: cannot be a real <button> — the row contains a nested delete <button>, and interactive elements may not nest
           <div
             key={c.id}
+            role="button"
+            tabIndex={0}
             className={`group flex items-center rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
               c.id === activeId
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
             }`}
             onClick={() => onSelect(c.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(c.id);
+              }
+            }}
           >
             <MessageSquare className="h-3.5 w-3.5 mr-2 shrink-0" />
             <span className="truncate flex-1">{c.title}</span>
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(c.id);
@@ -151,7 +161,7 @@ function ChatView({
       const params = new URLSearchParams({ after: "0" });
       if (msgId) params.set("messageId", msgId);
       const evtSource = new EventSource(
-        `/api/captain/conversations/${conversationId}/stream?${params}`
+        `/api/captain/conversations/${conversationId}/stream?${params}`,
       );
       eventSourceRef.current = evtSource;
 
@@ -185,7 +195,7 @@ function ChatView({
         setActiveMessageId(null);
       };
     },
-    [conversationId, queryClient]
+    [conversationId, queryClient],
   );
 
   // Check if a response is already in-flight (e.g. after page refresh)
@@ -194,7 +204,7 @@ function ChatView({
     async function checkStatus() {
       try {
         const data = await apiFetch<{ running?: boolean; activeMessageId?: string }>(
-          `/api/captain/conversations/${conversationId}/status`
+          `/api/captain/conversations/${conversationId}/status`,
         );
         if (cancelled) return;
         if (data.running && data.activeMessageId) {
@@ -202,13 +212,18 @@ function ChatView({
           setActiveMessageId(data.activeMessageId);
           connectStream(data.activeMessageId);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     checkStatus();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId, connectStream]);
 
   // Cleanup EventSource on unmount or conversation switch
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is intentionally listed so the cleanup closes the stream when switching conversations
   useEffect(() => {
     return () => {
       eventSourceRef.current?.close();
@@ -217,6 +232,7 @@ function ChatView({
   }, [conversationId]);
 
   // Auto-scroll to bottom — use scrollTop on the container to avoid scrolling parent elements
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages/streamEvents are intentional triggers — re-scroll whenever new content arrives
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -225,14 +241,11 @@ function ChatView({
   // Send message
   const sendMutation = useMutation({
     mutationFn: async (message: string) => {
-      const res = await fetch(
-        `/api/captain/conversations/${conversationId}/messages`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
-        }
-      );
+      const res = await fetch(`/api/captain/conversations/${conversationId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to send message");
@@ -289,7 +302,8 @@ function ChatView({
             <MessageSquare className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <p className="text-muted-foreground text-sm">Send a message to get started</p>
             <p className="text-muted-foreground/60 text-xs mt-1">
-              Using {conversation?.cli || "..."}{conversation?.model ? ` (${conversation.model})` : ""}
+              Using {conversation?.cli || "..."}
+              {conversation?.model ? ` (${conversation.model})` : ""}
             </p>
           </div>
         )}
@@ -297,22 +311,27 @@ function ChatView({
         <div className="space-y-4 max-w-3xl mx-auto">
           {messages.map((msg) => {
             // Skip the placeholder assistant message if we're actively streaming it
-            if (
-              msg.role === "assistant" &&
-              msg.id === activeMessageId &&
-              streaming
-            ) {
+            if (msg.role === "assistant" && msg.id === activeMessageId && streaming) {
               return null;
             }
 
             return (
-              <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "rounded-lg bg-muted/50 px-3 py-2.5" : ""}`}>
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                  msg.role === "user"
-                    ? "bg-foreground text-background"
-                    : "bg-muted text-muted-foreground"
-                }`}>
-                  {msg.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+              <div
+                key={msg.id}
+                className={`flex gap-3 ${msg.role === "user" ? "rounded-lg bg-muted/50 px-3 py-2.5" : ""}`}
+              >
+                <div
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                    msg.role === "user"
+                      ? "bg-foreground text-background"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {msg.role === "user" ? (
+                    <User className="h-3.5 w-3.5" />
+                  ) : (
+                    <Bot className="h-3.5 w-3.5" />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0 pt-0.5">
                   {msg.role === "user" ? (
@@ -341,7 +360,6 @@ function ChatView({
               </div>
             </div>
           )}
-
         </div>
       </div>
 
@@ -395,7 +413,8 @@ export default function CaptainPage() {
   // Fetch conversations (org-scoped)
   const { data: conversations = [] } = useQuery<Conversation[]>({
     queryKey: ["captain-conversations", orgId],
-    queryFn: () => apiFetch<Conversation[]>(scoped("/api/captain/conversations", { orgId })).catch(() => []),
+    queryFn: () =>
+      apiFetch<Conversation[]>(scoped("/api/captain/conversations", { orgId })).catch(() => []),
     enabled: !!orgId,
   });
 
@@ -412,16 +431,15 @@ export default function CaptainPage() {
     try {
       const created = await apiFetch<Conversation>(
         scoped("/api/captain/conversations", { orgId }),
-        { method: "POST", body: { title: "New conversation" } }
+        { method: "POST", body: { title: "New conversation" } },
       );
       // Seed the cache with the new conversation up front so the chat view
       // switches to it immediately. `effectiveConversationId` only honors an
       // active id that's present in the list, and the invalidate refetch below
       // is async — without this the page would sit on the empty state (or the
       // wrong conversation) until the refetch lands.
-      queryClient.setQueryData<Conversation[]>(
-        ["captain-conversations", orgId],
-        (prev = []) => (prev.some((c) => c.id === created.id) ? prev : [created, ...prev])
+      queryClient.setQueryData<Conversation[]>(["captain-conversations", orgId], (prev = []) =>
+        prev.some((c) => c.id === created.id) ? prev : [created, ...prev],
       );
       setActiveConversationId(created.id);
       queryClient.invalidateQueries({ queryKey: ["captain-conversations"] });
@@ -484,7 +502,11 @@ export default function CaptainPage() {
             className="hidden md:inline-flex h-8 w-8"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
-            {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+            {sidebarOpen ? (
+              <PanelLeftClose className="h-4 w-4" />
+            ) : (
+              <PanelLeftOpen className="h-4 w-4" />
+            )}
           </Button>
           {/* Mobile: conversation list + new chat */}
           <Button
@@ -498,12 +520,7 @@ export default function CaptainPage() {
           <span className="text-sm font-medium truncate flex-1">
             {conversations.find((c) => c.id === effectiveConversationId)?.title || "Captain"}
           </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="md:hidden h-8 w-8"
-            onClick={handleNew}
-          >
+          <Button variant="ghost" size="icon" className="md:hidden h-8 w-8" onClick={handleNew}>
             <Plus className="h-4 w-4" />
           </Button>
           <Link href="/settings" className="text-muted-foreground hover:text-foreground">
@@ -530,7 +547,10 @@ export default function CaptainPage() {
             </Button>
             <p className="text-xs text-muted-foreground mt-6">
               Configure your CLI tool, model, and working directory in{" "}
-              <Link href="/settings" className="underline">Settings</Link>.
+              <Link href="/settings" className="underline">
+                Settings
+              </Link>
+              .
             </p>
           </div>
         )}

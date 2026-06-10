@@ -1,6 +1,6 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import sharp from "sharp";
-import { writeFileSync } from "fs";
-import { join } from "path";
 
 const PRIMARY = "#5043a3";
 const WHITE = "#ffffff";
@@ -48,7 +48,8 @@ function makeFaviconSvg(size) {
 
 // Social share image (OG image): 1200x630 with centered icon
 function makeOgImage() {
-  const w = 1200, h = 630;
+  const w = 1200,
+    h = 630;
   const iconSize = 280;
   const iconX = (w - iconSize) / 2;
   const iconY = (h - iconSize) / 2 - 40;
@@ -100,9 +101,15 @@ async function generate() {
   // ICO = concatenated BMPs or PNGs, but simplest is just a 32x32 PNG renamed
   // We'll use ImageMagick to combine into proper .ico
   {
-    const png16 = await sharp(Buffer.from(makeFaviconSvg(16))).png().toBuffer();
-    const png32 = await sharp(Buffer.from(makeFaviconSvg(32))).png().toBuffer();
-    const png48 = await sharp(Buffer.from(makeFaviconSvg(48))).png().toBuffer();
+    const png16 = await sharp(Buffer.from(makeFaviconSvg(16)))
+      .png()
+      .toBuffer();
+    const png32 = await sharp(Buffer.from(makeFaviconSvg(32)))
+      .png()
+      .toBuffer();
+    const png48 = await sharp(Buffer.from(makeFaviconSvg(48)))
+      .png()
+      .toBuffer();
     writeFileSync("/tmp/fav16.png", png16);
     writeFileSync("/tmp/fav32.png", png32);
     writeFileSync("/tmp/fav48.png", png48);
@@ -136,7 +143,9 @@ async function generate() {
     console.log("✓ icon-1024.png (social profile)");
   }
 
-  console.log("\nDone! Now run: magick /tmp/fav16.png /tmp/fav32.png /tmp/fav48.png public/favicon.ico");
+  console.log(
+    "\nDone! Now run: magick /tmp/fav16.png /tmp/fav32.png /tmp/fav48.png public/favicon.ico",
+  );
 }
 
 generate().catch(console.error);

@@ -1,22 +1,22 @@
 import { NextResponse } from "next/server";
-import { withResourceAuth, withAgentOrUser } from "@/lib/auth";
+import { withAgentOrUser, withResourceAuth } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import {
-  getRunById,
   addRunActivity,
+  getRunById,
+  linkAttachmentsToActivity,
   listRunActivity,
   updateRunStatus,
-  linkAttachmentsToActivity,
 } from "@/lib/db/queries";
 
 export const GET = withResourceAuth("run", "id", { role: "viewer" })(
-  async (_req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
     return NextResponse.json(listRunActivity(id));
-  }
+  },
 );
 
 // Viewers may comment (intentional — comments can resume a waiting run), and
@@ -37,10 +37,13 @@ export const POST = withAgentOrUser(
     // Workflow runs are non-interactive: their activity log is runner output,
     // not a message thread. Only the workflow runner may write to it.
     if (run.job_kind === "workflow" && auth.type !== "workflow_runner") {
-      return NextResponse.json({ error: "Workflow runs do not have a message thread" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Workflow runs do not have a message thread" },
+        { status: 400 },
+      );
     }
 
-    const body = await req.json() as { content?: string; attachment_ids?: string[] };
+    const body = (await req.json()) as { content?: string; attachment_ids?: string[] };
     const content = (body.content ?? "").trim();
     const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
 
@@ -48,21 +51,20 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "content or attachment_ids required" }, { status: 400 });
     }
 
-    const authorType = auth.type === "user"
-      ? "user"
-      : auth.type === "workflow_runner"
-        ? "workflow"
-        : "agent";
-    const authorId = auth.type === "user"
-      ? auth.userId
-      : auth.type === "workflow_runner"
-        ? auth.runnerId
-        : auth.agentId;
-    const authorName = auth.type === "user"
-      ? auth.displayName
-      : auth.type === "workflow_runner"
-        ? auth.runnerName
-        : auth.agentName;
+    const authorType =
+      auth.type === "user" ? "user" : auth.type === "workflow_runner" ? "workflow" : "agent";
+    const authorId =
+      auth.type === "user"
+        ? auth.userId
+        : auth.type === "workflow_runner"
+          ? auth.runnerId
+          : auth.agentId;
+    const authorName =
+      auth.type === "user"
+        ? auth.displayName
+        : auth.type === "workflow_runner"
+          ? auth.runnerName
+          : auth.agentName;
 
     const entry = addRunActivity(id, authorType, authorId, authorName, content);
 
@@ -83,5 +85,5 @@ export const POST = withAgentOrUser(
     role: "viewer",
     allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );

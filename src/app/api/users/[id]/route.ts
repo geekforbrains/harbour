@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
-import { getUserById, updateUser, deleteUser } from "@/lib/db/queries";
+import { deleteUser, getUserById, updateUser } from "@/lib/db/queries";
 
 /**
  * Instance-admin-only: update a user — toggle instance_admin or rename. Other

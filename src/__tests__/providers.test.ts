@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { getProvider, runCliTool } from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.

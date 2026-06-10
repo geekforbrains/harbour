@@ -1,10 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { Readable } from "stream";
+import fs from "node:fs";
+import path from "node:path";
+import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 
 export const runtime = "nodejs";
@@ -20,17 +20,17 @@ export const GET = withAgentOrUser(
     }
 
     const processing = getProcessingByAttachment(aid);
-    if (!processing || !processing.screenshots_dir) {
+    if (!processing?.screenshots_dir) {
       return NextResponse.json({ error: "No screenshots available" }, { status: 404 });
     }
 
     const idx = parseInt(index, 10);
-    if (isNaN(idx) || idx < 0) {
+    if (Number.isNaN(idx) || idx < 0) {
       return NextResponse.json({ error: "Invalid index" }, { status: 400 });
     }
 
     // Files on disk are 1-based (0001.jpg), API index is 0-based
-    const filename = String(idx + 1).padStart(4, "0") + ".jpg";
+    const filename = `${String(idx + 1).padStart(4, "0")}.jpg`;
     const abs = path.join(uploadsDir(), processing.screenshots_dir, filename);
 
     if (!fs.existsSync(abs)) {
@@ -49,5 +49,5 @@ export const GET = withAgentOrUser(
       },
     });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) }
+  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
 );

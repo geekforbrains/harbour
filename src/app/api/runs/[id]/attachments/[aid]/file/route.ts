@@ -1,10 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { Readable } from "stream";
+import fs from "node:fs";
+import path from "node:path";
+import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getAttachmentById } from "@/lib/db/queries";
+import { getAttachmentById, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { contentDisposition, isInlineSafe } from "@/lib/upload";
 
@@ -42,11 +42,14 @@ export const GET = withAgentOrUser(
       headers: {
         "Content-Type": mime,
         "Content-Length": stat.size.toString(),
-        "Content-Disposition": contentDisposition(inline ? "inline" : "attachment", att.filename || "file"),
+        "Content-Disposition": contentDisposition(
+          inline ? "inline" : "attachment",
+          att.filename || "file",
+        ),
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, max-age=3600",
       },
     });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) }
+  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
 );

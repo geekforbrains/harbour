@@ -29,18 +29,13 @@ export type ToolCall = {
  *   output — the paired tool_end content, or null if none yet
  *   active — true only while streaming with no tool_end yet (in flight)
  */
-export function pairToolEvents(
-  events: OutputEvent[],
-  streaming = false
-): ToolCall[] {
+export function pairToolEvents(events: OutputEvent[], streaming = false): ToolCall[] {
   const calls: ToolCall[] = [];
   let i = 0;
   while (i < events.length) {
     const evt = events[i];
     if (evt.event_type === "tool_start") {
-      const endIdx = events.findIndex(
-        (e, j) => j > i && e.event_type === "tool_end"
-      );
+      const endIdx = events.findIndex((e, j) => j > i && e.event_type === "tool_end");
       const hasEnd = endIdx >= 0;
       calls.push({
         id: evt.id,

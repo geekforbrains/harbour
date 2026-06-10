@@ -1,27 +1,27 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
-import { mkdtempSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
-  createWorkflow,
-  createRun,
+  authenticateWorkflowRunner,
+  buildRunPayload,
+  createDatabase,
   createDoc,
   createEnvVar,
-  createDatabase,
+  createOrg,
+  createProject,
+  createRun,
+  createWorkflow,
+  createWorkflowRunner,
+  getNextWorkflowRun,
+  getRunById,
   insertRows,
   linkDatabaseToJob,
-  getNextWorkflowRun,
-  peekWorkflowNext,
-  buildRunPayload,
-  getRunById,
   listRunActivity,
-  createWorkflowRunner,
-  authenticateWorkflowRunner,
+  peekWorkflowNext,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown — fresh in-memory v2 DB per test (mirrors the other suites)
@@ -163,8 +163,8 @@ describe("workflow stale-run reaping", () => {
 
     expect(getRunById(run.id)!.status).toBe("failed");
     const activity = listRunActivity(run.id);
-    expect(activity.some((a: any) => a.author_type === "system" && /timed out/i.test(a.content))).toBe(
-      true
+    expect(activity.some((a) => a.author_type === "system" && /timed out/i.test(a.content))).toBe(
+      true,
     );
   });
 
@@ -215,7 +215,7 @@ describe("buildRunPayload: workflow run shape", () => {
     expect(payload.job.instructions).toBeNull();
 
     // Resources compose for a workflow run just like an agent run
-    expect(payload.docs.map((d: any) => d.id)).toContain(doc.id);
+    expect(payload.docs.map((d) => d.id)).toContain(doc.id);
     expect(payload.env.API_TOKEN).toBe("secret");
     expect(payload.data.metrics.rows).toEqual([expect.objectContaining({ v: "row-1" })]);
   });

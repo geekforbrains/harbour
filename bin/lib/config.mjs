@@ -1,6 +1,6 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 const RUNNERS_FILE = path.join(HARBOUR_DIR, "runners.json");
@@ -57,10 +57,16 @@ export function listRunners() {
     console.log("Create one from the dashboard or with: harbour agent add");
     return;
   }
-  console.log(`\n  ${"NAME".padEnd(20)} ${"CLI".padEnd(10)} ${"MODEL".padEnd(15)} ${"THINKING".padEnd(10)} URL`);
-  console.log(`  ${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(15)} ${"─".repeat(10)} ${"─".repeat(30)}`);
+  console.log(
+    `\n  ${"NAME".padEnd(20)} ${"CLI".padEnd(10)} ${"MODEL".padEnd(15)} ${"THINKING".padEnd(10)} URL`,
+  );
+  console.log(
+    `  ${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(15)} ${"─".repeat(10)} ${"─".repeat(30)}`,
+  );
   for (const r of runners) {
-    console.log(`  ${(r.name || r.agentId).padEnd(20)} ${(r.cli || "—").padEnd(10)} ${(r.model || "—").padEnd(15)} ${(r.thinking || "—").padEnd(10)} ${r.url}`);
+    console.log(
+      `  ${(r.name || r.agentId).padEnd(20)} ${(r.cli || "—").padEnd(10)} ${(r.model || "—").padEnd(15)} ${(r.thinking || "—").padEnd(10)} ${r.url}`,
+    );
   }
   console.log();
 }
@@ -69,7 +75,9 @@ export function listWorkflowRunners() {
   const runners = loadWorkflowRunnerConfigs();
   if (runners.length === 0) {
     console.log("No harbour workflow runners configured.");
-    console.log("Create one from the dashboard and connect it with: harbour workflow connect <blob>");
+    console.log(
+      "Create one from the dashboard and connect it with: harbour workflow connect <blob>",
+    );
     return;
   }
   console.log(`\n  ${"NAME".padEnd(20)} URL`);

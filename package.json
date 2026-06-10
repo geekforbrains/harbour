@@ -9,8 +9,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "format": "biome format --write",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "harbour": "node bin/harbour.mjs",
     "release": "bash scripts/release.sh"
   },
@@ -38,6 +42,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.16",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
@@ -49,8 +54,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.1",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
     "typescript": "^5",

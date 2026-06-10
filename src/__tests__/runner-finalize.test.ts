@@ -1,16 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { getProvider } from "../../bin/lib/providers.mjs";
 import {
   buildApiPrompt,
   buildFinalizePrompt,
-  isTerminalStatus,
-  shouldRunFinalize,
-  resolveFinalizeMode,
-  finalizeStep,
-  resolveKillOutcome,
   FINALIZE_MAX_ATTEMPTS,
+  finalizeStep,
+  isTerminalStatus,
+  resolveFinalizeMode,
+  resolveKillOutcome,
+  shouldRunFinalize,
   TERMINAL_STATUSES,
 } from "../../bin/lib/runner.mjs";
-import { getProvider } from "../../bin/lib/providers.mjs";
 
 // A minimal API descriptor matching the shape /next sends in payload.api.
 // buildApiPrompt / buildFinalizePrompt read `.endpoints.<name>` and strip the

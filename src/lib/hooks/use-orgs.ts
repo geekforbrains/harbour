@@ -1,12 +1,16 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Org, User } from "@/components/app/app-context";
 import { apiFetch, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
-import type { Org, User } from "@/components/app/app-context";
 
 type MeResponse =
-  | { type: "user"; user: { id: string; email: string; display_name: string; is_instance_admin?: number }; orgs: Org[] }
+  | {
+      type: "user";
+      user: { id: string; email: string; display_name: string; is_instance_admin?: number };
+      orgs: Org[];
+    }
   | { type: "agent"; agent: unknown };
 
 /**
@@ -24,7 +28,7 @@ export function useMe() {
 
 /** Normalize a `/api/auth/me` response into the app-context user shape. */
 export function userFromMe(me: MeResponse | undefined): User | null {
-  if (!me || me.type !== "user" || !me.user) return null;
+  if (me?.type !== "user" || !me.user) return null;
   return {
     userId: me.user.id,
     email: me.user.email,
@@ -34,7 +38,7 @@ export function userFromMe(me: MeResponse | undefined): User | null {
 }
 
 export function orgsFromMe(me: MeResponse | undefined): Org[] {
-  if (!me || me.type !== "user") return [];
+  if (me?.type !== "user") return [];
   return me.orgs ?? [];
 }
 

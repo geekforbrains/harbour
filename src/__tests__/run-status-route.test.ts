@@ -1,22 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
 import {
-  createOrg,
-  createProject,
-  createUser,
+  addMembership,
   createAgent,
   createJob,
+  createOrg,
+  createProject,
   createRun,
-  addMembership,
   createSession,
-  updateRunStatus,
+  createUser,
   getRunById,
   listRunActivity,
+  updateRunStatus,
 } from "@/lib/db/queries";
-
-import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -55,7 +54,11 @@ function ctx(params: Record<string, string>) {
 }
 
 function statusBody(status: string): ReqInit {
-  return { method: "PUT", body: JSON.stringify({ status }), headers: { "content-type": "application/json" } };
+  return {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+    headers: { "content-type": "application/json" },
+  };
 }
 
 function fixture() {
@@ -70,8 +73,8 @@ function fixture() {
 }
 
 function statusActivity(runId: string) {
-  return (listRunActivity(runId) as any[]).filter(
-    (a) => a.author_type === "system" && /Status changed/.test(a.content || "")
+  return listRunActivity(runId).filter(
+    (a) => a.author_type === "system" && /Status changed/.test(a.content || ""),
   );
 }
 
@@ -80,7 +83,10 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
     const { run, editor } = fixture();
     // running -> done is legal; done -> running is not.
     updateRunStatus(run.id, "done");
-    const res = await runStatusPUT(userReq(editor.id, "http://x/", statusBody("running")), ctx({ id: run.id }));
+    const res = await runStatusPUT(
+      userReq(editor.id, "http://x/", statusBody("running")),
+      ctx({ id: run.id }),
+    );
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toBe("Cannot change run status from done to running");
@@ -90,7 +96,10 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
 
   it("still returns 400 for a value outside the status enum", async () => {
     const { run, editor } = fixture();
-    const res = await runStatusPUT(userReq(editor.id, "http://x/", statusBody("bogus")), ctx({ id: run.id }));
+    const res = await runStatusPUT(
+      userReq(editor.id, "http://x/", statusBody("bogus")),
+      ctx({ id: run.id }),
+    );
     expect(res.status).toBe(400);
     expect(getRunById(run.id)!.status).toBe("running");
   });
@@ -98,7 +107,10 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
   it("permits the done -> failed override edge reserved for the postrun gate", async () => {
     const { run, editor } = fixture();
     updateRunStatus(run.id, "done");
-    const res = await runStatusPUT(userReq(editor.id, "http://x/", statusBody("failed")), ctx({ id: run.id }));
+    const res = await runStatusPUT(
+      userReq(editor.id, "http://x/", statusBody("failed")),
+      ctx({ id: run.id }),
+    );
     expect(res.status).toBe(200);
     expect(getRunById(run.id)!.status).toBe("failed");
   });
@@ -107,7 +119,10 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
 describe("PUT /api/runs/:id/status — activity logging", () => {
   it("logs a 'Status changed' activity on a real transition", async () => {
     const { run, agent } = fixture();
-    const res = await runStatusPUT(agentReq(agent.apiKey, "http://x/", statusBody("done")), ctx({ id: run.id }));
+    const res = await runStatusPUT(
+      agentReq(agent.apiKey, "http://x/", statusBody("done")),
+      ctx({ id: run.id }),
+    );
     expect(res.status).toBe(200);
     const logged = statusActivity(run.id);
     expect(logged).toHaveLength(1);
@@ -116,7 +131,10 @@ describe("PUT /api/runs/:id/status — activity logging", () => {
 
   it("does NOT log a 'Status changed' activity for a no-op self-transition", async () => {
     const { run, agent } = fixture(); // already 'running'
-    const res = await runStatusPUT(agentReq(agent.apiKey, "http://x/", statusBody("running")), ctx({ id: run.id }));
+    const res = await runStatusPUT(
+      agentReq(agent.apiKey, "http://x/", statusBody("running")),
+      ctx({ id: run.id }),
+    );
     expect(res.status).toBe(200);
     expect(getRunById(run.id)!.status).toBe("running");
     // No state change happened, so no misleading "Status changed to running" entry.

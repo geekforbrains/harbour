@@ -1,10 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, scoped, type Scope } from "@/lib/api/client";
+import type { Project } from "@/components/app/app-context";
+import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
-import type { Project } from "@/components/app/app-context";
 
 /** List projects in the active org. */
 export function useProjects(scope?: Scope, opts?: { enabled?: boolean; refetchInterval?: number }) {

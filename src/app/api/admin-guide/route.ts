@@ -1,7 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import fs from "fs";
-import path from "path";
 
 export const GET = withAuthenticatedUser(async () => {
   const guidePath = path.join(process.cwd(), "docs", "admin-guide.md");

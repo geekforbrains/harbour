@@ -1,6 +1,6 @@
-import { getDb } from "./schema";
+import { createHash, randomBytes } from "node:crypto";
 import { v4 as uuid } from "uuid";
-import { randomBytes, createHash } from "crypto";
+import { getDb } from "./schema";
 import { setUserPassword } from "./users";
 
 // ─── Set-password / reset tokens ──────────────────────────────────────────────
@@ -34,7 +34,7 @@ export type SetPasswordToken = {
  */
 export function createSetPasswordToken(
   userId: string,
-  createdByUserId: string | null
+  createdByUserId: string | null,
 ): { rawToken: string; id: string; expiresAt: number } {
   const db = getDb();
   const rawToken = randomBytes(32).toString("base64url");
@@ -43,7 +43,7 @@ export function createSetPasswordToken(
   const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;
   db.prepare(
     `INSERT INTO set_password_tokens (id, token_hash, user_id, created_by_user_id, expires_at)
-     VALUES (?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?)`,
   ).run(id, tokenHash, userId, createdByUserId, expiresAt);
   return { rawToken, id, expiresAt };
 }
@@ -67,10 +67,7 @@ export type ConsumeResult =
  * transaction so a token can never be spent twice. Returns the affected user id
  * on success.
  */
-export function consumeSetPasswordToken(
-  rawToken: string,
-  newPassword: string
-): ConsumeResult {
+export function consumeSetPasswordToken(rawToken: string, newPassword: string): ConsumeResult {
   const db = getDb();
   const tokenHash = hashToken(rawToken);
   const now = Math.floor(Date.now() / 1000);
@@ -87,7 +84,7 @@ export function consumeSetPasswordToken(
     // concurrent transaction can't double-spend even outside this serialized txn).
     const res = db
       .prepare(
-        `UPDATE set_password_tokens SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`
+        `UPDATE set_password_tokens SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`,
       )
       .run(now, row.id);
     if (res.changes !== 1) return { ok: false, reason: "consumed" };
@@ -104,6 +101,6 @@ export function pruneSetPasswordTokens(): void {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `DELETE FROM set_password_tokens WHERE consumed_at IS NOT NULL OR expires_at <= ?`
+    `DELETE FROM set_password_tokens WHERE consumed_at IS NOT NULL OR expires_at <= ?`,
   ).run(now);
 }

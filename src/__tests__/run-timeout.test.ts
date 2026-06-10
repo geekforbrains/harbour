@@ -1,19 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
   createAgent,
   createJob,
-  createWorkflow,
+  createOrg,
+  createProject,
   createRun,
-  getRunById,
+  createWorkflow,
   getAgentNextRun,
   getNextWorkflowRun,
-  updateRunStatus,
+  getRunById,
   listRunActivity,
+  updateRunStatus,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Run timeout — server-side hard cap (issue #15)
@@ -50,12 +50,16 @@ const NOW = () => Math.floor(Date.now() / 1000);
 
 function setTimes(runId: string, t: { claimedAt?: number; updatedAt?: number }) {
   const db = getDb();
-  if (t.claimedAt !== undefined) db.prepare(`UPDATE runs SET claimed_at = ? WHERE id = ?`).run(t.claimedAt, runId);
-  if (t.updatedAt !== undefined) db.prepare(`UPDATE runs SET updated_at = ? WHERE id = ?`).run(t.updatedAt, runId);
+  if (t.claimedAt !== undefined)
+    db.prepare(`UPDATE runs SET claimed_at = ? WHERE id = ?`).run(t.claimedAt, runId);
+  if (t.updatedAt !== undefined)
+    db.prepare(`UPDATE runs SET updated_at = ? WHERE id = ?`).run(t.updatedAt, runId);
 }
 
 function claimedAtOf(runId: string): number {
-  return (getDb().prepare(`SELECT claimed_at AS c FROM runs WHERE id = ?`).get(runId) as { c: number }).c;
+  return (
+    getDb().prepare(`SELECT claimed_at AS c FROM runs WHERE id = ?`).get(runId) as { c: number }
+  ).c;
 }
 
 function agentSetup() {
@@ -82,7 +86,10 @@ describe("failStaleRuns (agent path): hard cap keyed on claimed_at", () => {
     expect(getRunById(run.id)!.status).toBe("failed");
     const activity = listRunActivity(run.id);
     expect(
-      activity.some((a: { author_type: string; content: string }) => a.author_type === "system" && /timed out/i.test(a.content)),
+      activity.some(
+        (a: { author_type: string; content: string }) =>
+          a.author_type === "system" && /timed out/i.test(a.content),
+      ),
     ).toBe(true);
   });
 
@@ -106,7 +113,11 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
   it("fails a workflow run claimed past the timeout despite recent updated_at", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(project.id, { name: "Sync", schedule: '{"every":60}', command: "echo sync" })!;
+    const wf = createWorkflow(project.id, {
+      name: "Sync",
+      schedule: '{"every":60}',
+      command: "echo sync",
+    })!;
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 40 * 60, updatedAt: NOW() - 1 });
 
@@ -118,7 +129,11 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
   it("does NOT fail a workflow run claimed within the timeout", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(project.id, { name: "Sync", schedule: '{"every":60}', command: "echo sync" })!;
+    const wf = createWorkflow(project.id, {
+      name: "Sync",
+      schedule: '{"every":60}',
+      command: "echo sync",
+    })!;
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 60, updatedAt: NOW() - 40 * 60 });
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getAttachmentById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getAttachmentById, getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { deleteProcessingRecord } from "@/lib/db/video-processing";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
@@ -24,7 +24,7 @@ export const GET = withAgentOrUser(
 
     return NextResponse.json(processing);
   },
-  { role: "viewer", orgFromParams: runOrg }
+  { role: "viewer", orgFromParams: runOrg },
 );
 
 export const POST = withAgentOrUser(
@@ -57,5 +57,5 @@ export const POST = withAgentOrUser(
     processVideoAttachment(aid, id);
     return NextResponse.json({ status: "queued" }, { status: 202 });
   },
-  { role: "editor", orgFromParams: runOrg }
+  { role: "editor", orgFromParams: runOrg },
 );

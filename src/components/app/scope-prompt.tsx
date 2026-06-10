@@ -1,4 +1,4 @@
-import { FolderOpen, Building2 } from "lucide-react";
+import { Building2, FolderOpen } from "lucide-react";
 
 /**
  * Shown in place of an empty state when a list can't load because the required

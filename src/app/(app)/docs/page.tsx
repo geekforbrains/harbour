@@ -1,21 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FileText, Pin, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { ListState } from "@/components/app/list-state";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { RowLink } from "@/components/app/row-link";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FileText, Plus, Pin } from "lucide-react";
-import { timeAgo } from "@/lib/time";
-import { PageHeader, PageLoading } from "@/components/app/page-header";
-import { ListState } from "@/components/app/list-state";
-import { RowLink } from "@/components/app/row-link";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
-import { useDocs, useCreateDoc } from "@/lib/hooks/use-docs";
 import { apiFetch } from "@/lib/api/client";
-import { useQueryClient } from "@tanstack/react-query";
 import { qk } from "@/lib/api/keys";
+import { useCreateDoc, useDocs } from "@/lib/hooks/use-docs";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { timeAgo } from "@/lib/time";
 
 type Doc = { id: string; title: string; pinned: number; updated_at: number };
 
@@ -64,7 +70,9 @@ export default function DocsPage() {
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
                 project_id reparent route exists; new docs land in the active scope. */}
-            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+            <Button size="sm" onClick={() => setShowNew(true)}>
+              <Plus className="h-4 w-4 mr-1" /> New Doc
+            </Button>
           </div>
         }
       />
@@ -78,14 +86,15 @@ export default function DocsPage() {
         emptyMessage="No docs yet."
       >
         <div className="space-y-2">
-          {docs.map(doc => (
+          {docs.map((doc) => (
             <RowLink key={doc.id} href={`/docs/${doc.id}`}>
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-medium flex-1 pt-1">{doc.title}</span>
               <button
-                onClick={e => handleTogglePin(e, doc.id)}
+                type="button"
+                onClick={(e) => handleTogglePin(e, doc.id)}
                 className={`shrink-0 p-1 rounded transition-colors ${doc.pinned ? "text-primary" : "text-muted-foreground/30 hover:text-muted-foreground"}`}
                 title={doc.pinned ? "Unpin" : "Pin to all jobs"}
               >
@@ -99,14 +108,24 @@ export default function DocsPage() {
 
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Doc</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>New Doc</DialogTitle>
+          </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
               <Label>Title</Label>
-              <Input value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="e.g. Brand Voice Guide" autoFocus required />
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="e.g. Brand Voice Guide"
+                autoFocus
+                required
+              />
             </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>Cancel</Button>
+              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>
+                Cancel
+              </Button>
               <Button type="submit">Create Doc</Button>
             </DialogFooter>
           </form>

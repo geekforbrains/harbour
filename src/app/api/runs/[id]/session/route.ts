@@ -27,5 +27,5 @@ export const PUT = withAgentOrUser(
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );

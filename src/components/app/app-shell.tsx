@@ -1,20 +1,19 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { Anchor, LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Anchor, LogOut } from "lucide-react";
-
-import { AppContext, type User, type Org } from "./app-context";
-import { ThemeToggle } from "./theme-toggle";
-import { NavLinks } from "./nav-links";
-import { ProjectSwitcher } from "./project-switcher";
-import { MobileBottomNav } from "./mobile-nav";
-import { useMe, userFromMe, orgsFromMe } from "@/lib/hooks/use-orgs";
+import { apiFetch } from "@/lib/api/client";
+import { orgsFromMe, useMe, userFromMe } from "@/lib/hooks/use-orgs";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { useWaitingCount } from "@/lib/hooks/use-runs";
-import { apiFetch } from "@/lib/api/client";
+import { AppContext, type Org, type User } from "./app-context";
+import { MobileBottomNav } from "./mobile-nav";
+import { NavLinks } from "./nav-links";
+import { ProjectSwitcher } from "./project-switcher";
+import { ThemeToggle } from "./theme-toggle";
 
 export { useApp } from "./app-context";
 
@@ -30,8 +29,10 @@ function writeOrgCookie(id: string | null) {
   if (typeof document === "undefined") return;
   if (id) {
     // 1-year persistent cookie; server components read it for default scope.
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional synchronous client-side cookie write; the Cookie Store API is async and not supported in all browsers
     document.cookie = `${ORG_COOKIE}=${encodeURIComponent(id)}; path=/; max-age=31536000; samesite=lax`;
   } else {
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional synchronous client-side cookie clear; the Cookie Store API is async and not supported in all browsers
     document.cookie = `${ORG_COOKIE}=; path=/; max-age=0; samesite=lax`;
   }
 }
@@ -82,6 +83,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   // Reconcile the active org against memberships once both are known.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setActiveOrgId is a plain wrapper around setState + cookie write recreated each render; listing it would re-run the effect every render
   useEffect(() => {
     if (!orgStateLoaded || !user) return;
     const isAdmin = user.isInstanceAdmin;
@@ -119,10 +121,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Projects in the active org.
   const { data: projects = [] } = useProjects(
     { orgId: activeOrgId },
-    { enabled: !!user && !!activeOrgId, refetchInterval: 10000 }
+    { enabled: !!user && !!activeOrgId, refetchInterval: 10000 },
   );
 
   // If the stored project isn't in the active org's project list, clear it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setActiveProjectId is a plain wrapper around setState + localStorage write recreated each render; listing it would re-run the effect every render
   useEffect(() => {
     if (
       projectStateLoaded &&
@@ -136,8 +139,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Timezone comes from the active org's settings; falls back to the browser.
   const activeOrg = orgs.find((o) => o.id === activeOrgId);
-  const timezone =
-    orgTimezone(activeOrg) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = orgTimezone(activeOrg) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // Waiting-run count for the sidebar badge (scoped).
   const { data: waitingCount = 0 } = useWaitingCount({
@@ -176,14 +178,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="p-3 space-y-2">
         <ThemeToggle />
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground truncate">
-            {user?.displayName}
-          </span>
+          <span className="text-sm text-muted-foreground truncate">{user?.displayName}</span>
           <Button variant="ghost" size="icon" onClick={handleLogout} className="h-8 w-8">
             <LogOut className="h-3.5 w-3.5" />
           </Button>
         </div>
-        <p className="text-[11px] text-muted-foreground/50 text-center">v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
+        <p className="text-[11px] text-muted-foreground/50 text-center">
+          v{process.env.NEXT_PUBLIC_APP_VERSION}
+        </p>
       </div>
     </div>
   );
@@ -203,9 +205,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       }}
     >
       <div className="flex h-dvh standalone:h-screen">
-        <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
-          {sidebar}
-        </aside>
+        <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">{sidebar}</aside>
 
         <div className="flex flex-1 flex-col min-w-0">
           {/* Mobile Header */}

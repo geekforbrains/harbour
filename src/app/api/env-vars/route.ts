@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
-import { listEnvVars, createEnvVar } from "@/lib/db/queries";
+import { createEnvVar, listEnvVars } from "@/lib/db/queries";
 
 export const GET = withOrgAuth(
   async (req, auth) => {
     const projectId = req.nextUrl.searchParams.get("projectId") || null;
     return NextResponse.json(listEnvVars(auth.orgId, projectId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 export const POST = withOrgAuth(
@@ -26,9 +26,10 @@ export const POST = withOrgAuth(
     try {
       const envVar = createEnvVar(auth.orgId, projectId, body.name.trim(), body.value);
       return NextResponse.json(envVar, { status: 201 });
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor" }
+  { role: "editor" },
 );

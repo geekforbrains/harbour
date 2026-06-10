@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getDatabaseById, addColumn } from "@/lib/db/queries";
+import { addColumn, getDatabaseById } from "@/lib/db/queries";
 
 export const POST = withAgentOrUser(
-  async (req, auth, { params }) => {
+  async (req, _auth, { params }) => {
     const { id } = await params;
     const db = getDatabaseById(id);
     if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
@@ -17,9 +17,10 @@ export const POST = withAgentOrUser(
     try {
       const updated = addColumn(id, body);
       return NextResponse.json(updated);
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: (p) => orgIdForResource("database", p.id) }
+  { role: "editor", orgFromParams: (p) => orgIdForResource("database", p.id) },
 );

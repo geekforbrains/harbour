@@ -61,7 +61,7 @@ async function parseBody(res: Response): Promise<unknown> {
  */
 export async function apiFetch<T = unknown>(
   path: string,
-  init?: Omit<RequestInit, "body"> & { body?: unknown }
+  init?: Omit<RequestInit, "body"> & { body?: unknown },
 ): Promise<T> {
   const headers = new Headers(init?.headers);
 

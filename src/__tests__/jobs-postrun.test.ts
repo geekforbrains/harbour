@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
   createAgent,
   createJob,
-  updateJob,
+  createOrg,
+  createProject,
   getJobById,
+  updateJob,
 } from "@/lib/db/queries";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Postrun gate (#29) schema round-trip: createJob / getJobById / updateJob must
@@ -47,7 +47,11 @@ describe("createJob — postrun fields", () => {
   });
 
   it("persists a postrun command (informational by default)", () => {
-    const job = agentJob({ name: "Build", schedule: '{"every":60}', postrunCommand: "bash cleanup.sh" });
+    const job = agentJob({
+      name: "Build",
+      schedule: '{"every":60}',
+      postrunCommand: "bash cleanup.sh",
+    });
     const fresh = getJobById(job.id);
     expect(fresh.postrun_command).toBe("bash cleanup.sh");
     expect(fresh.postrun_gates).toBe(0);
@@ -81,13 +85,22 @@ describe("updateJob — postrun fields", () => {
   });
 
   it("clears the postrun command back to NULL when set empty", () => {
-    const job = agentJob({ name: "Build", schedule: '{"every":60}', postrunCommand: "bash verify.sh" });
+    const job = agentJob({
+      name: "Build",
+      schedule: '{"every":60}',
+      postrunCommand: "bash verify.sh",
+    });
     updateJob(job.id, { postrunCommand: "" });
     expect(getJobById(job.id).postrun_command).toBeNull();
   });
 
   it("toggles the enforcing flag without touching the command", () => {
-    const job = agentJob({ name: "Build", schedule: '{"every":60}', postrunCommand: "bash verify.sh", postrunGates: true });
+    const job = agentJob({
+      name: "Build",
+      schedule: '{"every":60}',
+      postrunCommand: "bash verify.sh",
+      postrunGates: true,
+    });
     updateJob(job.id, { postrunGates: false });
     const fresh = getJobById(job.id);
     expect(fresh.postrun_command).toBe("bash verify.sh"); // untouched
@@ -95,7 +108,12 @@ describe("updateJob — postrun fields", () => {
   });
 
   it("leaves postrun fields untouched when neither is in the update", () => {
-    const job = agentJob({ name: "Build", schedule: '{"every":60}', postrunCommand: "bash verify.sh", postrunGates: true });
+    const job = agentJob({
+      name: "Build",
+      schedule: '{"every":60}',
+      postrunCommand: "bash verify.sh",
+      postrunGates: true,
+    });
     updateJob(job.id, { name: "Renamed" });
     const fresh = getJobById(job.id);
     expect(fresh.name).toBe("Renamed");

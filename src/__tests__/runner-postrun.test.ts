@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
-import { mkdtempSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
-  shouldRunPostrun,
-  postrunStatusOverride,
   postrunKillStatus,
+  postrunStatusOverride,
   runPostrun,
+  shouldRunPostrun,
 } from "../../bin/lib/runner.mjs";
 
 // ===========================================================================
@@ -35,7 +35,9 @@ describe("shouldRunPostrun", () => {
       for (const outcome of TERMINAL) {
         expect(shouldRunPostrun({ command: null, outcome, gates, agentRan: true })).toBe(false);
         expect(shouldRunPostrun({ command: "", outcome, gates, agentRan: true })).toBe(false);
-        expect(shouldRunPostrun({ command: undefined, outcome, gates, agentRan: true })).toBe(false);
+        expect(shouldRunPostrun({ command: undefined, outcome, gates, agentRan: true })).toBe(
+          false,
+        );
       }
     }
   });
@@ -43,7 +45,9 @@ describe("shouldRunPostrun", () => {
   it("never runs when the agent turn did not execute (pure prerun-skip etc.)", () => {
     for (const gates of [false, true]) {
       for (const outcome of TERMINAL) {
-        expect(shouldRunPostrun({ command: "cleanup.sh", outcome, gates, agentRan: false })).toBe(false);
+        expect(shouldRunPostrun({ command: "cleanup.sh", outcome, gates, agentRan: false })).toBe(
+          false,
+        );
       }
     }
   });
@@ -51,31 +55,41 @@ describe("shouldRunPostrun", () => {
   describe("informational mode (gates off)", () => {
     it("runs on ANY terminal outcome where the agent ran", () => {
       for (const outcome of TERMINAL) {
-        expect(shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true })).toBe(true);
+        expect(
+          shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true }),
+        ).toBe(true);
       }
     });
 
     it("does NOT run on non-terminal / mid-run statuses", () => {
       for (const outcome of ["running", "waiting", "pending", "scheduled"]) {
-        expect(shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true })).toBe(false);
+        expect(
+          shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true }),
+        ).toBe(false);
       }
     });
   });
 
   describe("enforcing mode (gates on)", () => {
     it("runs after `done` only", () => {
-      expect(shouldRunPostrun({ command: "verify.sh", outcome: "done", gates: true, agentRan: true })).toBe(true);
+      expect(
+        shouldRunPostrun({ command: "verify.sh", outcome: "done", gates: true, agentRan: true }),
+      ).toBe(true);
     });
 
     it("does NOT run on any non-done terminal outcome", () => {
       for (const outcome of ["failed", "killed", "skipped"]) {
-        expect(shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true })).toBe(false);
+        expect(
+          shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true }),
+        ).toBe(false);
       }
     });
 
     it("does NOT run on non-terminal statuses", () => {
       for (const outcome of ["running", "waiting", "pending"]) {
-        expect(shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true })).toBe(false);
+        expect(
+          shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true }),
+        ).toBe(false);
       }
     });
   });
@@ -85,28 +99,40 @@ describe("postrunStatusOverride", () => {
   describe("informational mode (gates off)", () => {
     it("never overrides status, regardless of exit code", () => {
       for (const code of [0, 1, 77, 2, 137]) {
-        expect(postrunStatusOverride({ gates: false, code, outcome: "done" })).toEqual({ status: null });
-        expect(postrunStatusOverride({ gates: false, code, outcome: "failed" })).toEqual({ status: null });
+        expect(postrunStatusOverride({ gates: false, code, outcome: "done" })).toEqual({
+          status: null,
+        });
+        expect(postrunStatusOverride({ gates: false, code, outcome: "failed" })).toEqual({
+          status: null,
+        });
       }
     });
   });
 
   describe("enforcing mode (gates on)", () => {
     it("leaves a passing gate (exit 0) as done", () => {
-      expect(postrunStatusOverride({ gates: true, code: 0, outcome: "done" })).toEqual({ status: null });
+      expect(postrunStatusOverride({ gates: true, code: 0, outcome: "done" })).toEqual({
+        status: null,
+      });
     });
 
     it("overrides done -> failed on any nonzero exit", () => {
       for (const code of [1, 2, 77, 143]) {
-        expect(postrunStatusOverride({ gates: true, code, outcome: "done" })).toEqual({ status: "failed" });
+        expect(postrunStatusOverride({ gates: true, code, outcome: "done" })).toEqual({
+          status: "failed",
+        });
       }
     });
 
     it("does not override a non-done outcome (enforcing only runs after done anyway)", () => {
       // Defensive: even if called with a non-done outcome, the override is scoped
       // to the done -> failed edge the transition guard permits.
-      expect(postrunStatusOverride({ gates: true, code: 1, outcome: "failed" })).toEqual({ status: null });
-      expect(postrunStatusOverride({ gates: true, code: 1, outcome: "skipped" })).toEqual({ status: null });
+      expect(postrunStatusOverride({ gates: true, code: 1, outcome: "failed" })).toEqual({
+        status: null,
+      });
+      expect(postrunStatusOverride({ gates: true, code: 1, outcome: "skipped" })).toEqual({
+        status: null,
+      });
     });
   });
 });
@@ -181,7 +207,8 @@ describe("runPostrun — kill during postrun (integration)", () => {
     let currentStatus = initialStatus;
     const fetchMock = async (u: string, init: { method?: string; body?: string } = {}) => {
       const method = init.method || "GET";
-      if (/\/kill$/.test(u)) return res({ kill_requested: !!opts.killRequested, status: currentStatus });
+      if (/\/kill$/.test(u))
+        return res({ kill_requested: !!opts.killRequested, status: currentStatus });
       if (/\/status$/.test(u) && method === "GET") return res({ status: currentStatus });
       if (/\/status$/.test(u) && method === "PUT") {
         const to = JSON.parse(init.body || "{}").status as string;

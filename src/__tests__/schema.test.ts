@@ -1,31 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  getOrgById,
-  listOrgs,
-  archiveOrg,
-  unarchiveOrg,
-  deleteOrg,
   addMembership,
-  listMemberships,
-  createProject,
-  getProjectById,
-  listProjects,
+  archiveOrg,
   archiveProject,
-  deleteProject,
-  createUser,
   createAgent,
-  getAgentById,
-  deleteAgent,
   createJob,
+  createOrg,
+  createProject,
+  createRun,
+  createUser,
   createWorkflow,
   createWorkflowRunner,
+  deleteAgent,
+  deleteOrg,
+  deleteProject,
+  getAgentById,
   getJobById,
-  createRun,
+  getOrgById,
+  getProjectById,
   getRunById,
+  listMemberships,
+  listOrgs,
+  listProjects,
+  unarchiveOrg,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown — fresh in-memory v2 DB per test
@@ -97,7 +97,7 @@ describe("foreign keys", () => {
   it("rejects a project pointing at a non-existent org", () => {
     const db = getDb();
     expect(() =>
-      db.prepare(`INSERT INTO projects (id, org_id, name) VALUES ('p1', 'nope', 'X')`).run()
+      db.prepare(`INSERT INTO projects (id, org_id, name) VALUES ('p1', 'nope', 'X')`).run(),
     ).toThrow();
   });
 
@@ -105,8 +105,10 @@ describe("foreign keys", () => {
     const db = getDb();
     expect(() =>
       db
-        .prepare(`INSERT INTO agents (id, project_id, name, api_key_hash) VALUES ('a1', 'nope', 'X', 'h')`)
-        .run()
+        .prepare(
+          `INSERT INTO agents (id, project_id, name, api_key_hash) VALUES ('a1', 'nope', 'X', 'h')`,
+        )
+        .run(),
     ).toThrow();
   });
 
@@ -115,8 +117,10 @@ describe("foreign keys", () => {
     const db = getDb();
     expect(() =>
       db
-        .prepare(`INSERT INTO runs (id, project_id, job_id, status) VALUES ('r1', ?, 'nope', 'running')`)
-        .run(project.id)
+        .prepare(
+          `INSERT INTO runs (id, project_id, job_id, status) VALUES ('r1', ?, 'nope', 'running')`,
+        )
+        .run(project.id),
     ).toThrow();
   });
 });

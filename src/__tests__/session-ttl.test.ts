@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
-import { createUser, createSession, sessionTtlDays } from "@/lib/db/queries";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSession, createUser, sessionTtlDays } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 describe("sessionTtlDays", () => {
   it("defaults to 30 when unset", () => {
@@ -39,9 +39,9 @@ describe("createSession TTL", () => {
   });
 
   function sessionExpiresAt(sessionId: string): number {
-    const row = getDb()
-      .prepare(`SELECT expires_at FROM sessions WHERE id = ?`)
-      .get(sessionId) as { expires_at: number };
+    const row = getDb().prepare(`SELECT expires_at FROM sessions WHERE id = ?`).get(sessionId) as {
+      expires_at: number;
+    };
     return row.expires_at;
   }
 

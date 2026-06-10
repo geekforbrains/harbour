@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
+  buildRunPayload,
   createAgent,
   createJob,
-  createWorkflow,
+  createOrg,
+  createProject,
   createRun,
-  buildRunPayload,
+  createWorkflow,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 import { getProvider, resolveRunConfig } from "../../bin/lib/providers.mjs";
 
 // End-to-end coverage for the "harbour is the source of truth for agent config"
@@ -42,12 +42,17 @@ describe("agent remote flag", () => {
     const project = createProject(org.id, "Website")!;
 
     const local = createAgent(project.id, "Local Dev", undefined, { cli: "claude" });
-    const remote = createAgent(project.id, "Mac Builder", undefined, { cli: "claude", remote: true });
+    const remote = createAgent(project.id, "Mac Builder", undefined, {
+      cli: "claude",
+      remote: true,
+    });
 
     expect(local.remote).toBe(false);
     expect(remote.remote).toBe(true);
 
-    const row = getDb().prepare(`SELECT remote FROM agents WHERE id = ?`).get(remote.id) as { remote: number };
+    const row = getDb().prepare(`SELECT remote FROM agents WHERE id = ?`).get(remote.id) as {
+      remote: number;
+    };
     expect(row.remote).toBe(1);
   });
 });
@@ -154,12 +159,20 @@ describe("resolveRunConfig — agent block is authoritative", () => {
 
   it("ignores the legacy runner config entirely when an agent block is present", () => {
     const payload = { agent: { cli: "claude", model: "opus", thinking: "high" }, job: {} };
-    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: "opus", thinking: "high" });
+    expect(resolveRunConfig(payload, legacy)).toEqual({
+      cli: "claude",
+      model: "opus",
+      thinking: "high",
+    });
   });
 
   it("does not let a legacy model resurrect a deliberately-cleared agent model", () => {
     const payload = { agent: { cli: "claude", model: null, thinking: null }, job: {} };
-    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: null, thinking: null });
+    expect(resolveRunConfig(payload, legacy)).toEqual({
+      cli: "claude",
+      model: null,
+      thinking: null,
+    });
   });
 
   it("honors a per-job override over the agent default within an agent block", () => {
@@ -167,7 +180,11 @@ describe("resolveRunConfig — agent block is authoritative", () => {
       agent: { cli: "claude", model: "sonnet", thinking: "low" },
       job: { model: "opus", thinking: "high" },
     };
-    expect(resolveRunConfig(payload, legacy)).toEqual({ cli: "claude", model: "opus", thinking: "high" });
+    expect(resolveRunConfig(payload, legacy)).toEqual({
+      cli: "claude",
+      model: "opus",
+      thinking: "high",
+    });
   });
 
   it("uses the runner-config fallback only when there is no agent block (legacy server)", () => {
@@ -211,7 +228,10 @@ describe("payload -> command, all CLIs", () => {
   });
 
   it("gemini: model via -m, effort dropped (controlled by model)", () => {
-    const payload = { agent: { cli: "gemini", model: "gemini-2.5-pro", thinking: "high" }, job: {} };
+    const payload = {
+      agent: { cli: "gemini", model: "gemini-2.5-pro", thinking: "high" },
+      job: {},
+    };
     const { cli, model, thinking } = resolveRunConfig(payload);
     const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, null, true, thinking);
     expect(cmd.args[cmd.args.indexOf("-m") + 1]).toBe("gemini-2.5-pro");

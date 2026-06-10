@@ -1,5 +1,5 @@
-import fs from "fs";
-import { runnersFile, harbourHome, ensureDir } from "./paths";
+import fs from "node:fs";
+import { ensureDir, harbourHome, runnersFile } from "./paths";
 
 // Runner config is identity-only: which agent, its key, and where harbour is.
 // The agent's cli/model/thinking/eager are resolved live from the /next payload
@@ -29,7 +29,7 @@ function saveRunners(runners: RunnerConfig[]) {
 
 export function saveRunnerConfig(config: RunnerConfig) {
   const runners = loadRunners();
-  const existing = runners.findIndex(r => r.agentId === config.agentId);
+  const existing = runners.findIndex((r) => r.agentId === config.agentId);
   if (existing >= 0) {
     runners[existing] = config;
   } else {
@@ -39,6 +39,6 @@ export function saveRunnerConfig(config: RunnerConfig) {
 }
 
 export function removeRunnerConfig(agentId: string) {
-  const runners = loadRunners().filter(r => r.agentId !== agentId);
+  const runners = loadRunners().filter((r) => r.agentId !== agentId);
   saveRunners(runners);
 }

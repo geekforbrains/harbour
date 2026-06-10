@@ -1,12 +1,12 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Anchor } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Anchor } from "lucide-react";
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -61,9 +61,7 @@ function SetPasswordForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
-        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-        </div>
+        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
       )}
       <div className="space-y-2">
         <Label htmlFor="password">New password</Label>

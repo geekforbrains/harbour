@@ -1,21 +1,27 @@
 #!/usr/bin/env node
 
-import { spawn } from "child_process";
-import path from "path";
-import { fileURLToPath } from "url";
-import { runAgents, runWorkflows } from "./lib/runner.mjs";
-import { installRunner, uninstallRunner, installWorkflowRunner, uninstallWorkflowRunner } from "./lib/install.mjs";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { runAdminCreate, runSetup } from "./lib/bootstrap.mjs";
 import { listRunners, listWorkflowRunners } from "./lib/config.mjs";
 import { connectAgent, connectWorkflowRunner } from "./lib/connect.mjs";
-import { runSetup, runAdminCreate } from "./lib/bootstrap.mjs";
+import {
+  installRunner,
+  installWorkflowRunner,
+  uninstallRunner,
+  uninstallWorkflowRunner,
+} from "./lib/install.mjs";
+import { runAgents, runWorkflows } from "./lib/runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 
-const [,, command, subcommand, ...rest] = process.argv;
+const [, , command, subcommand, ...rest] = process.argv;
 
 function usage() {
-  console.log(`
+  console.log(
+    `
 harbour - Control plane for AI agents
 
 Usage:
@@ -34,13 +40,17 @@ Usage:
   harbour workflow connect <blob> Register a workflow runner
   harbour workflow install   Install cron job for workflow polling
   harbour workflow uninstall Remove the workflow polling cron job
-  `.trim());
+  `.trim(),
+  );
 }
 
 async function main() {
   switch (command) {
     case "start": {
-      const child = spawn("npx", ["next", "start", ...rest], { cwd: projectRoot, stdio: "inherit" });
+      const child = spawn("npx", ["next", "start", ...rest], {
+        cwd: projectRoot,
+        stdio: "inherit",
+      });
       child.on("exit", (code) => process.exit(code ?? 0));
       break;
     }

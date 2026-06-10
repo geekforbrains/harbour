@@ -1,27 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { History, Pencil, Pin, Save, Trash2, X } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { BackLink } from "@/components/app/back-link";
+import { EmptyState } from "@/components/app/empty-state";
+import { PageLoading } from "@/components/app/page-header";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { BackLink } from "@/components/app/back-link";
-import { PageLoading } from "@/components/app/page-header";
-import { Pencil, Save, X, Trash2, History, Pin } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useDoc, useDocMutations, useDocRevisions } from "@/lib/hooks/use-docs";
 import { timeAgo } from "@/lib/time";
-import { EmptyState } from "@/components/app/empty-state";
-import { useDoc, useDocRevisions, useDocMutations } from "@/lib/hooks/use-docs";
 
 type Doc = {
-  id: string; title: string; pinned: number;
-  content: string; created_at: number; updated_at: number;
+  id: string;
+  title: string;
+  pinned: number;
+  content: string;
+  created_at: number;
+  updated_at: number;
 };
 
 type Revision = {
-  id: string; content: string; author_type: string; author_id: string;
+  id: string;
+  content: string;
+  author_type: string;
+  author_id: string;
   created_at: number;
 };
 
@@ -82,7 +89,8 @@ export default function DocDetailPage() {
   }
 
   if (loading) return <PageLoading />;
-  if (!doc) return <div className="text-sm text-muted-foreground py-12 text-center">Doc not found.</div>;
+  if (!doc)
+    return <div className="text-sm text-muted-foreground py-12 text-center">Doc not found.</div>;
 
   return (
     <div className="space-y-6">
@@ -90,14 +98,28 @@ export default function DocDetailPage() {
 
       <div className="flex items-start justify-between gap-4">
         {editing ? (
-          <Input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="text-xl font-semibold" />
+          <Input
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            className="text-xl font-semibold"
+          />
         ) : (
           <h1 className="text-xl font-semibold tracking-tight">{doc.title}</h1>
         )}
         <div className="flex gap-1.5">
           {editing ? (
             <>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(false); setEditInitialized(false); setEditTitle(doc.title); setEditContent(doc.content || ""); }}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  setEditing(false);
+                  setEditInitialized(false);
+                  setEditTitle(doc.title);
+                  setEditContent(doc.content || "");
+                }}
+              >
                 <X className="h-3.5 w-3.5" />
               </Button>
               <Button size="icon" className="h-8 w-8" onClick={handleSave} disabled={saving}>
@@ -106,16 +128,40 @@ export default function DocDetailPage() {
             </>
           ) : (
             <>
-              <Button variant={doc.pinned ? "default" : "outline"} size="icon" className="h-8 w-8" onClick={handleTogglePin} title={doc.pinned ? "Unpin" : "Pin to all jobs"}>
+              <Button
+                variant={doc.pinned ? "default" : "outline"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleTogglePin}
+                title={doc.pinned ? "Unpin" : "Pin to all jobs"}
+              >
                 <Pin className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRevisions(true)} title="Revisions">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setShowRevisions(true)}
+                title="Revisions"
+              >
                 <History className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setEditing(true)} title="Edit">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setEditing(true)}
+                title="Edit"
+              >
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleDelete} title="Delete">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleDelete}
+                title="Delete"
+              >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </>
@@ -126,7 +172,7 @@ export default function DocDetailPage() {
       {editing ? (
         <Textarea
           value={editContent}
-          onChange={e => setEditContent(e.target.value)}
+          onChange={(e) => setEditContent(e.target.value)}
           rows={20}
           className="font-mono text-sm"
           placeholder="Write markdown content..."
@@ -141,7 +187,9 @@ export default function DocDetailPage() {
 
       <Dialog open={showRevisions} onOpenChange={setShowRevisions}>
         <DialogContent className="max-w-lg max-h-[70vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Revision History</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Revision History</DialogTitle>
+          </DialogHeader>
           {revisions.length === 0 ? (
             <p className="text-sm text-muted-foreground">No revisions.</p>
           ) : (
@@ -149,10 +197,14 @@ export default function DocDetailPage() {
               {revisions.map((rev, i) => (
                 <div key={rev.id} className="rounded-lg border p-3">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium">{rev.author_type} {i === 0 ? "(latest)" : ""}</span>
+                    <span className="text-xs font-medium">
+                      {rev.author_type} {i === 0 ? "(latest)" : ""}
+                    </span>
                     <span className="text-xs text-muted-foreground">{timeAgo(rev.created_at)}</span>
                   </div>
-                  <pre className="text-xs bg-muted rounded p-2 overflow-auto max-h-32 whitespace-pre-wrap">{rev.content}</pre>
+                  <pre className="text-xs bg-muted rounded p-2 overflow-auto max-h-32 whitespace-pre-wrap">
+                    {rev.content}
+                  </pre>
                 </div>
               ))}
             </div>

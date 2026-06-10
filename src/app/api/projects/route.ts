@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
-import { listProjects, createProject } from "@/lib/db/queries";
+import { createProject, listProjects } from "@/lib/db/queries";
 
 export const GET = withOrgAuth(
-  async (req, auth) => {
+  async (_req, auth) => {
     return NextResponse.json(listProjects(auth.orgId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 export const POST = withOrgAuth(
@@ -18,5 +18,5 @@ export const POST = withOrgAuth(
     const project = createProject(auth.orgId, body.name.trim());
     return NextResponse.json(project, { status: 201 });
   },
-  { role: "editor" }
+  { role: "editor" },
 );

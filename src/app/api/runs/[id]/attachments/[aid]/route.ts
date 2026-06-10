@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getAttachmentById, deleteAttachment } from "@/lib/db/queries";
+import { deleteAttachment, getAttachmentById, getRunById } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
 
@@ -23,5 +23,5 @@ export const DELETE = withAgentOrUser(
     deleteAttachment(aid);
     return NextResponse.json({ ok: true });
   },
-  { role: "editor", orgFromParams: (p) => orgIdForResource("run", p.id) }
+  { role: "editor", orgFromParams: (p) => orgIdForResource("run", p.id) },
 );

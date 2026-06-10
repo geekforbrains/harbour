@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { runWorkflow } from "../../bin/lib/runner.mjs";
 
 // The sending half of workflow live-progress updates: the runner must hand the
@@ -11,7 +11,13 @@ describe("runWorkflow env injection", () => {
       'echo "$HARBOUR_URL|$HARBOUR_RUN_ID|$HARBOUR_API_KEY"',
       "{}",
       process.cwd(),
-      { extraEnv: { HARBOUR_RUN_ID: "run_123", HARBOUR_API_KEY: "key_abc", HARBOUR_URL: "http://h" } },
+      {
+        extraEnv: {
+          HARBOUR_RUN_ID: "run_123",
+          HARBOUR_API_KEY: "key_abc",
+          HARBOUR_URL: "http://h",
+        },
+      },
     );
     expect(res.code).toBe(0);
     expect(res.stdout.trim()).toBe("http://h|run_123|key_abc");

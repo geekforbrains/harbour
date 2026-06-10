@@ -1,29 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  withOrgAuth,
-  withProjectAuth,
-  withResourceAuth,
-  withInstanceAdmin,
+  requireAgentProject,
+  requireAgentSelf,
   withAgentAuth,
   withAgentOrUser,
   withAuthenticatedUser,
-  requireAgentProject,
-  requireAgentSelf,
+  withInstanceAdmin,
+  withOrgAuth,
+  withProjectAuth,
+  withResourceAuth,
 } from "@/lib/auth";
 import {
+  addMembership,
+  createAgent,
+  createDoc,
+  createJob,
   createOrg,
   createProject,
-  createUser,
-  createAgent,
-  createJob,
   createRun,
-  createDoc,
-  addMembership,
   createSession,
+  createUser,
 } from "@/lib/db/queries";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -100,13 +100,17 @@ describe("withOrgAuth", () => {
     const read = withOrgAuth(ok, { role: "viewer" });
     const write = withOrgAuth(ok, { role: "editor" });
     expect((await read(userReq(viewer.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(200);
-    expect((await write(userReq(viewer.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(403);
+    expect((await write(userReq(viewer.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(
+      403,
+    );
   });
 
   it("editor can write", async () => {
     const { org, editor } = fixture();
     const write = withOrgAuth(ok, { role: "editor" });
-    expect((await write(userReq(editor.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(200);
+    expect((await write(userReq(editor.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(
+      200,
+    );
   });
 
   it("instance_admin satisfies any role", async () => {
@@ -118,7 +122,9 @@ describe("withOrgAuth", () => {
   it("403 for a non-member of the org", async () => {
     const { org, outsider } = fixture();
     const read = withOrgAuth(ok, { role: "viewer" });
-    expect((await read(userReq(outsider.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(403);
+    expect((await read(userReq(outsider.id, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(
+      403,
+    );
   });
 
   it("403 when no org can be determined", async () => {
@@ -141,7 +147,9 @@ describe("withOrgAuth", () => {
     const { org, project } = fixture();
     const agent = createAgent(project.id, "Dev");
     const read = withOrgAuth(ok, { role: "viewer" });
-    expect((await read(agentReq(agent.apiKey, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(403);
+    expect((await read(agentReq(agent.apiKey, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(
+      403,
+    );
   });
 });
 
@@ -154,10 +162,18 @@ describe("withProjectAuth", () => {
     const { project, viewer, editor, outsider } = fixture();
     const read = withProjectAuth(ok, { role: "viewer" });
     const write = withProjectAuth(ok, { role: "editor" });
-    expect((await read(userReq(viewer.id, `http://x/?projectId=${project.id}`), ctx({}))).status).toBe(200);
-    expect((await write(userReq(viewer.id, `http://x/?projectId=${project.id}`), ctx({}))).status).toBe(403);
-    expect((await write(userReq(editor.id, `http://x/?projectId=${project.id}`), ctx({}))).status).toBe(200);
-    expect((await read(userReq(outsider.id, `http://x/?projectId=${project.id}`), ctx({}))).status).toBe(403);
+    expect(
+      (await read(userReq(viewer.id, `http://x/?projectId=${project.id}`), ctx({}))).status,
+    ).toBe(200);
+    expect(
+      (await write(userReq(viewer.id, `http://x/?projectId=${project.id}`), ctx({}))).status,
+    ).toBe(403);
+    expect(
+      (await write(userReq(editor.id, `http://x/?projectId=${project.id}`), ctx({}))).status,
+    ).toBe(200);
+    expect(
+      (await read(userReq(outsider.id, `http://x/?projectId=${project.id}`), ctx({}))).status,
+    ).toBe(403);
   });
 
   it("403 when the project is missing or unknown", async () => {
@@ -268,8 +284,12 @@ describe("withAgentAuth", () => {
       const err = requireAgentSelf(auth, id);
       return err ?? ok();
     });
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: agent.id }))).status).toBe(200);
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: "other" }))).status).toBe(403);
+    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: agent.id }))).status).toBe(
+      200,
+    );
+    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: "other" }))).status).toBe(
+      403,
+    );
   });
 
   it("requireAgentProject rejects a resource in another project's org", async () => {
@@ -284,7 +304,10 @@ describe("withAgentAuth", () => {
     const otherOrg = createOrg("Other")!;
     const otherProject = createProject(otherOrg.id, "P2")!;
     const otherAgent = createAgent(otherProject.id, "Dev2");
-    const otherJob = createJob(otherProject.id, otherAgent.id, { name: "J2", schedule: '{"every":60}' })!;
+    const otherJob = createJob(otherProject.id, otherAgent.id, {
+      name: "J2",
+      schedule: '{"every":60}',
+    })!;
     const otherRun = createRun(otherJob.id, otherAgent.id)!;
 
     const handler = withAgentAuth(async (_req, auth, { params }) => {
@@ -292,8 +315,12 @@ describe("withAgentAuth", () => {
       const err = requireAgentProject(auth, "run", id);
       return err ?? ok();
     });
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: run.id }))).status).toBe(200);
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: otherRun.id }))).status).toBe(403);
+    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: run.id }))).status).toBe(
+      200,
+    );
+    expect(
+      (await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: otherRun.id }))).status,
+    ).toBe(403);
     expect(org.id).toBeTruthy();
   });
 });
@@ -325,8 +352,18 @@ describe("withAgentOrUser", () => {
     const handler = (docOrg: string) =>
       withAgentOrUser(ok, { role: "editor", orgFromParams: () => docOrg });
 
-    expect((await handler(sameDoc.org_id)(agentReq(agent.apiKey, "http://x/"), ctx({ id: sameDoc.id }))).status).toBe(200);
-    expect((await handler(otherDoc.org_id)(agentReq(agent.apiKey, "http://x/"), ctx({ id: otherDoc.id }))).status).toBe(403);
+    expect(
+      (await handler(sameDoc.org_id)(agentReq(agent.apiKey, "http://x/"), ctx({ id: sameDoc.id })))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await handler(otherDoc.org_id)(
+          agentReq(agent.apiKey, "http://x/"),
+          ctx({ id: otherDoc.id }),
+        )
+      ).status,
+    ).toBe(403);
   });
 
   it("401 unauthenticated", async () => {

@@ -10,7 +10,8 @@ export const POST = withAgentOrUser(
     if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
     const body = await req.json();
-    if (!body.databaseId) return NextResponse.json({ error: "databaseId is required" }, { status: 400 });
+    if (!body.databaseId)
+      return NextResponse.json({ error: "databaseId is required" }, { status: 400 });
 
     // The database must belong to the same org as the job — never link cross-org.
     if (orgIdForResource("database", body.databaseId) !== auth.orgId) {
@@ -23,5 +24,5 @@ export const POST = withAgentOrUser(
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("job", p.id),
-  }
+  },
 );

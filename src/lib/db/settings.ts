@@ -8,12 +8,17 @@ export function getSetting(key: string): string | null {
 
 export function setSetting(key: string, value: string) {
   const db = getDb();
-  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?`).run(key, value, value);
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?`,
+  ).run(key, value, value);
 }
 
 export function getAllSettings(): Record<string, string> {
   const db = getDb();
-  const rows = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
+  const rows = db.prepare(`SELECT key, value FROM settings`).all() as {
+    key: string;
+    value: string;
+  }[];
   const result: Record<string, string> = {};
   for (const row of rows) result[row.key] = row.value;
   return result;
@@ -63,5 +68,5 @@ export function isSensitiveSetting(key: string): boolean {
 
 export function maskSettingValue(value: string): string {
   if (value.length <= 8) return "••••••••";
-  return "••••••••" + value.slice(-4);
+  return `••••••••${value.slice(-4)}`;
 }

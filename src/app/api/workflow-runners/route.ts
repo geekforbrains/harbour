@@ -7,7 +7,7 @@ export const GET = withOrgAuth(
   async (_req, auth) => {
     return NextResponse.json(listWorkflowRunners(auth.orgId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 export const POST = withOrgAuth(
@@ -20,14 +20,20 @@ export const POST = withOrgAuth(
 
     const labels = Array.isArray(body.labels) ? body.labels.map(String) : [];
     const runner = createWorkflowRunner(auth.orgId, name, { labels });
-    const blob = Buffer.from(JSON.stringify({
-      url: publicBaseUrl(req),
-      runnerId: runner.id,
-      apiKey: runner.apiKey,
-      name: runner.name,
-    }), "utf-8").toString("base64");
+    const blob = Buffer.from(
+      JSON.stringify({
+        url: publicBaseUrl(req),
+        runnerId: runner.id,
+        apiKey: runner.apiKey,
+        name: runner.name,
+      }),
+      "utf-8",
+    ).toString("base64");
 
-    return NextResponse.json({ ...runner, connect: `npm run harbour -- workflow connect ${blob}` }, { status: 201 });
+    return NextResponse.json(
+      { ...runner, connect: `npm run harbour -- workflow connect ${blob}` },
+      { status: 201 },
+    );
   },
-  { role: "editor" }
+  { role: "editor" },
 );

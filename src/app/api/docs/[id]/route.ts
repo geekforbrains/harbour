@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
-import { withResourceAuth, withAgentOrUser, getActorFromAuth } from "@/lib/auth";
+import { getActorFromAuth, withAgentOrUser, withResourceAuth } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getDocById, updateDoc, renameDoc, deleteDoc } from "@/lib/db/queries";
+import { deleteDoc, getDocById, renameDoc, updateDoc } from "@/lib/db/queries";
 
 export const GET = withResourceAuth("doc", "id", { role: "viewer" })(
-  async (req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const doc = getDocById(id);
     if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
     return NextResponse.json(doc);
-  }
+  },
 );
 
 // Updated by dashboard users and by agents (per the agent API guide).
@@ -34,13 +34,13 @@ export const PUT = withAgentOrUser(
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("doc", p.id),
-  }
+  },
 );
 
 export const DELETE = withResourceAuth("doc", "id", { role: "editor" })(
-  async (req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     deleteDoc(id);
     return NextResponse.json({ ok: true });
-  }
+  },
 );

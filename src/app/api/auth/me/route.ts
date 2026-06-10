@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { getIdentityFromRequest } from "@/lib/auth";
-import { getUserById, getAgentById, listOrgsForUser, listOrgs } from "@/lib/db/queries";
+import { getAgentById, getUserById, listOrgs, listOrgsForUser } from "@/lib/db/queries";
 
 /**
  * Identity echo. Accepts any authenticated caller (user session, admin key, or

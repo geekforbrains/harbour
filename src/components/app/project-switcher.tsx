@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useApp } from "./app-context";
+import { Building2, Check, ChevronDown, FolderOpen, Plus } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,22 +20,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FolderOpen, ChevronDown, Plus, Check, Building2 } from "lucide-react";
-import { SCOPED_DOMAINS, qk } from "@/lib/api/keys";
-import { useCreateProject } from "@/lib/hooks/use-projects";
-import { useCreateOrg } from "@/lib/hooks/use-orgs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
+import { qk, SCOPED_DOMAINS } from "@/lib/api/keys";
+import { useCreateOrg } from "@/lib/hooks/use-orgs";
+import { useCreateProject } from "@/lib/hooks/use-projects";
+import { useApp } from "./app-context";
 
 export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "mobile" }) {
-  const {
-    user,
-    orgs,
-    activeOrgId,
-    setActiveOrgId,
-    projects,
-    activeProjectId,
-    setActiveProjectId,
-  } = useApp();
+  const { user, orgs, activeOrgId, setActiveOrgId, projects, activeProjectId, setActiveProjectId } =
+    useApp();
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
   const createOrg = useCreateOrg();
@@ -110,12 +109,19 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger className={variant === "mobile"
-          ? "flex items-center gap-1.5 text-sm font-semibold tracking-tight"
-          : "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        }>
+        <DropdownMenuTrigger
+          className={
+            variant === "mobile"
+              ? "flex items-center gap-1.5 text-sm font-semibold tracking-tight"
+              : "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          }
+        >
           {variant === "sidebar" && <FolderOpen className="h-4 w-4 shrink-0" />}
-          <span className={variant === "mobile" ? "truncate max-w-[200px]" : "flex-1 truncate text-left"}>
+          <span
+            className={
+              variant === "mobile" ? "truncate max-w-[200px]" : "flex-1 truncate text-left"
+            }
+          >
             {label}
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -175,15 +181,27 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
 
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Project</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>New Project</DialogTitle>
+          </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
-              <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Marketing" autoFocus required />
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Marketing"
+                autoFocus
+                required
+              />
             </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>Cancel</Button>
-              <Button type="submit" disabled={createProject.isPending}>{createProject.isPending ? "Creating..." : "Create"}</Button>
+              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createProject.isPending}>
+                {createProject.isPending ? "Creating..." : "Create"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -191,29 +209,45 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
 
       <Dialog open={showNewOrg} onOpenChange={setShowNewOrg}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Organization</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>New Organization</DialogTitle>
+          </DialogHeader>
           <form onSubmit={handleCreateOrg} className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
-              <Input value={newOrgName} onChange={e => setNewOrgName(e.target.value)} placeholder="e.g. Acme Co." autoFocus required />
+              <Input
+                value={newOrgName}
+                onChange={(e) => setNewOrgName(e.target.value)}
+                placeholder="e.g. Acme Co."
+                autoFocus
+                required
+              />
             </div>
             <div className="space-y-2">
               <Label>Timezone</Label>
               <select
                 value={newOrgTz}
-                onChange={e => setNewOrgTz(e.target.value)}
+                onChange={(e) => setNewOrgTz(e.target.value)}
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="">System default</option>
-                {timezones.map(tz => (
-                  <option key={tz} value={tz}>{tz}</option>
+                {timezones.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
                 ))}
               </select>
-              <p className="text-xs text-muted-foreground">Used for this org&apos;s schedule calculations.</p>
+              <p className="text-xs text-muted-foreground">
+                Used for this org&apos;s schedule calculations.
+              </p>
             </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowNewOrg(false)}>Cancel</Button>
-              <Button type="submit" disabled={createOrg.isPending}>{createOrg.isPending ? "Creating..." : "Create"}</Button>
+              <Button type="button" variant="ghost" onClick={() => setShowNewOrg(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createOrg.isPending}>
+                {createOrg.isPending ? "Creating..." : "Create"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createRateLimiter, clientIp } from "@/lib/rate-limit";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clientIp, createRateLimiter } from "@/lib/rate-limit";
 
 describe("createRateLimiter", () => {
   beforeEach(() => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, scoped, type Scope } from "@/lib/api/client";
+import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
 

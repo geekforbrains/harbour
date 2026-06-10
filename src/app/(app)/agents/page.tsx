@@ -1,20 +1,26 @@
 "use client";
 
+import { Bot, Briefcase, Check, CheckCircle, Copy, Loader2, Plus, XCircle } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { AgentColorPicker } from "@/components/app/agent-color-picker";
+import { ListState } from "@/components/app/list-state";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { RowLink } from "@/components/app/row-link";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Bot, Plus, Briefcase, Copy, Check, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { timeAgo } from "@/lib/time";
-import { PageHeader, PageLoading } from "@/components/app/page-header";
-import { ListState } from "@/components/app/list-state";
-import { RowLink } from "@/components/app/row-link";
-import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
-import { AgentColorPicker } from "@/components/app/agent-color-picker";
 
 type Agent = {
   id: string;
@@ -37,10 +43,10 @@ type CliTool = {
   version?: string;
 };
 
-import { CLI_CONFIG } from "@/lib/cli-config";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
-import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import { apiFetch } from "@/lib/api/client";
+import { CLI_CONFIG } from "@/lib/cli-config";
+import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
 export default function AgentsPage() {
   const activeProjectId = useActiveProjectId();
@@ -54,7 +60,12 @@ export default function AgentsPage() {
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; remote: boolean } | null>(null);
+  const [newAgent, setNewAgent] = useState<{
+    id: string;
+    name: string;
+    apiKey: string;
+    remote: boolean;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
   const [eagerAgent, setEagerAgent] = useState(false);
   const [remoteAgent, setRemoteAgent] = useState(false);
@@ -162,7 +173,7 @@ export default function AgentsPage() {
   // Any agent without a recent poll means the runner isn't picking up work.
   const showRunnerBanner =
     agents.length > 0 &&
-    !agents.some(a => a.last_polled_at && Date.now() / 1000 - a.last_polled_at < 300);
+    !agents.some((a) => a.last_polled_at && Date.now() / 1000 - a.last_polled_at < 300);
 
   return (
     <div className="space-y-6">
@@ -184,7 +195,10 @@ export default function AgentsPage() {
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
           <p className="font-medium text-amber-600">Runner not active</p>
           <p className="text-muted-foreground mt-0.5">
-            You have Harbour agents but no runner polling. Run: <code className="text-xs bg-muted px-1 py-0.5 rounded">npm run harbour -- agent install</code>
+            You have Harbour agents but no runner polling. Run:{" "}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">
+              npm run harbour -- agent install
+            </code>
           </p>
         </div>
       )}
@@ -198,7 +212,7 @@ export default function AgentsPage() {
         emptyMessage="No agents yet. Create one to get started."
       >
         <div className="grid gap-2">
-          {agents.map(agent => (
+          {agents.map((agent) => (
             <RowLink key={agent.id} href={`/agents/${agent.id}`}>
               {agent.waiting_count > 0 ? (
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
@@ -211,7 +225,10 @@ export default function AgentsPage() {
               ) : (
                 <div
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                  style={{ backgroundColor: `${resolveAgentColor(agent.color, agent.name)}1f`, color: resolveAgentColor(agent.color, agent.name) }}
+                  style={{
+                    backgroundColor: `${resolveAgentColor(agent.color, agent.name)}1f`,
+                    color: resolveAgentColor(agent.color, agent.name),
+                  }}
                 >
                   <Bot className="h-4 w-4" />
                 </div>
@@ -220,19 +237,27 @@ export default function AgentsPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{agent.name}</span>
                   {agent.cli && (
-                    <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
+                    <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      {agent.cli}
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" /> {agent.job_count} jobs</span>
+                  <span className="flex items-center gap-1">
+                    <Briefcase className="h-3 w-3" /> {agent.job_count} jobs
+                  </span>
                   {agent.last_activity && <span>Active {timeAgo(agent.last_activity)}</span>}
                 </div>
               </div>
               {agent.waiting_count > 0 && (
-                <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10 shrink-0">{agent.waiting_count} waiting</Badge>
+                <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10 shrink-0">
+                  {agent.waiting_count} waiting
+                </Badge>
               )}
               {agent.pending_count > 0 && (
-                <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10 shrink-0">{agent.pending_count} pending</Badge>
+                <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10 shrink-0">
+                  {agent.pending_count} pending
+                </Badge>
               )}
             </RowLink>
           ))}
@@ -254,17 +279,35 @@ export default function AgentsPage() {
               // harbour, so they stay editable here on the agent's page.
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run it, clone Harbour and run <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install</code>, then run this command:
+                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run
+                  it, clone Harbour and run{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install</code>, then
+                  run this command:
                 </p>
                 <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
                   {getConnectCommand()}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  The command contains the agent API key — treat it like a password. Model, effort, and CLI tool are set here in harbour and applied on every run, so you never have to reconfigure the remote machine. If this agent&apos;s jobs use prerun commands, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> there.
+                  The command contains the agent API key — treat it like a password. Model, effort,
+                  and CLI tool are set here in harbour and applied on every run, so you never have
+                  to reconfigure the remote machine. If this agent&apos;s jobs use prerun commands,
+                  the scripts must exist at{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                    ~/.harbour/workflows/
+                  </code>{" "}
+                  there.
                 </p>
                 <DialogFooter>
                   <Button variant="outline" onClick={handleCopy}>
-                    {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
+                    {copied ? (
+                      <>
+                        <Check className="h-4 w-4 mr-1.5" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4 mr-1.5" /> Copy Command
+                      </>
+                    )}
                   </Button>
                   <Button onClick={handleCloseCreate}>Done</Button>
                 </DialogFooter>
@@ -273,10 +316,15 @@ export default function AgentsPage() {
               // Local agent — the co-located runner was registered automatically.
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is ready. The local runner picks it up on its next poll — no further setup needed.
+                  <strong>{newAgent.name}</strong> is ready. The local runner picks it up on its
+                  next poll — no further setup needed.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  If no runner is installed yet, run <code className="text-xs bg-muted px-1 py-0.5 rounded">npm run harbour -- agent install</code> on this machine.
+                  If no runner is installed yet, run{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                    npm run harbour -- agent install
+                  </code>{" "}
+                  on this machine.
                 </p>
                 <DialogFooter>
                   <Button onClick={handleCloseCreate}>Done</Button>
@@ -293,13 +341,16 @@ export default function AgentsPage() {
                 </div>
               ) : (
                 <div className="grid gap-2">
-                  {cliTools.map(tool => (
+                  {cliTools.map((tool) => (
                     <button
+                      type="button"
                       key={tool.id}
                       onClick={() => tool.installed && handleCliSelect(tool.id)}
                       disabled={!tool.installed}
                       className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-                        tool.installed ? "hover:border-primary hover:bg-muted/50 cursor-pointer" : "opacity-50 cursor-not-allowed"
+                        tool.installed
+                          ? "hover:border-primary hover:bg-muted/50 cursor-pointer"
+                          : "opacity-50 cursor-not-allowed"
                       }`}
                     >
                       <div className="flex-1">
@@ -323,11 +374,24 @@ export default function AgentsPage() {
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="agent-name">Name</Label>
-                <Input id="agent-name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Marketing Agent" autoFocus required />
+                <Input
+                  id="agent-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Marketing Agent"
+                  autoFocus
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="agent-desc">Description</Label>
-                <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
+                <Textarea
+                  id="agent-desc"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What does this agent do?"
+                  rows={2}
+                />
               </div>
               <AgentColorPicker value={color} onChange={setColor} previewName={name} />
               {CLI_CONFIG[selectedCli] && (
@@ -345,13 +409,14 @@ export default function AgentsPage() {
                   <input
                     type="checkbox"
                     checked={eagerAgent}
-                    onChange={e => setEagerAgent(e.target.checked)}
+                    onChange={(e) => setEagerAgent(e.target.checked)}
                     className="mt-0.5"
                   />
                   <div className="text-sm">
                     <p className="font-medium">Eager polling</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
+                      After a run finishes, poll again immediately instead of waiting 60s. Drains
+                      backlogs fast — increases LLM cost.
                     </p>
                   </div>
                 </label>
@@ -361,24 +426,33 @@ export default function AgentsPage() {
                   <input
                     type="checkbox"
                     checked={remoteAgent}
-                    onChange={e => setRemoteAgent(e.target.checked)}
+                    onChange={(e) => setRemoteAgent(e.target.checked)}
                     className="mt-0.5"
                   />
                   <div className="text-sm">
                     <p className="font-medium">Runs on a different machine</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      For work that must run elsewhere (e.g. Xcode builds on a Mac). You&apos;ll get a connect command to run there instead of the local runner picking it up.
+                      For work that must run elsewhere (e.g. Xcode builds on a Mac). You&apos;ll get
+                      a connect command to run there instead of the local runner picking it up.
                     </p>
                   </div>
                 </label>
               </div>
               <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => {
-                  setSelectedCli(null);
-                  setSelectedModel("");
-                  setSelectedThinking("");
-                }}>Back</Button>
-                <Button type="submit" disabled={creating}>{creating ? "Creating..." : "Create"}</Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedCli(null);
+                    setSelectedModel("");
+                    setSelectedThinking("");
+                  }}
+                >
+                  Back
+                </Button>
+                <Button type="submit" disabled={creating}>
+                  {creating ? "Creating..." : "Create"}
+                </Button>
               </DialogFooter>
             </form>
           )}

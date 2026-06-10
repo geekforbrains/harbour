@@ -1,8 +1,8 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { withOrgAuth } from "@/lib/auth";
-import { getConversation, createMessage } from "@/lib/db/captain";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
+import { createMessage, getConversation } from "@/lib/db/captain";
 
 export const POST = withOrgAuth(
   async (req, auth, { params }) => {
@@ -13,10 +13,7 @@ export const POST = withOrgAuth(
     }
 
     if (isRunning(id)) {
-      return NextResponse.json(
-        { error: "A response is already in progress" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "A response is already in progress" }, { status: 409 });
     }
 
     const body = await req.json();
@@ -47,8 +44,8 @@ export const POST = withOrgAuth(
 
     return NextResponse.json(
       { messageId: assistantMessage.id, userMessageId: userMessage.id },
-      { status: 202 }
+      { status: 202 },
     );
   },
-  { role: "editor" }
+  { role: "editor" },
 );

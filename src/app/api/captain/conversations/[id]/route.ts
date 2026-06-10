@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
-import { getConversation, updateConversation, deleteConversation, listMessages, listToolEventsByMessage } from "@/lib/db/captain";
 import { stop as stopProcess } from "@/lib/captain/process-manager";
+import {
+  deleteConversation,
+  getConversation,
+  listMessages,
+  listToolEventsByMessage,
+  updateConversation,
+} from "@/lib/db/captain";
 
 export const GET = withOrgAuth(
   async (_req, auth, { params }) => {
@@ -19,7 +25,7 @@ export const GET = withOrgAuth(
     });
     return NextResponse.json({ ...conversation, messages });
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 export const PUT = withOrgAuth(
@@ -35,7 +41,7 @@ export const PUT = withOrgAuth(
     }
     return NextResponse.json(getConversation(id, auth.orgId));
   },
-  { role: "editor" }
+  { role: "editor" },
 );
 
 export const DELETE = withOrgAuth(
@@ -49,5 +55,5 @@ export const DELETE = withOrgAuth(
     deleteConversation(id);
     return NextResponse.json({ ok: true });
   },
-  { role: "editor" }
+  { role: "editor" },
 );

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withProjectAuth } from "@/lib/auth";
-import { listAgents, createAgent } from "@/lib/db/queries";
+import { createAgent, listAgents } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
 export const GET = withProjectAuth(
@@ -8,7 +8,7 @@ export const GET = withProjectAuth(
     const projectId = req.nextUrl.searchParams.get("projectId")!;
     return NextResponse.json(listAgents(projectId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 export const POST = withProjectAuth(
@@ -50,5 +50,5 @@ export const POST = withProjectAuth(
 
     return NextResponse.json(agent, { status: 201 });
   },
-  { role: "editor" }
+  { role: "editor" },
 );

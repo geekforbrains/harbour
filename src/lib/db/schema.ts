@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { encrypt } from "../encryption";
-import { dbPath, harbourHome, ensureDir } from "../paths";
+import { dbPath, ensureDir, harbourHome } from "../paths";
 
 let _db: Database.Database | null = null;
 
@@ -390,7 +390,11 @@ export function initializeSchema(db: Database.Database) {
   ensureRunActivityAuthorTypes(db);
 
   // Ensure encryption key exists (generates on first run)
-  try { encrypt("init"); } catch { /* non-fatal */ }
+  try {
+    encrypt("init");
+  } catch {
+    /* non-fatal */
+  }
 }
 
 /**
@@ -400,9 +404,9 @@ export function initializeSchema(db: Database.Database) {
  * Runs on every startup; no-op when the DDL already allows 'workflow'.
  */
 function ensureRunActivityAuthorTypes(db: Database.Database) {
-  const row = db.prepare(
-    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_activity'`
-  ).get() as { sql: string } | undefined;
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_activity'`)
+    .get() as { sql: string } | undefined;
   if (!row || row.sql.includes("'workflow'")) return;
 
   // FKs off so DROP TABLE doesn't fire run_attachments' ON DELETE SET NULL

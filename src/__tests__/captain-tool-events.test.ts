@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { pairToolEvents } from "@/lib/captain/tool-events";
 
 // Captain output events stream as 'tool_start' (tool_name + input JSON in
@@ -17,7 +17,7 @@ let nextId = 1;
 function evt(
   event_type: string,
   content: string | null = null,
-  tool_name: string | null = null
+  tool_name: string | null = null,
 ): OutputEvent {
   return { id: nextId++, event_type, content, tool_name };
 }

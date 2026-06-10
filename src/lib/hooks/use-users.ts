@@ -44,8 +44,14 @@ export function useCreateUser() {
 export function useUpdateUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; displayName?: string; isInstanceAdmin?: boolean }) =>
-      apiFetch<UserRow>(`/api/users/${id}`, { method: "PUT", body }),
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      displayName?: string;
+      isInstanceAdmin?: boolean;
+    }) => apiFetch<UserRow>(`/api/users/${id}`, { method: "PUT", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
   });
 }
@@ -81,8 +87,15 @@ export function useSetPasswordLink() {
 export function useAddMembership() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orgId, userId, role }: { orgId: string; userId: string; role: "editor" | "viewer" }) =>
-      apiFetch(`/api/orgs/${orgId}/members`, { method: "POST", body: { userId, role } }),
+    mutationFn: ({
+      orgId,
+      userId,
+      role,
+    }: {
+      orgId: string;
+      userId: string;
+      role: "editor" | "viewer";
+    }) => apiFetch(`/api/orgs/${orgId}/members`, { method: "POST", body: { userId, role } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
   });
 }

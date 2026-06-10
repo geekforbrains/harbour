@@ -1,6 +1,6 @@
-import { getDb } from "./schema";
+import { type Algorithm, hashSync, verifySync } from "@node-rs/argon2";
 import { v4 as uuid } from "uuid";
-import { hashSync, verifySync, type Algorithm } from "@node-rs/argon2";
+import { getDb } from "./schema";
 
 // @node-rs/argon2 exports Algorithm as a `const enum`, which can't be referenced
 // as a value under isolatedModules. Argon2id is the numeric value 2; pin it with
@@ -43,13 +43,13 @@ export function createUser(
   email: string,
   password: string | null,
   displayName: string,
-  opts: { isInstanceAdmin?: boolean } = {}
+  opts: { isInstanceAdmin?: boolean } = {},
 ) {
   const db = getDb();
   const id = uuid();
   const passwordHash = password === null ? null : hashPassword(password);
   db.prepare(
-    `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin) VALUES (?, ?, ?, ?, ?)`,
   ).run(id, email, passwordHash, displayName, opts.isInstanceAdmin ? 1 : 0);
   return getUserById(id);
 }
@@ -73,39 +73,54 @@ export function authenticateUser(email: string, password: string) {
 export function setUserPassword(id: string, password: string) {
   const db = getDb();
   const passwordHash = hashSync(password);
-  db.prepare(`UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(passwordHash, id);
+  db.prepare(`UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(
+    passwordHash,
+    id,
+  );
   return getUserById(id);
 }
 
 export function getUserById(id: string) {
   const db = getDb();
-  const user = db.prepare(
-    `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE id = ?`
-  ).get(id) as any;
+  const user = db
+    .prepare(
+      `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE id = ?`,
+    )
+    .get(id) as any;
   return user || null;
 }
 
 export function getUserByEmail(email: string) {
   const db = getDb();
-  const user = db.prepare(
-    `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE email = ?`
-  ).get(email) as any;
+  const user = db
+    .prepare(
+      `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE email = ?`,
+    )
+    .get(email) as any;
   return user || null;
 }
 
 export function listUsers() {
   const db = getDb();
-  return db.prepare(
-    `SELECT id, email, display_name, is_instance_admin, created_at FROM users ORDER BY email`
-  ).all();
+  return db
+    .prepare(
+      `SELECT id, email, display_name, is_instance_admin, created_at FROM users ORDER BY email`,
+    )
+    .all();
 }
 
 export function updateUser(id: string, data: { displayName?: string; isInstanceAdmin?: boolean }) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
-  if (data.displayName !== undefined) { fields.push("display_name = ?"); values.push(data.displayName); }
-  if (data.isInstanceAdmin !== undefined) { fields.push("is_instance_admin = ?"); values.push(data.isInstanceAdmin ? 1 : 0); }
+  if (data.displayName !== undefined) {
+    fields.push("display_name = ?");
+    values.push(data.displayName);
+  }
+  if (data.isInstanceAdmin !== undefined) {
+    fields.push("is_instance_admin = ?");
+    values.push(data.isInstanceAdmin ? 1 : 0);
+  }
   if (fields.length === 0) return getUserById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
@@ -126,7 +141,9 @@ const DEFAULT_SESSION_TTL_DAYS = 30;
  * Session lifetime in days, from HARBOUR_SESSION_TTL_DAYS. Anything that isn't
  * a positive finite number falls back to the 30-day default.
  */
-export function sessionTtlDays(raw: string | undefined = process.env.HARBOUR_SESSION_TTL_DAYS): number {
+export function sessionTtlDays(
+  raw: string | undefined = process.env.HARBOUR_SESSION_TTL_DAYS,
+): number {
   const days = Number(raw);
   return Number.isFinite(days) && days > 0 ? days : DEFAULT_SESSION_TTL_DAYS;
 }
@@ -140,18 +157,24 @@ export function createSession(userId: string): string {
   const db = getDb();
   const id = uuid();
   const expiresAt = Math.floor(Date.now() / 1000) + sessionTtlSeconds();
-  db.prepare(`INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`).run(id, userId, expiresAt);
+  db.prepare(`INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`).run(
+    id,
+    userId,
+    expiresAt,
+  );
   return id;
 }
 
 export function getSession(sessionId: string) {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
-  const session = db.prepare(
-    `SELECT s.*, u.id as uid, u.email, u.display_name, u.is_instance_admin
+  const session = db
+    .prepare(
+      `SELECT s.*, u.id as uid, u.email, u.display_name, u.is_instance_admin
      FROM sessions s JOIN users u ON s.user_id = u.id
-     WHERE s.id = ? AND s.expires_at > ?`
-  ).get(sessionId, now) as any;
+     WHERE s.id = ? AND s.expires_at > ?`,
+    )
+    .get(sessionId, now) as any;
   if (!session) return null;
   return {
     sessionId: session.id,

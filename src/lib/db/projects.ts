@@ -1,5 +1,5 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
+import { getDb } from "./schema";
 
 // --- Org-scoped project CRUD ---
 
@@ -12,7 +12,7 @@ export function createProject(orgId: string, name: string) {
 
 export function getProjectById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as any || null;
+  return (db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as any) || null;
 }
 
 /**
@@ -22,16 +22,19 @@ export function getProjectById(id: string) {
 export function listProjects(orgId: string, opts: { includeArchived?: boolean } = {}) {
   const db = getDb();
   const archivedFilter = opts.includeArchived ? "" : "AND archived_at IS NULL";
-  return db.prepare(
-    `SELECT * FROM projects WHERE org_id = ? ${archivedFilter} ORDER BY name ASC`
-  ).all(orgId);
+  return db
+    .prepare(`SELECT * FROM projects WHERE org_id = ? ${archivedFilter} ORDER BY name ASC`)
+    .all(orgId);
 }
 
 export function updateProject(id: string, data: { name?: string }) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
-  if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
+  if (data.name !== undefined) {
+    fields.push("name = ?");
+    values.push(data.name);
+  }
   if (fields.length === 0) return getProjectById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
@@ -43,7 +46,7 @@ export function updateProject(id: string, data: { name?: string }) {
 export function archiveProject(id: string) {
   const db = getDb();
   db.prepare(
-    `UPDATE projects SET archived_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND archived_at IS NULL`
+    `UPDATE projects SET archived_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND archived_at IS NULL`,
   ).run(id);
   return getProjectById(id);
 }
@@ -51,9 +54,9 @@ export function archiveProject(id: string) {
 /** Restore a soft-deleted project. */
 export function unarchiveProject(id: string) {
   const db = getDb();
-  db.prepare(
-    `UPDATE projects SET archived_at = NULL, updated_at = unixepoch() WHERE id = ?`
-  ).run(id);
+  db.prepare(`UPDATE projects SET archived_at = NULL, updated_at = unixepoch() WHERE id = ?`).run(
+    id,
+  );
   return getProjectById(id);
 }
 

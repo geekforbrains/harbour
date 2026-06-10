@@ -4,12 +4,12 @@ import { getEnvVarById, getEnvVarDecryptedValue } from "@/lib/db/queries";
 
 // Reveals a decrypted secret — require editor, not viewer.
 export const GET = withResourceAuth("env_var", "id", { role: "editor" })(
-  async (req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const envVar = getEnvVarById(id);
     if (!envVar) return NextResponse.json({ error: "Env var not found" }, { status: 404 });
 
     const value = getEnvVarDecryptedValue(id);
     return NextResponse.json({ value });
-  }
+  },
 );

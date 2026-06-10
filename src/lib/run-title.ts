@@ -7,11 +7,14 @@ import { getTimezone } from "./db/settings";
  */
 export function defaultRunTitle(jobName: string, unixSeconds: number, timezone?: string): string {
   const tz = timezone || getTimezone();
-  const time = new Date(unixSeconds * 1000).toLocaleTimeString("en-US", {
-    timeZone: tz,
-    hour: "numeric",
-    minute: "2-digit",
-  }).toLowerCase().replace(/\s/g, "");
+  const time = new Date(unixSeconds * 1000)
+    .toLocaleTimeString("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    .toLowerCase()
+    .replace(/\s/g, "");
   return `${jobName} · ${time}`;
 }
 

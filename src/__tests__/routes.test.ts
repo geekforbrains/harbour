@@ -1,43 +1,41 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
-import {
-  createOrg,
-  createProject,
-  createUser,
-  createAgent,
-  createJob,
-  createWorkflow,
-  createWorkflowRunner,
-  createRun,
-  createDoc,
-  createEnvVar,
-  createDatabase,
-  addMembership,
-  createSession,
-} from "@/lib/db/queries";
-import { getDb } from "@/lib/db/schema";
-
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
+import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 import { GET as agentsGET } from "@/app/api/agents/route";
-import { PUT as orgsPUT } from "@/app/api/orgs/route";
-import { getOrgSettings } from "@/lib/db/queries";
-import { GET as runGET, DELETE as runDELETE } from "@/app/api/runs/[id]/route";
 import { POST as docsPOST } from "@/app/api/docs/route";
 import { POST as envVarsPOST } from "@/app/api/env-vars/route";
-import { POST as activityPOST } from "@/app/api/runs/[id]/activity/route";
-import { GET as runsGET } from "@/app/api/runs/route";
-import { GET as runsHistoryGET } from "@/app/api/runs/history/route";
-import { GET as workflowsNextGET } from "@/app/api/workflows/next/route";
+import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobDocsPOST } from "@/app/api/jobs/[id]/docs/route";
 import { POST as jobEnvVarsPOST } from "@/app/api/jobs/[id]/env-vars/route";
-import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
-import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
-import { PUT as runStatusPUT, GET as runStatusGET } from "@/app/api/runs/[id]/status/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
-import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
+import { PUT as orgsPUT } from "@/app/api/orgs/route";
+import { POST as activityPOST } from "@/app/api/runs/[id]/activity/route";
+import { DELETE as runDELETE, GET as runGET } from "@/app/api/runs/[id]/route";
+import { GET as runStatusGET, PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
+import { GET as runsHistoryGET } from "@/app/api/runs/history/route";
+import { GET as runsGET } from "@/app/api/runs/route";
 import { POST as workflowRunnersPOST } from "@/app/api/workflow-runners/route";
+import { GET as workflowsNextGET } from "@/app/api/workflows/next/route";
+import {
+  addMembership,
+  createAgent,
+  createDatabase,
+  createDoc,
+  createEnvVar,
+  createJob,
+  createOrg,
+  createProject,
+  createRun,
+  createSession,
+  createUser,
+  createWorkflow,
+  createWorkflowRunner,
+  getOrgSettings,
+} from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -98,7 +96,10 @@ function fixture() {
 describe("GET /api/agents (project-scoped list)", () => {
   it("viewer can list agents in their project", async () => {
     const { project, viewer } = fixture();
-    const res = await agentsGET(userReq(viewer.id, `http://x/api/agents?projectId=${project.id}`), ctx({}));
+    const res = await agentsGET(
+      userReq(viewer.id, `http://x/api/agents?projectId=${project.id}`),
+      ctx({}),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
@@ -107,7 +108,10 @@ describe("GET /api/agents (project-scoped list)", () => {
 
   it("outsider is forbidden", async () => {
     const { project, outsider } = fixture();
-    const res = await agentsGET(userReq(outsider.id, `http://x/api/agents?projectId=${project.id}`), ctx({}));
+    const res = await agentsGET(
+      userReq(outsider.id, `http://x/api/agents?projectId=${project.id}`),
+      ctx({}),
+    );
     expect(res.status).toBe(403);
   });
 });
@@ -160,8 +164,12 @@ describe("GET/DELETE /api/runs/[id]", () => {
   it("viewer reads, editor deletes, viewer cannot delete", async () => {
     const { run, viewer, editor } = fixture();
     expect((await runGET(userReq(viewer.id, "http://x/"), ctx({ id: run.id }))).status).toBe(200);
-    expect((await runDELETE(userReq(viewer.id, "http://x/"), ctx({ id: run.id }))).status).toBe(403);
-    expect((await runDELETE(userReq(editor.id, "http://x/"), ctx({ id: run.id }))).status).toBe(200);
+    expect((await runDELETE(userReq(viewer.id, "http://x/"), ctx({ id: run.id }))).status).toBe(
+      403,
+    );
+    expect((await runDELETE(userReq(editor.id, "http://x/"), ctx({ id: run.id }))).status).toBe(
+      200,
+    );
   });
 });
 
@@ -223,7 +231,9 @@ describe("cross-org isolation (negative tests)", () => {
     const res = await runsGET(userReq(editor.id, `http://x/api/runs?orgId=${orgA.id}`), ctx({}));
     expect(res.status).toBe(200);
     const body = await res.json();
-    const allIds = [...body.scheduled, ...body.running, ...body.waiting, ...body.recent].map((r: any) => r.id);
+    const allIds = [...body.scheduled, ...body.running, ...body.waiting, ...body.recent].map(
+      (r) => r.id,
+    );
     expect(allIds).not.toContain(other.run.id);
     // sanity: org-A's own running run IS visible
     // (fixture creates a 'running' run for org-A)
@@ -236,12 +246,15 @@ describe("cross-org isolation (negative tests)", () => {
 
     // include every status so the only thing keeping org-B out is org scoping
     const res = await runsHistoryGET(
-      userReq(editor.id, `http://x/api/runs/history?orgId=${orgA.id}&status=running&includeSkipped=1`),
-      ctx({})
+      userReq(
+        editor.id,
+        `http://x/api/runs/history?orgId=${orgA.id}&status=running&includeSkipped=1`,
+      ),
+      ctx({}),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    const ids = body.runs.map((r: any) => r.id);
+    const ids = body.runs.map((r: { id: string }) => r.id);
     expect(ids).not.toContain(other.run.id);
   });
 
@@ -260,31 +273,35 @@ describe("cross-org isolation (negative tests)", () => {
 
     const agentRes = await workflowsNextGET(
       agentReq(agentA.apiKey, "http://x/api/workflows/next"),
-      ctx({})
+      ctx({}),
     );
     expect(agentRes.status).toBe(403);
 
     const runnerA = createWorkflowRunner(other.org.id, "Server")!;
     const peekRes = await workflowsNextGET(
       workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next?peek=true"),
-      ctx({})
+      ctx({}),
     );
     expect(peekRes.status).toBe(200);
     const peekBody = await peekRes.json();
     expect(peekBody.available).toBe(true);
-    const afterPeek = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number };
+    const afterPeek = db
+      .prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`)
+      .get(wfJobId) as { n: number };
     expect(afterPeek.n).toBe(0);
 
     const res = await workflowsNextGET(
       workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next"),
-      ctx({})
+      ctx({}),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.run).toBeDefined();
     expect(body.job.kind).toBe("workflow");
 
-    const claimed = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number };
+    const claimed = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as {
+      n: number;
+    };
     expect(claimed.n).toBe(1);
   });
 
@@ -298,7 +315,9 @@ describe("cross-org isolation (negative tests)", () => {
     });
     const res = await jobDocsPOST(req, ctx({ id: jobA.id }));
     expect(res.status).toBe(404);
-    const linked = getDb().prepare(`SELECT COUNT(*) as n FROM job_docs WHERE job_id = ? AND doc_id = ?`).get(jobA.id, other.doc.id) as { n: number };
+    const linked = getDb()
+      .prepare(`SELECT COUNT(*) as n FROM job_docs WHERE job_id = ? AND doc_id = ?`)
+      .get(jobA.id, other.doc.id) as { n: number };
     expect(linked.n).toBe(0);
   });
 
@@ -312,7 +331,9 @@ describe("cross-org isolation (negative tests)", () => {
     });
     const res = await jobEnvVarsPOST(req, ctx({ id: jobA.id }));
     expect(res.status).toBe(404);
-    const linked = getDb().prepare(`SELECT COUNT(*) as n FROM job_env_vars WHERE job_id = ? AND env_var_id = ?`).get(jobA.id, other.envVar.id) as { n: number };
+    const linked = getDb()
+      .prepare(`SELECT COUNT(*) as n FROM job_env_vars WHERE job_id = ? AND env_var_id = ?`)
+      .get(jobA.id, other.envVar.id) as { n: number };
     expect(linked.n).toBe(0);
   });
 
@@ -326,7 +347,9 @@ describe("cross-org isolation (negative tests)", () => {
     });
     const res = await jobDataPOST(req, ctx({ id: jobA.id }));
     expect(res.status).toBe(404);
-    const linked = getDb().prepare(`SELECT COUNT(*) as n FROM job_databases WHERE job_id = ? AND database_id = ?`).get(jobA.id, other.database.id) as { n: number };
+    const linked = getDb()
+      .prepare(`SELECT COUNT(*) as n FROM job_databases WHERE job_id = ? AND database_id = ?`)
+      .get(jobA.id, other.database.id) as { n: number };
     expect(linked.n).toBe(0);
   });
 
@@ -410,7 +433,12 @@ describe("job creation: workflows vs agent prerun gates", () => {
     void org;
     const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
       method: "POST",
-      body: JSON.stringify({ name: "X", schedule: '{"every":60}', command: "echo hi", agentId: agent.id }),
+      body: JSON.stringify({
+        name: "X",
+        schedule: '{"every":60}',
+        command: "echo hi",
+        agentId: agent.id,
+      }),
       headers: { "content-type": "application/json" },
     });
     const res = await jobsPOST(req, ctx({}));
@@ -421,7 +449,11 @@ describe("job creation: workflows vs agent prerun gates", () => {
     const { editor, agent } = fixture();
     const req = userReq(editor.id, "http://x/", {
       method: "POST",
-      body: JSON.stringify({ name: "Combined", schedule: '{"every":60}', prerunCommand: "exit 77" }),
+      body: JSON.stringify({
+        name: "Combined",
+        schedule: '{"every":60}',
+        prerunCommand: "exit 77",
+      }),
       headers: { "content-type": "application/json" },
     });
     const res = await agentJobsPOST(req, ctx({ id: agent.id }));
@@ -438,11 +470,19 @@ describe("workflow run reporting", () => {
   // can report their status even though no agent owns them.
   it("an in-org workflow runner can set status on a workflow run", async () => {
     const { project } = fixture();
-    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
+    const wfJob = createWorkflow(project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      command: "echo hi",
+    })!;
     const run = createRun(wfJob.id, null)!;
     const runner = createWorkflowRunner(project.org_id, "Server")!;
     // status route is PUT
-    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
+    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", {
+      method: "PUT",
+      body: JSON.stringify({ status: "done" }),
+      headers: { "content-type": "application/json" },
+    });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(200);
   });
@@ -450,23 +490,39 @@ describe("workflow run reporting", () => {
   it("a workflow runner cannot set status on an agent run", async () => {
     const { org, run } = fixture();
     const runner = createWorkflowRunner(org.id, "Server")!;
-    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
+    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", {
+      method: "PUT",
+      body: JSON.stringify({ status: "done" }),
+      headers: { "content-type": "application/json" },
+    });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
   });
 
   it("an agent cannot set status on a workflow run", async () => {
     const { project, agent } = fixture();
-    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
+    const wfJob = createWorkflow(project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      command: "echo hi",
+    })!;
     const run = createRun(wfJob.id, null)!;
-    const putReq = agentReq(agent.apiKey, "http://x/", { method: "PUT", body: JSON.stringify({ status: "done" }), headers: { "content-type": "application/json" } });
+    const putReq = agentReq(agent.apiKey, "http://x/", {
+      method: "PUT",
+      body: JSON.stringify({ status: "done" }),
+      headers: { "content-type": "application/json" },
+    });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
   });
 
   it("an out-of-org workflow runner cannot touch a workflow run", async () => {
     const { project } = fixture();
-    const wfJob = createWorkflow(project.id, { name: "WF", schedule: '{"every":60}', command: "echo hi" })!;
+    const wfJob = createWorkflow(project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      command: "echo hi",
+    })!;
     const run = createRun(wfJob.id, null)!;
     const other = otherOrgFixture();
     const runner = createWorkflowRunner(other.org.id, "Other")!;
@@ -494,7 +550,7 @@ describe("agent self-ownership (within an org)", () => {
   });
 
   it("an agent cannot trigger another agent's job in the same org", async () => {
-    const { project, job } = fixture();           // job belongs to agent A
+    const { project, job } = fixture(); // job belongs to agent A
     const agentB = createAgent(project.id, "DevB"); // same project/org, different agent
     const req = agentReq(agentB.apiKey, "http://x/", {
       method: "POST",
@@ -537,7 +593,7 @@ describe("agent self-ownership (within an org)", () => {
   });
 
   it("an agent cannot write data as another agent in the same org", async () => {
-    const { project, agent } = fixture();           // agent A
+    const { project, agent } = fixture(); // agent A
     const agentB = createAgent(project.id, "DevB"); // same org, different agent
     const req = agentReq(agentB.apiKey, "http://x/", {
       method: "POST",

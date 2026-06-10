@@ -19,5 +19,5 @@ export const POST = withResourceAuth("job", "id", { role: "editor" })(
 
     linkDocToJob(id, body.docId);
     return NextResponse.json({ ok: true }, { status: 201 });
-  }
+  },
 );

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 
@@ -15,7 +15,7 @@ describe("scoped()", () => {
 
   it("appends both orgId and projectId", () => {
     expect(scoped("/api/runs", { orgId: "o1", projectId: "p1" })).toBe(
-      "/api/runs?orgId=o1&projectId=p1"
+      "/api/runs?orgId=o1&projectId=p1",
     );
   });
 
@@ -25,13 +25,13 @@ describe("scoped()", () => {
 
   it("preserves an existing query string", () => {
     expect(scoped("/api/agents?limit=5", { projectId: "p1" })).toBe(
-      "/api/agents?limit=5&projectId=p1"
+      "/api/agents?limit=5&projectId=p1",
     );
   });
 
   it("ignores nullish scope values", () => {
     expect(scoped("/api/runs", { orgId: undefined, projectId: "p1" })).toBe(
-      "/api/runs?projectId=p1"
+      "/api/runs?projectId=p1",
     );
   });
 });

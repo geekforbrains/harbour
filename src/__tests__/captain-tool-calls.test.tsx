@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { ToolCalls, StreamingOutput } from "@/components/app/captain-message";
+import { StreamingOutput, ToolCalls } from "@/components/app/captain-message";
 
 // ToolCalls is the single collapsible tool-call summary used both for
 // finalized messages and live streaming: the only thing visible by default is
@@ -21,7 +22,7 @@ let nextId = 1;
 function evt(
   event_type: string,
   content: string | null = null,
-  tool_name: string | null = null
+  tool_name: string | null = null,
 ): OutputEvent {
   return { id: nextId++, event_type, content, tool_name };
 }
@@ -38,7 +39,7 @@ function twoCompletePairs(): OutputEvent[] {
 describe("ToolCalls", () => {
   it("renders nothing when there are no tool calls", () => {
     const { container } = render(
-      <ToolCalls toolEvents={[evt("text_delta", "Hello"), evt("result", "done")]} />
+      <ToolCalls toolEvents={[evt("text_delta", "Hello"), evt("result", "done")]} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -54,8 +55,11 @@ describe("ToolCalls", () => {
   it("uses the singular form for a single tool call", () => {
     render(
       <ToolCalls
-        toolEvents={[evt("tool_start", '{"command":"ls"}', "Bash"), evt("tool_end", "OUTPUT_ALPHA")]}
-      />
+        toolEvents={[
+          evt("tool_start", '{"command":"ls"}', "Bash"),
+          evt("tool_end", "OUTPUT_ALPHA"),
+        ]}
+      />,
     );
 
     expect(screen.getByText("1 tool call")).toBeInTheDocument();

@@ -1,29 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ROLE_RANK,
   meets,
-  resolveAccess,
-  orgIdForProject,
   orgIdForAgent,
   orgIdForJob,
-  orgIdForRun,
+  orgIdForProject,
   orgIdForResource,
+  orgIdForRun,
+  ROLE_RANK,
+  resolveAccess,
 } from "@/lib/db/access";
 import {
-  createOrg,
-  createProject,
-  createUser,
+  addMembership,
   createAgent,
-  createJob,
-  createRun,
+  createDatabase,
   createDoc,
   createEnvVar,
-  createDatabase,
-  addMembership,
+  createJob,
+  createOrg,
+  createProject,
+  createRun,
+  createUser,
   updateUser,
 } from "@/lib/db/queries";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");

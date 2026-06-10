@@ -1,10 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { RunRowData } from "@/components/app/run-row";
 import { apiFetch, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
-import type { RunRowData } from "@/components/app/run-row";
 
 type RunsBundle = {
   scheduled: RunRowData[];
@@ -43,8 +43,7 @@ export function useRunsHistory(query: string, opts?: { enabled?: boolean }) {
   const scope = useScope();
   return useQuery({
     queryKey: [...qk.runs.history(scope), query],
-    queryFn: () =>
-      apiFetch(scoped(`/api/runs/history${query ? `?${query}` : ""}`, scope)),
+    queryFn: () => apiFetch(scoped(`/api/runs/history${query ? `?${query}` : ""}`, scope)),
     enabled: (opts?.enabled ?? true) && !!scope.orgId,
   });
 }

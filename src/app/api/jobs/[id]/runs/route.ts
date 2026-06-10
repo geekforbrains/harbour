@@ -14,5 +14,5 @@ export const GET = withResourceAuth("job", "id", { role: "viewer" })(
     const includeSkipped = sp.get("includeSkipped") === "1";
 
     return NextResponse.json(listRunsByJob(id, limit, { includeSkipped, offset }));
-  }
+  },
 );

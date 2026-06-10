@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useTriggerJob } from "@/lib/hooks/use-jobs";
 
 interface TriggerDialogProps {
@@ -15,7 +21,13 @@ interface TriggerDialogProps {
   workflow?: boolean;
 }
 
-export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflow }: TriggerDialogProps) {
+export function TriggerDialog({
+  jobId,
+  jobName,
+  open,
+  onOpenChange,
+  workflow,
+}: TriggerDialogProps) {
   const trigger = useTriggerJob();
   const [instructions, setInstructions] = useState("");
   const triggering = trigger.isPending;
@@ -31,7 +43,13 @@ export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflow }: 
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) setInstructions(""); onOpenChange(v); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) setInstructions("");
+        onOpenChange(v);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Trigger &ldquo;{jobName}&rdquo;</DialogTitle>
@@ -44,7 +62,11 @@ export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflow }: 
           <Textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            placeholder={workflow ? "Add a note for why this was triggered..." : "Add context for this specific run..."}
+            placeholder={
+              workflow
+                ? "Add a note for why this was triggered..."
+                : "Add context for this specific run..."
+            }
             rows={3}
           />
         </div>

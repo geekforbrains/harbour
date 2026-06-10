@@ -1,19 +1,19 @@
 import { cookies } from "next/headers";
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import {
-  getSession,
-  authenticateAgent,
-  authenticateWorkflowRunner,
-  authenticateAdminApiKey,
-} from "./db/queries";
-import {
-  resolveAccess,
   meets,
   orgIdForProject,
   orgIdForResource,
-  type Role,
   type ResourceKind,
+  type Role,
+  resolveAccess,
 } from "./db/access";
+import {
+  authenticateAdminApiKey,
+  authenticateAgent,
+  authenticateWorkflowRunner,
+  getSession,
+} from "./db/queries";
 
 // ── Session cookie ───────────────────────────────────────────────────────────
 
@@ -37,10 +37,7 @@ export function isHttpsRequest(req: NextRequest): boolean {
 }
 
 /** Options for the `harbour_session` cookie. `maxAge` defaults to 30 days. */
-export function sessionCookieOptions(
-  req: NextRequest,
-  maxAge: number = 60 * 60 * 24 * 30
-) {
+export function sessionCookieOptions(req: NextRequest, maxAge: number = 60 * 60 * 24 * 30) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
@@ -175,10 +172,8 @@ export function getIdentityFromRequest(req: NextRequest): Identity | null {
   return null;
 }
 
-const unauthorized = () =>
-  NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-const forbidden = () =>
-  NextResponse.json({ error: "Forbidden" }, { status: 403 });
+const unauthorized = () => NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+const forbidden = () => NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
 // ── Scope resolution helpers ─────────────────────────────────────────────────
 
@@ -216,21 +211,14 @@ function asUserAuth(identity: UserIdentity, orgId: string, role: Role): UserAuth
 
 // ── Wrappers ─────────────────────────────────────────────────────────────────
 
-type Handler<A> = (
-  req: NextRequest,
-  auth: A,
-  ctx: RouteContext
-) => Promise<Response> | Response;
+type Handler<A> = (req: NextRequest, auth: A, ctx: RouteContext) => Promise<Response> | Response;
 
 /**
  * Org-scoped authorization. Target org comes from the `orgId` query param (or
  * the active-org cookie). `role` is the minimum required; instance_admin always
  * satisfies it.
  */
-export function withOrgAuth(
-  handler: Handler<UserAuth>,
-  opts: { role: Role; orgParam?: string }
-) {
+export function withOrgAuth(handler: Handler<UserAuth>, opts: { role: Role; orgParam?: string }) {
   const orgParam = opts.orgParam ?? "orgId";
   return async (req: NextRequest, ctx: RouteContext) => {
     const identity = getIdentityFromRequest(req);
@@ -253,7 +241,7 @@ export function withOrgAuth(
  */
 export function withProjectAuth(
   handler: Handler<UserAuth>,
-  opts: { role: Role; projectParam?: string }
+  opts: { role: Role; projectParam?: string },
 ) {
   const projectParam = opts.projectParam ?? "projectId";
   return async (req: NextRequest, ctx: RouteContext) => {
@@ -279,29 +267,24 @@ export function withProjectAuth(
  * owning org via `orgIdForResource(kind, id)` and checks the role there.
  * Not-found resolves to 403 (don't leak existence across orgs).
  */
-export function withResourceAuth(
-  kind: ResourceKind,
-  idParam: string,
-  opts: { role: Role }
-) {
-  return (handler: Handler<UserAuth>) =>
-    async (req: NextRequest, ctx: RouteContext) => {
-      const identity = getIdentityFromRequest(req);
-      if (!identity) return unauthorized();
-      if (identity.type !== "user") return forbidden();
+export function withResourceAuth(kind: ResourceKind, idParam: string, opts: { role: Role }) {
+  return (handler: Handler<UserAuth>) => async (req: NextRequest, ctx: RouteContext) => {
+    const identity = getIdentityFromRequest(req);
+    if (!identity) return unauthorized();
+    if (identity.type !== "user") return forbidden();
 
-      const params = await ctx.params;
-      const id = params[idParam];
-      if (!id) return forbidden();
+    const params = await ctx.params;
+    const id = params[idParam];
+    if (!id) return forbidden();
 
-      const orgId = orgIdForResource(kind, id);
-      if (!orgId) return forbidden();
+    const orgId = orgIdForResource(kind, id);
+    if (!orgId) return forbidden();
 
-      const role = checkRole(identity, orgId, opts.role);
-      if (!role) return forbidden();
+    const role = checkRole(identity, orgId, opts.role);
+    if (!role) return forbidden();
 
-      return handler(req, asUserAuth(identity, orgId, role), ctx);
-    };
+    return handler(req, asUserAuth(identity, orgId, role), ctx);
+  };
 }
 
 /**
@@ -361,7 +344,7 @@ export function withAgentAuth(handler: Handler<AgentAuth>) {
         orgId,
         projectId: identity.projectId,
       },
-      ctx
+      ctx,
     );
   };
 }
@@ -380,7 +363,7 @@ export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
         runnerName: identity.runnerName,
         orgId: identity.orgId,
       },
-      ctx
+      ctx,
     );
   };
 }
@@ -404,7 +387,7 @@ export function withAgentOrUser(
     allowWorkflowRunner?: boolean;
     /** Resolve the target org from route params; null if not yet known. */
     orgFromParams?: (params: Record<string, string>) => string | null;
-  }
+  },
 ) {
   return async (req: NextRequest, ctx: RouteContext) => {
     const identity = getIdentityFromRequest(req);
@@ -430,7 +413,7 @@ export function withAgentOrUser(
           orgId: agentOrg,
           projectId: identity.projectId,
         },
-        ctx
+        ctx,
       );
     }
 
@@ -448,7 +431,7 @@ export function withAgentOrUser(
           runnerName: identity.runnerName,
           orgId: identity.orgId,
         },
-        ctx
+        ctx,
       );
     }
 
@@ -474,7 +457,7 @@ export function withAgentOrUser(
 export function requireAgentProject(
   auth: AgentAuth,
   kind: ResourceKind,
-  id: string
+  id: string,
 ): NextResponse | null {
   const orgId = orgIdForResource(kind, id);
   if (orgId === null) {
@@ -489,10 +472,7 @@ export function requireAgentProject(
  * Verify the calling agent owns the given agent id (its own id). Used by the
  * `/agents/[id]/next` poll route.
  */
-export function requireAgentSelf(
-  auth: AgentAuth,
-  agentId: string
-): NextResponse | null {
+export function requireAgentSelf(auth: AgentAuth, agentId: string): NextResponse | null {
   if (auth.agentId !== agentId) return forbidden();
   return null;
 }

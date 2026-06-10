@@ -1,21 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
-  createProject,
   createAgent,
   createJob,
-  createWorkflow,
+  createOrg,
+  createProject,
   createRun,
-  getRunById,
+  createWorkflow,
+  failTimedOutRun,
   getAgentNextRun,
   getNextWorkflowRun,
-  updateRunStatus,
-  requeueWorkflowRun,
-  failTimedOutRun,
+  getRunById,
   listRunActivity,
+  requeueWorkflowRun,
+  updateRunStatus,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Run lifecycle — reaper race dedupe + requeue claimed_at reset
@@ -50,7 +50,9 @@ afterEach(() => {
 const NOW = () => Math.floor(Date.now() / 1000);
 
 function backdateClaim(runId: string, secondsAgo: number) {
-  getDb().prepare(`UPDATE runs SET claimed_at = ? WHERE id = ?`).run(NOW() - secondsAgo, runId);
+  getDb()
+    .prepare(`UPDATE runs SET claimed_at = ? WHERE id = ?`)
+    .run(NOW() - secondsAgo, runId);
 }
 
 function timeoutActivityRows(runId: string) {
@@ -70,7 +72,11 @@ function agentSetup() {
 function workflowSetup() {
   const org = createOrg("Acme")!;
   const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(project.id, { name: "Sync", schedule: '{"every":60}', command: "echo sync" })!;
+  const wf = createWorkflow(project.id, {
+    name: "Sync",
+    schedule: '{"every":60}',
+    command: "echo sync",
+  })!;
   return { org, project, wf };
 }
 

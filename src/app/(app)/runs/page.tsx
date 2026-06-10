@@ -1,21 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Filter, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useApp } from "@/components/app/app-context";
+import { BackLink } from "@/components/app/back-link";
+import { EmptyState } from "@/components/app/empty-state";
+import { SELECT_CLASS } from "@/components/app/model-thinking-select";
+import { PageHeader } from "@/components/app/page-header";
+import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { EmptyState } from "@/components/app/empty-state";
-import { PageHeader } from "@/components/app/page-header";
-import { BackLink } from "@/components/app/back-link";
-import { RunRow, type RunRowData } from "@/components/app/run-row";
-import { SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
-import { useApp } from "@/components/app/app-context";
 import { apiFetch, scoped } from "@/lib/api/client";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useJobs } from "@/lib/hooks/use-jobs";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
 type AgentLite = { id: string; name: string };
 type JobLite = { id: string; name: string; agent_id: string | null };
@@ -50,7 +50,10 @@ export default function RunsHistoryPage() {
   const statusesFromUrl = useMemo(() => {
     const raw = searchParams.get("status");
     if (!raw) return DEFAULT_STATUSES;
-    return raw.split(",").map(s => s.trim()).filter(Boolean);
+    return raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }, [searchParams]);
   const agentId = searchParams.get("agentId") ?? "";
   const jobId = searchParams.get("jobId") ?? "";
@@ -70,10 +73,14 @@ export default function RunsHistoryPage() {
     const next = new Set(statusesFromUrl);
     if (next.has(value)) next.delete(value);
     else next.add(value);
-    if (next.size === 0) { updateFilters({ status: null }); return; }
-    const arr = STATUS_OPTIONS.map(o => o.value).filter(v => next.has(v));
+    if (next.size === 0) {
+      updateFilters({ status: null });
+      return;
+    }
+    const arr = STATUS_OPTIONS.map((o) => o.value).filter((v) => next.has(v));
     // If the user happens to land on the default set, clear the param to keep URLs clean.
-    const matchesDefault = arr.length === DEFAULT_STATUSES.length && arr.every(v => DEFAULT_STATUSES.includes(v));
+    const matchesDefault =
+      arr.length === DEFAULT_STATUSES.length && arr.every((v) => DEFAULT_STATUSES.includes(v));
     updateFilters({ status: matchesDefault ? null : arr.join(",") });
   }
 
@@ -89,7 +96,7 @@ export default function RunsHistoryPage() {
 
   const jobsForAgent = useMemo(() => {
     if (!agentId) return jobs;
-    return jobs.filter(j => j.agent_id === agentId);
+    return jobs.filter((j) => j.agent_id === agentId);
   }, [jobs, agentId]);
 
   function buildHistoryUrl(offset: number) {
@@ -102,8 +109,8 @@ export default function RunsHistoryPage() {
     }
     if (agentId) params.set("agentId", agentId);
     if (jobId) params.set("jobId", jobId);
-    if (from) params.set("from", String(Math.floor(new Date(from + "T00:00:00").getTime() / 1000)));
-    if (to)   params.set("to",   String(Math.floor(new Date(to   + "T23:59:59").getTime() / 1000)));
+    if (from) params.set("from", String(Math.floor(new Date(`${from}T00:00:00`).getTime() / 1000)));
+    if (to) params.set("to", String(Math.floor(new Date(`${to}T23:59:59`).getTime() / 1000)));
     if (sort) params.set("sort", sort);
     if (projectId) params.set("projectId", projectId);
     params.set("limit", String(PAGE_SIZE));
@@ -112,10 +119,21 @@ export default function RunsHistoryPage() {
   }
 
   // Pagination: we keep all loaded pages in state so "Load more" can append.
-  const queryKey = useMemo(() => [
-    "runs", "history",
-    statusesFromUrl.join(","), agentId, jobId, from, to, sort, projectId, activeOrgId,
-  ], [statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId]);
+  const queryKey = useMemo(
+    () => [
+      "runs",
+      "history",
+      statusesFromUrl.join(","),
+      agentId,
+      jobId,
+      from,
+      to,
+      sort,
+      projectId,
+      activeOrgId,
+    ],
+    [statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId],
+  );
 
   const [pages, setPages] = useState<RunRowData[][]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -140,22 +158,29 @@ export default function RunsHistoryPage() {
     }
   }, [firstPage]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buildHistoryUrl is recreated each render; the filter params it closes over are listed instead so the callback stays fresh without depending on the function identity
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
     try {
       const currentCount = pages.reduce((n, p) => n + p.length, 0);
-      const data = await apiFetch<{ runs: RunRowData[]; hasMore: boolean }>(buildHistoryUrl(currentCount));
-      setPages(prev => [...prev, data.runs]);
+      const data = await apiFetch<{ runs: RunRowData[]; hasMore: boolean }>(
+        buildHistoryUrl(currentCount),
+      );
+      setPages((prev) => [...prev, data.runs]);
       setHasMore(data.hasMore);
     } finally {
       setLoadingMore(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages, statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId]);
 
   const allRuns = pages.flat();
-  const filtersActive = statusesFromUrl.join(",") !== DEFAULT_STATUSES.join(",")
-    || !!agentId || !!jobId || !!from || !!to || sort !== "newest";
+  const filtersActive =
+    statusesFromUrl.join(",") !== DEFAULT_STATUSES.join(",") ||
+    !!agentId ||
+    !!jobId ||
+    !!from ||
+    !!to ||
+    sort !== "newest";
 
   // If a deep link includes jobId or agentId, surface the back link to /
   const showBackLink = !!jobId || !!agentId;
@@ -173,7 +198,11 @@ export default function RunsHistoryPage() {
             <Filter className="h-3.5 w-3.5" /> Filters
           </div>
           {filtersActive && (
-            <button onClick={clearFilters} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
               <X className="h-3 w-3" /> Clear
             </button>
           )}
@@ -185,10 +214,14 @@ export default function RunsHistoryPage() {
             <select
               className={SELECT_CLASS}
               value={agentId}
-              onChange={e => updateFilters({ agentId: e.target.value || null, jobId: null })}
+              onChange={(e) => updateFilters({ agentId: e.target.value || null, jobId: null })}
             >
               <option value="">All agents</option>
-              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
             </select>
           </div>
           <div className="space-y-1">
@@ -196,10 +229,14 @@ export default function RunsHistoryPage() {
             <select
               className={SELECT_CLASS}
               value={jobId}
-              onChange={e => updateFilters({ jobId: e.target.value || null })}
+              onChange={(e) => updateFilters({ jobId: e.target.value || null })}
             >
               <option value="">All jobs</option>
-              {jobsForAgent.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+              {jobsForAgent.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.name}
+                </option>
+              ))}
             </select>
           </div>
           <div className="space-y-1">
@@ -208,7 +245,7 @@ export default function RunsHistoryPage() {
               type="date"
               className={SELECT_CLASS}
               value={from}
-              onChange={e => updateFilters({ from: e.target.value || null })}
+              onChange={(e) => updateFilters({ from: e.target.value || null })}
             />
           </div>
           <div className="space-y-1">
@@ -217,7 +254,7 @@ export default function RunsHistoryPage() {
               type="date"
               className={SELECT_CLASS}
               value={to}
-              onChange={e => updateFilters({ to: e.target.value || null })}
+              onChange={(e) => updateFilters({ to: e.target.value || null })}
             />
           </div>
         </div>
@@ -225,7 +262,7 @@ export default function RunsHistoryPage() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 flex-wrap">
             <Label className="text-xs mr-1">Status</Label>
-            {STATUS_OPTIONS.map(opt => {
+            {STATUS_OPTIONS.map((opt) => {
               const on = statusesFromUrl.includes(opt.value);
               return (
                 <button
@@ -246,9 +283,11 @@ export default function RunsHistoryPage() {
           <div className="flex items-center gap-2 ml-auto">
             <Label className="text-xs">Sort</Label>
             <select
-              className={SELECT_CLASS + " w-auto min-w-[10rem]"}
+              className={`${SELECT_CLASS} w-auto min-w-[10rem]`}
               value={sort}
-              onChange={e => updateFilters({ sort: e.target.value === "oldest" ? "oldest" : null })}
+              onChange={(e) =>
+                updateFilters({ sort: e.target.value === "oldest" ? "oldest" : null })
+              }
             >
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
@@ -267,7 +306,9 @@ export default function RunsHistoryPage() {
       ) : (
         <>
           <div className="space-y-2">
-            {allRuns.map(run => <RunRow key={run.id} run={run} />)}
+            {allRuns.map((run) => (
+              <RunRow key={run.id} run={run} />
+            ))}
           </div>
           <div className="flex items-center justify-center pt-2">
             {hasMore ? (
@@ -275,7 +316,9 @@ export default function RunsHistoryPage() {
                 {loadingMore ? "Loading…" : `Load ${PAGE_SIZE} more`}
               </Button>
             ) : (
-              <span className="text-xs text-muted-foreground">End of history ({allRuns.length} runs)</span>
+              <span className="text-xs text-muted-foreground">
+                End of history ({allRuns.length} runs)
+              </span>
             )}
           </div>
         </>

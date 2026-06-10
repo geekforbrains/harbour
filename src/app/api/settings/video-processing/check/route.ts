@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { isFfmpegAvailable, isWhisperAvailable, isTranscriptProviderAvailable } from "@/lib/video-processing";
+import {
+  isFfmpegAvailable,
+  isTranscriptProviderAvailable,
+  isWhisperAvailable,
+} from "@/lib/video-processing";
 
 export const GET = withAuthenticatedUser(async () => {
   return NextResponse.json({

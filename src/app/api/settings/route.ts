@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
-import { getAllSettings, setSetting, isSensitiveSetting, maskSettingValue } from "@/lib/db/queries";
+import { getAllSettings, isSensitiveSetting, maskSettingValue, setSetting } from "@/lib/db/queries";
 
 export const GET = withInstanceAdmin(async () => {
   const settings = getAllSettings();

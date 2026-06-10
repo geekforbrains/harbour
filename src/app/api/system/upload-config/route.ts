@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { maxUploadMb, maxUploadBytes } from "@/lib/paths";
+import { maxUploadBytes, maxUploadMb } from "@/lib/paths";
 
 export const GET = withAuthenticatedUser(async () => {
   return NextResponse.json({

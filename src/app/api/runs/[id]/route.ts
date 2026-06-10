@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { withResourceAuth } from "@/lib/auth";
-import { getRunWithActivity, getRunById, deleteRun, listAttachmentsByRun } from "@/lib/db/queries";
 import { serializeAttachment } from "@/lib/attachments-serialize";
+import { withResourceAuth } from "@/lib/auth";
+import { deleteRun, getRunById, getRunWithActivity, listAttachmentsByRun } from "@/lib/db/queries";
 import { publicBaseUrl } from "@/lib/request-url";
 
 export const GET = withResourceAuth("run", "id", { role: "viewer" })(
@@ -11,9 +11,9 @@ export const GET = withResourceAuth("run", "id", { role: "viewer" })(
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
     const base = publicBaseUrl(req);
-    const attachments = listAttachmentsByRun(id).map(a => serializeAttachment(a, base));
+    const attachments = listAttachmentsByRun(id).map((a) => serializeAttachment(a, base));
     return NextResponse.json({ ...run, attachments });
-  }
+  },
 );
 
 export const DELETE = withResourceAuth("run", "id", { role: "editor" })(
@@ -24,5 +24,5 @@ export const DELETE = withResourceAuth("run", "id", { role: "editor" })(
 
     deleteRun(id);
     return NextResponse.json({ success: true });
-  }
+  },
 );

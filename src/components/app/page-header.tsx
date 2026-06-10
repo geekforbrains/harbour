@@ -19,7 +19,9 @@ export function PageHeader({
   align?: "center" | "start";
 }) {
   return (
-    <div className={`flex ${align === "start" ? "items-start" : "items-center"} justify-between gap-4`}>
+    <div
+      className={`flex ${align === "start" ? "items-start" : "items-center"} justify-between gap-4`}
+    >
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}

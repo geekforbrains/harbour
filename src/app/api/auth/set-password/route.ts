@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { consumeSetPasswordToken, createSession, sessionTtlSeconds } from "@/lib/db/queries";
+import { type NextRequest, NextResponse } from "next/server";
 import { sessionCookieOptions } from "@/lib/auth";
+import { consumeSetPasswordToken, createSession, sessionTtlSeconds } from "@/lib/db/queries";
 import { clientIp, setPasswordLimiter } from "@/lib/rate-limit";
 
 const MIN_PASSWORD_LENGTH = 12;
@@ -16,10 +16,7 @@ const MIN_PASSWORD_LENGTH = 12;
 export async function POST(req: NextRequest) {
   const ip = clientIp(req);
   if (setPasswordLimiter.isLimited(ip)) {
-    return NextResponse.json(
-      { error: "Too many attempts. Try again later." },
-      { status: 429 }
-    );
+    return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
   setPasswordLimiter.record(ip);
 
@@ -39,7 +36,7 @@ export async function POST(req: NextRequest) {
   if (password.length < MIN_PASSWORD_LENGTH) {
     return NextResponse.json(
       { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -47,14 +44,15 @@ export async function POST(req: NextRequest) {
   if (!result.ok) {
     // Don't distinguish reasons to the client beyond invalid/expired — all map
     // to "this link can't be used."
-    return NextResponse.json(
-      { error: "This link is invalid or has expired." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "This link is invalid or has expired." }, { status: 400 });
   }
 
   const sessionId = createSession(result.userId);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req, sessionTtlSeconds()));
+  response.cookies.set(
+    "harbour_session",
+    sessionId,
+    sessionCookieOptions(req, sessionTtlSeconds()),
+  );
   return response;
 }

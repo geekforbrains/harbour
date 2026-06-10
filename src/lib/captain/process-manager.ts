@@ -5,16 +5,16 @@
  * Uses globalThis to survive Next.js dev HMR reloads.
  */
 
-import path from "path";
-import { getProvider, runCliTool, type CliEvent } from "./providers";
-import { setupWorkspace } from "./workspace";
+import path from "node:path";
 import {
   addCaptainOutput,
-  updateMessageContent,
-  updateConversation,
   listCaptainOutput,
+  updateConversation,
+  updateMessageContent,
 } from "../db/captain";
-import { harbourHome, ensureDir } from "../paths";
+import { ensureDir, harbourHome } from "../paths";
+import { type CliEvent, getProvider, runCliTool } from "./providers";
+import { setupWorkspace } from "./workspace";
 
 type ActiveProcess = {
   conversationId: string;
@@ -30,11 +30,13 @@ type ProcessManager = {
 const GLOBAL_KEY = "__harbour_captain_pm__";
 
 function getManager(): ProcessManager {
-  const g = globalThis as any;
-  if (!g[GLOBAL_KEY]) {
-    g[GLOBAL_KEY] = { active: new Map() };
+  const g = globalThis as unknown as Record<string, ProcessManager | undefined>;
+  let pm = g[GLOBAL_KEY];
+  if (!pm) {
+    pm = { active: new Map() };
+    g[GLOBAL_KEY] = pm;
   }
-  return g[GLOBAL_KEY];
+  return pm;
 }
 
 export function isRunning(conversationId: string): boolean {
@@ -81,17 +83,19 @@ export async function spawn(opts: {
     cwd,
     opts.sessionId,
     opts.isNewSession,
-    opts.thinking
+    opts.thinking,
   );
 
   // Create stateful parser
-  const parser = provider.createParser
-    ? provider.createParser()
-    : null;
+  const parser = provider.createParser ? provider.createParser() : null;
 
   let capturedSessionId = opts.sessionId;
 
-  console.log(`[captain] Spawning ${cmd.binary} with args:`, cmd.args.slice(0, 5), `cwd: ${cmd.cwd}`);
+  console.log(
+    `[captain] Spawning ${cmd.binary} with args:`,
+    cmd.args.slice(0, 5),
+    `cwd: ${cmd.cwd}`,
+  );
 
   const done = (async () => {
     try {
@@ -125,27 +129,28 @@ export async function spawn(opts: {
                 event_type: e.event_type,
                 content: e.content ?? null,
                 tool_name: e.tool_name ?? null,
-              }))
+              })),
             );
           }
         },
       });
-      console.log(`[captain] CLI exited with code ${cliResult.code}, stderr: ${cliResult.stderr?.slice(0, 200)}`);
+      console.log(
+        `[captain] CLI exited with code ${cliResult.code}, stderr: ${cliResult.stderr?.slice(0, 200)}`,
+      );
     } catch (err) {
       console.error(`[captain] Spawn error:`, err);
       // Process spawn error — write as error event
       addCaptainOutput(opts.conversationId, opts.messageId, [
         {
           event_type: "error",
-          content:
-            err instanceof Error ? err.message : "CLI process failed to start",
+          content: err instanceof Error ? err.message : "CLI process failed to start",
           tool_name: null,
         },
       ]);
     } finally {
       // Assemble final assistant message from text_delta events
       const allOutput = listCaptainOutput(opts.conversationId, 0).filter(
-        (e) => e.message_id === opts.messageId
+        (e) => e.message_id === opts.messageId,
       );
       const fullText = allOutput
         .filter((e) => e.event_type === "text_delta")

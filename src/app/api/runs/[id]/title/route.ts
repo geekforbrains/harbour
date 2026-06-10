@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, setRunTitle } from "@/lib/db/queries";
-import { normalizeTitle, MAX_TITLE_LENGTH } from "@/lib/run-title";
+import { MAX_TITLE_LENGTH, normalizeTitle } from "@/lib/run-title";
 
 export const PUT = withAgentOrUser(
   async (req, auth, { params }) => {
@@ -28,7 +28,7 @@ export const PUT = withAgentOrUser(
     if (!title) {
       return NextResponse.json(
         { error: `title must be a non-empty string (max ${MAX_TITLE_LENGTH} chars)` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -37,5 +37,5 @@ export const PUT = withAgentOrUser(
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );

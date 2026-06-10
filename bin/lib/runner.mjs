@@ -1,15 +1,20 @@
-import { loadRunnerConfigs, loadWorkflowRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
-import { getProvider, ensureWorkingDir, runCliTool, resolveRunConfig } from "./providers.mjs";
-import { spawn } from "child_process";
-import { mkdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  loadRunnerConfigs,
+  loadSessions,
+  loadWorkflowRunnerConfigs,
+  saveSessions,
+} from "./config.mjs";
+import { ensureWorkingDir, getProvider, resolveRunConfig, runCliTool } from "./providers.mjs";
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
     method,
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
   };
@@ -241,7 +246,9 @@ function buildPrompt(payload, apiKey, isResume) {
       if (a.content) out.push(`[${a.author_type}] ${a.content}`);
       const linked = attsByActivity.get(a.id);
       if (linked?.length) {
-        out.push(`[${a.author_type}] attached ${linked.length} ${linked.length === 1 ? "attachment" : "attachments"}:`);
+        out.push(
+          `[${a.author_type}] attached ${linked.length} ${linked.length === 1 ? "attachment" : "attachments"}:`,
+        );
         out.push(renderAttachmentList(linked, "  "));
       }
       out.push("");
@@ -251,9 +258,11 @@ function buildPrompt(payload, apiKey, isResume) {
 
   if (isResume) {
     const activity = payload.run.activity || [];
-    const lastAgentIdx = activity.findLastIndex(a => a.author_type === "agent");
+    const lastAgentIdx = activity.findLastIndex((a) => a.author_type === "agent");
     const newEntries = lastAgentIdx >= 0 ? activity.slice(lastAgentIdx + 1) : activity;
-    const humanEntries = newEntries.filter(a => a.author_type === "user" || a.author_type === "system");
+    const humanEntries = newEntries.filter(
+      (a) => a.author_type === "user" || a.author_type === "system",
+    );
 
     let resumePrompt = `The human has responded to your previous work. Here is their message:\n\n${renderActivityBlock(humanEntries)}\n\n`;
 
@@ -294,7 +303,8 @@ function buildPrompt(payload, apiKey, isResume) {
       const columns = Array.isArray(info) ? null : info?.columns;
       prompt += `### ${name}\n`;
       if (id) prompt += `database id: ${id}\n`;
-      if (columns?.length) prompt += `columns: ${columns.map(c => `${c.name} (${c.type})`).join(", ")}\n`;
+      if (columns?.length)
+        prompt += `columns: ${columns.map((c) => `${c.name} (${c.type})`).join(", ")}\n`;
       prompt += `\n`;
       if (rows.length > 0) {
         prompt += `\`\`\`json\n${JSON.stringify(rows.slice(0, 20), null, 2)}\n\`\`\`\n\n`;
@@ -362,8 +372,12 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     // the pipes shortly after the workflow process itself exits.
     const POST_EXIT_GRACE_MS = 2000;
 
-    child.stdout.on("data", (data) => { stdout += data.toString(); });
-    child.stderr.on("data", (data) => { stderr += data.toString(); });
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
     child.on("error", (err) => {
       if (postExitTimer) clearTimeout(postExitTimer);
       if (sigkillTimer) clearTimeout(sigkillTimer);
@@ -372,8 +386,12 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     child.on("exit", () => {
       postExitTimer = setTimeout(() => {
         if (closeFired) return;
-        try { child.stdout?.destroy(); } catch {}
-        try { child.stderr?.destroy(); } catch {}
+        try {
+          child.stdout?.destroy();
+        } catch {}
+        try {
+          child.stderr?.destroy();
+        } catch {}
       }, POST_EXIT_GRACE_MS);
     });
     child.on("close", (code) => {
@@ -389,8 +407,14 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     // the run stuck `running` with the dashboard Kill button frozen.
     if (signal) {
       const terminate = () => {
-        try { child.kill("SIGTERM"); } catch {}
-        sigkillTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, killGraceMs);
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+        sigkillTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }, killGraceMs);
       };
       if (signal.aborted) terminate();
       else signal.addEventListener("abort", terminate, { once: true });
@@ -403,7 +427,9 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
     try {
       child.stdin.write(payloadJson);
       child.stdin.end();
-    } catch { /* pipe already closed */ }
+    } catch {
+      /* pipe already closed */
+    }
   });
 }
 
@@ -428,7 +454,18 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
  * @param {number} [args.killPollIntervalMs]
  * @param {Record<string,string>} [args.extraEnv]
  */
-async function runGateCommand({ command, payloadJson, url, apiKey, runId, agentName, label, timeoutMs = 30_000, killPollIntervalMs = KILL_POLL_INTERVAL_MS, extraEnv }) {
+async function runGateCommand({
+  command,
+  payloadJson,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  label,
+  timeoutMs = 30_000,
+  killPollIntervalMs = KILL_POLL_INTERVAL_MS,
+  extraEnv,
+}) {
   const dir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
   mkdirSync(dir, { recursive: true });
 
@@ -443,7 +480,9 @@ async function runGateCommand({ command, payloadJson, url, apiKey, runId, agentN
         killController.abort();
         console.log(`  [${agentName}] Kill requested during ${label.toLowerCase()} — stopping`);
       }
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
   }, killPollIntervalMs);
 
   try {
@@ -519,10 +558,10 @@ const POSTRUN_INFORMATIONAL_OUTCOMES = Object.freeze(["done", "failed", "killed"
  * @returns {boolean}
  */
 export function shouldRunPostrun({ command, outcome, gates, agentRan }) {
-  if (!command) return false;        // null/absent/empty → no-op, zero tax
-  if (!agentRan) return false;       // pure prerun-skip etc. → never fires
-  if (gates) return outcome === "done";                       // enforcing: done only
-  return POSTRUN_INFORMATIONAL_OUTCOMES.includes(outcome);    // informational: any terminal
+  if (!command) return false; // null/absent/empty → no-op, zero tax
+  if (!agentRan) return false; // pure prerun-skip etc. → never fires
+  if (gates) return outcome === "done"; // enforcing: done only
+  return POSTRUN_INFORMATIONAL_OUTCOMES.includes(outcome); // informational: any terminal
 }
 
 /**
@@ -538,7 +577,7 @@ export function shouldRunPostrun({ command, outcome, gates, agentRan }) {
  * @returns {{ status: string|null }} status to set, or null to leave unchanged
  */
 export function postrunStatusOverride({ gates, code, outcome }) {
-  if (!gates) return { status: null };                 // informational: never changes status
+  if (!gates) return { status: null }; // informational: never changes status
   if (outcome === "done" && code !== 0) return { status: "failed" };
   return { status: null };
 }
@@ -552,11 +591,11 @@ export function postrunStatusOverride({ gates, code, outcome }) {
  * only postrun cleanup was still executing. So we NEVER issue a status PUT here —
  * we honor the existing terminal outcome. Pure, mirrors postrunStatusOverride.
  *
- * @param {object} args
- * @param {string} args.outcome - the run's already-finalized terminal status
+ * @param {object} _args
+ * @param {string} _args.outcome - the run's already-finalized terminal status
  * @returns {{ status: string|null }} status to set, or null to leave unchanged
  */
-export function postrunKillStatus(/* { outcome } */) {
+export function postrunKillStatus(_args) {
   return { status: null };
 }
 
@@ -577,7 +616,17 @@ export function postrunKillStatus(/* { outcome } */) {
  * Throws if runCliTool itself throws (spawn/exec failure) — the caller maps
  * that to a hard failure.
  */
-async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessionId, extraEnv, sessionAlreadyReported }) {
+async function runCliTurn({
+  cmd,
+  provider,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  sessionId,
+  extraEnv,
+  sessionAlreadyReported,
+}) {
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
   let flushTimer = null;
@@ -618,7 +667,9 @@ async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessio
     try {
       const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
       if (res?.kill_requested) triggerKill("poll");
-    } catch { /* best effort — server may be restarting */ }
+    } catch {
+      /* best effort — server may be restarting */
+    }
   }, KILL_POLL_INTERVAL_MS);
 
   function queueEvent(evt) {
@@ -651,8 +702,12 @@ async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessio
     // Report session ID to the server (once) so it's available on the dashboard
     if (turnSessionId && !sessionReported) {
       sessionReported = true;
-      apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: turnSessionId, cwd: cmd.cwd })
-        .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
+      apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
+        session_id: turnSessionId,
+        cwd: cmd.cwd,
+      }).catch((err) =>
+        console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
+      );
     }
 
     for (const evt of parsed.events) {
@@ -691,7 +746,9 @@ async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessio
     try {
       const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
       statusAtKill = run.status;
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
   }
 
   return { result, sessionId: finalSessionId, output, killed, statusAtKill };
@@ -725,7 +782,7 @@ async function processNextRun(runner) {
     return { outcome: "poll-error", eager: false };
   }
 
-  if (!payload || !payload.run) {
+  if (!payload?.run) {
     console.log(`  [${agentName}] Nothing to do.`);
     return { outcome: "no-work", eager: false };
   }
@@ -754,11 +811,17 @@ async function processNextRun(runner) {
   if (isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
     // Report pre-generated session ID immediately
-    apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
-      .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
+    apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
+      session_id: sessionId,
+      cwd: workingDir,
+    }).catch((err) =>
+      console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
+    );
   }
 
-  console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
+  console.log(
+    `  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`,
+  );
 
   // Execute agent prerun command (if defined). This is a cheap gate to avoid
   // spending LLM tokens when there is no work.
@@ -768,13 +831,19 @@ async function processNextRun(runner) {
       const wfResult = await runGateCommand({
         command: payload.job.prerun,
         payloadJson: JSON.stringify(payload),
-        url, apiKey, runId, agentName, label: "Prerun",
+        url,
+        apiKey,
+        runId,
+        agentName,
+        label: "Prerun",
       });
 
       if (wfResult.killed) {
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
-        } catch { /* best effort */ }
+        } catch {
+          /* best effort */
+        }
         return { outcome: "killed", eager };
       }
 
@@ -783,27 +852,42 @@ async function processNextRun(runner) {
         console.log(`  [${agentName}] Prerun exited 77 — skipping`);
         if (wfResult.stderr?.trim()) {
           try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() });
-          } catch { /* best effort */ }
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+              content: wfResult.stderr.trim(),
+            });
+          } catch {
+            /* best effort */
+          }
         }
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
-        } catch { /* best effort */ }
+        } catch {
+          /* best effort */
+        }
         return { outcome: "skipped", eager };
       }
 
       if (wfResult.code !== 0) {
         // Error — any non-zero except 77
         console.error(`  [${agentName}] Prerun exited ${wfResult.code} — failed`);
-        const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Prerun exited with code ${wfResult.code}`;
+        const errOutput =
+          wfResult.stderr?.trim() ||
+          wfResult.stdout?.trim() ||
+          `Prerun exited with code ${wfResult.code}`;
         // Two independent best-effort calls (issue #15): a failed activity POST
         // must not skip the status PUT, or the run dangles in 'running'.
         try {
-          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
-        } catch { /* best effort */ }
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+            content: errOutput,
+          });
+        } catch {
+          /* best effort */
+        }
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-        } catch { /* best effort */ }
+        } catch {
+          /* best effort */
+        }
         return { outcome: "failed", eager };
       }
 
@@ -812,11 +896,17 @@ async function processNextRun(runner) {
     } catch (err) {
       console.error(`  [${agentName}] Prerun command failed: ${err.message}`);
       try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Prerun error: ${err.message}` });
-      } catch { /* best effort */ }
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: `Prerun error: ${err.message}`,
+        });
+      } catch {
+        /* best effort */
+      }
       try {
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-      } catch { /* best effort */ }
+      } catch {
+        /* best effort */
+      }
       return { outcome: "failed", eager };
     }
   }
@@ -828,7 +918,14 @@ async function processNextRun(runner) {
   }
 
   // model/thinking were already resolved (job override > agent default) above.
-  const cmd = provider.buildCommand(prompt, agentModel, workingDir, sessionId, isNewSession, agentThinking);
+  const cmd = provider.buildCommand(
+    prompt,
+    agentModel,
+    workingDir,
+    sessionId,
+    isNewSession,
+    agentThinking,
+  );
 
   // ---- Single exit path -----------------------------------------------------
   // Every terminal return below funnels through finish(): it does the session
@@ -842,7 +939,11 @@ async function processNextRun(runner) {
   //                           except a CLI-spawn failure where the turn never ran).
   //   opts.preserveSession  — keep the saved session for resume even though the
   //                           outcome isn't `waiting` (the kill path).
-  async function finish(outcome, finalSessionId, { agentRan = true, preserveSession = false } = {}) {
+  async function finish(
+    outcome,
+    finalSessionId,
+    { agentRan = true, preserveSession = false } = {},
+  ) {
     if (finalSessionId && (outcome === "waiting" || preserveSession)) {
       sessions[runId] = { sessionId: finalSessionId, cli };
       saveSessions(sessions);
@@ -853,8 +954,14 @@ async function processNextRun(runner) {
 
     // ---- Postrun gate (#29) — runs AFTER status finalization ----------------
     const resolved = await runPostrun({
-      job: payload.job, outcome, agentRan,
-      url, apiKey, runId, agentName, env: payload.env || {},
+      job: payload.job,
+      outcome,
+      agentRan,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      env: payload.env || {},
       payloadJson: JSON.stringify(payload),
     });
 
@@ -866,8 +973,14 @@ async function processNextRun(runner) {
   let turn;
   try {
     turn = await runCliTurn({
-      cmd, provider, url, apiKey, runId, agentName,
-      sessionId, extraEnv: payload.env || {},
+      cmd,
+      provider,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      sessionId,
+      extraEnv: payload.env || {},
       sessionAlreadyReported: !!sessionId,
     });
   } catch (err) {
@@ -878,10 +991,14 @@ async function processNextRun(runner) {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Runner error: CLI tool "${cli}" failed to execute: ${err.message}`,
       });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     // The CLI never spawned — the agent turn did not execute, so postrun (which
     // hooks the agent's work) does not fire here.
     return finish("failed", turn?.sessionId || sessionId, { agentRan: false });
@@ -898,7 +1015,9 @@ async function processNextRun(runner) {
     if (killOutcome !== "killed") {
       // Race: agent finished naturally before SIGTERM landed — respect the
       // status it set so eager mode decides correctly.
-      console.log(`  [${agentName}] Kill landed too late — run already ${killOutcome}; respecting existing status`);
+      console.log(
+        `  [${agentName}] Kill landed too late — run already ${killOutcome}; respecting existing status`,
+      );
       return finish(killOutcome, workSessionId);
     }
     if (!workSessionId) {
@@ -908,7 +1027,8 @@ async function processNextRun(runner) {
     // that records the kill — otherwise the run stays 'running'.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
+        content:
+          "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
       });
     } catch (err) {
       console.error(`  [${agentName}] Failed to post kill activity: ${err.message}`);
@@ -945,13 +1065,16 @@ async function processNextRun(runner) {
     // Filter out raw streaming protocol lines from stdout — keep only readable content
     const sanitizedOutput = output
       .split("\n")
-      .filter(line => {
+      .filter((line) => {
         const trimmed = line.trim();
         if (!trimmed) return false;
         try {
           const obj = JSON.parse(trimmed);
-          if (obj.type === "stream_event" || obj.type === "assistant" || obj.type === "system") return false;
-        } catch { /* not JSON — keep it */ }
+          if (obj.type === "stream_event" || obj.type === "assistant" || obj.type === "system")
+            return false;
+        } catch {
+          /* not JSON — keep it */
+        }
         return true;
       })
       .join("\n")
@@ -965,10 +1088,14 @@ async function processNextRun(runner) {
     // Independent best-effort calls (issue #15) — see the CLI-spawn path above.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errorContent });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
 
     return finish("failed", workSessionId);
   }
@@ -976,7 +1103,9 @@ async function processNextRun(runner) {
   // ---- Post work output -----------------------------------------------------
   const truncatedOutput = output.length > 50000 ? output.slice(-50000) : output;
   try {
-    await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: truncatedOutput });
+    await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+      content: truncatedOutput,
+    });
   } catch (err) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
   }
@@ -991,17 +1120,27 @@ async function processNextRun(runner) {
   try {
     const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
     currentStatus = run.status;
-  } catch { /* best effort — fall through to finalize */ }
+  } catch {
+    /* best effort — fall through to finalize */
+  }
 
   if (!shouldRunFinalize(currentStatus)) {
     return finish(currentStatus, workSessionId);
   }
 
   const finalized = await runFinalizeLoop({
-    provider, url, apiKey, runId, agentName,
-    sessionId: workSessionId, model: agentModel, thinking: agentThinking,
-    workingDir, extraEnv: payload.env || {},
-    activityContext: truncatedOutput, api: payload.api,
+    provider,
+    url,
+    apiKey,
+    runId,
+    agentName,
+    sessionId: workSessionId,
+    model: agentModel,
+    thinking: agentThinking,
+    workingDir,
+    extraEnv: payload.env || {},
+    activityContext: truncatedOutput,
+    api: payload.api,
   });
 
   return finish(finalized.outcome, finalized.sessionId || workSessionId);
@@ -1020,7 +1159,20 @@ async function processNextRun(runner) {
  * separate finalize_model field yet). The invocation is structured so an
  * override could be slotted in trivially (swap `model` here).
  */
-async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessionId, model, thinking, workingDir, extraEnv, activityContext, api }) {
+async function runFinalizeLoop({
+  provider,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  sessionId,
+  model,
+  thinking,
+  workingDir,
+  extraEnv,
+  activityContext,
+  api,
+}) {
   // `api` is required to build the status-endpoint curl. Without it we can't
   // tell the agent how to set status — fail with the backstop note.
   if (!api) {
@@ -1032,19 +1184,28 @@ async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessio
   let turnSessionId = sessionId;
 
   for (let attempt = 1; attempt <= FINALIZE_MAX_ATTEMPTS; attempt++) {
-    console.log(`  [${agentName}] Finalize attempt ${attempt}/${FINALIZE_MAX_ATTEMPTS} (${mode}) — asking for a terminal status`);
+    console.log(
+      `  [${agentName}] Finalize attempt ${attempt}/${FINALIZE_MAX_ATTEMPTS} (${mode}) — asking for a terminal status`,
+    );
 
     const finalizePrompt = buildFinalizePrompt(api, apiKey, { mode, activityContext });
     // Resume mode reuses the session (isNewSession=false). Fresh mode runs a new
     // turn with no session id; the prompt carries the activity log as context.
-    const cmd = mode === "resume"
-      ? provider.buildCommand(finalizePrompt, model, workingDir, turnSessionId, false, thinking)
-      : provider.buildCommand(finalizePrompt, model, workingDir, null, true, thinking);
+    const cmd =
+      mode === "resume"
+        ? provider.buildCommand(finalizePrompt, model, workingDir, turnSessionId, false, thinking)
+        : provider.buildCommand(finalizePrompt, model, workingDir, null, true, thinking);
 
     try {
       const turn = await runCliTurn({
-        cmd, provider, url, apiKey, runId, agentName,
-        sessionId: turnSessionId, extraEnv,
+        cmd,
+        provider,
+        url,
+        apiKey,
+        runId,
+        agentName,
+        sessionId: turnSessionId,
+        extraEnv,
         sessionAlreadyReported: true,
       });
       if (turn.sessionId) turnSessionId = turn.sessionId;
@@ -1056,7 +1217,11 @@ async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessio
       if (turn.killed) {
         const killOutcome = resolveKillOutcome(turn.statusAtKill);
         if (killOutcome === "killed") {
-          try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
+          try {
+            await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+          } catch {
+            /* best effort */
+          }
         }
         return { outcome: killOutcome, sessionId: turnSessionId };
       }
@@ -1070,7 +1235,9 @@ async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessio
     try {
       const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
       status = run.status;
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
 
     const step = finalizeStep({ status, attempt });
     if (step.done) {
@@ -1106,9 +1273,26 @@ async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessio
  * @param {object} args.job        - the run's job (reads .postrun / .postrun_gates)
  * @param {string} args.outcome    - the finalized terminal status
  * @param {boolean} args.agentRan  - did the agent work turn execute?
+ * @param {string} args.url        - Harbour base URL
+ * @param {string} args.apiKey     - agent API key
+ * @param {string} args.runId     - the run being finalized
+ * @param {string} args.agentName  - for log prefixes
+ * @param {Record<string, string>} args.env - decrypted run env vars for the gate command
  * @param {string} args.payloadJson - run payload + activity, piped to stdin
+ * @param {number} [args.killPollIntervalMs] - kill-poll cadence override (tests)
  */
-export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, agentName, env, payloadJson, killPollIntervalMs }) {
+export async function runPostrun({
+  job,
+  outcome,
+  agentRan,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  env,
+  payloadJson,
+  killPollIntervalMs,
+}) {
   const command = job?.postrun;
   const gates = !!job?.postrun_gates;
 
@@ -1120,7 +1304,15 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
   let wfResult;
   try {
     wfResult = await runGateCommand({
-      command, payloadJson, url, apiKey, runId, agentName, label: "Postrun", extraEnv: env, killPollIntervalMs,
+      command,
+      payloadJson,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      label: "Postrun",
+      extraEnv: env,
+      killPollIntervalMs,
     });
   } catch (err) {
     console.error(`  [${agentName}] Postrun command failed: ${err.message}`);
@@ -1128,11 +1320,19 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
     // unverifiable result as a failure (same as a nonzero exit). Informational
     // mode swallows it (never changes status).
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Postrun error: ${err.message}` });
-    } catch { /* best effort */ }
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun error: ${err.message}`,
+      });
+    } catch {
+      /* best effort */
+    }
     const { status } = postrunStatusOverride({ gates, code: 1, outcome });
     if (status) {
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status }); } catch { /* best effort */ }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
+      } catch {
+        /* best effort */
+      }
       return status;
     }
     return outcome;
@@ -1150,11 +1350,19 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Kill requested during postrun, but the run had already finished (${outcome}) — postrun cleanup was stopped; the run's status is unchanged.`,
       });
-    } catch { /* best effort */ }
-    if (status) {
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status }); } catch { /* best effort */ }
+    } catch {
+      /* best effort */
     }
-    console.log(`  [${agentName}] Postrun kill landed after completion — keeping status ${outcome}`);
+    if (status) {
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
+      } catch {
+        /* best effort */
+      }
+    }
+    console.log(
+      `  [${agentName}] Postrun kill landed after completion — keeping status ${outcome}`,
+    );
     return status || outcome;
   }
 
@@ -1165,13 +1373,22 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
   if (override) {
     // Enforcing gate failed verification: surface the stderr as the reason and
     // override done -> failed (the edge updateRunStatus reserves for the gate).
-    const reason = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Postrun gate exited with code ${wfResult.code}`;
+    const reason =
+      wfResult.stderr?.trim() ||
+      wfResult.stdout?.trim() ||
+      `Postrun gate exited with code ${wfResult.code}`;
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Postrun gate failed (exit ${wfResult.code}):\n${reason}` });
-    } catch { /* best effort */ }
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun gate failed (exit ${wfResult.code}):\n${reason}`,
+      });
+    } catch {
+      /* best effort */
+    }
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: override });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     console.log(`  [${agentName}] Postrun gate override: ${outcome} -> ${override}`);
     return override;
   }
@@ -1179,23 +1396,33 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
   // No override (informational mode, or enforcing gate passed): just log output.
   if (gateOutput) {
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Postrun output:\n${gateOutput}` });
-    } catch { /* best effort */ }
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun output:\n${gateOutput}`,
+      });
+    } catch {
+      /* best effort */
+    }
   }
   return outcome;
 }
 
 /** Backstop: force `failed` with a system note when finalize is exhausted. */
 async function failFinalize({ url, apiKey, runId, agentName }) {
-  console.warn(`  [${agentName}] Finalize exhausted — forcing failed (agent never set a valid status)`);
+  console.warn(
+    `  [${agentName}] Finalize exhausted — forcing failed (agent never set a valid status)`,
+  );
   try {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
       content: "Run marked as failed: agent did not set a final status after the finalize turn.",
     });
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
   try {
     await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 /**
@@ -1210,7 +1437,9 @@ async function runSingleAgent(runner) {
     if (!shouldContinueEagerLoop(outcome, eager)) return;
     console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
   }
-  console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+  console.warn(
+    `  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`,
+  );
 }
 
 /**
@@ -1243,7 +1472,7 @@ export async function processNextWorkflow(runner, opts = {}) {
     return { outcome: "poll-error" };
   }
 
-  if (!payload || !payload.run) {
+  if (!payload?.run) {
     console.log(`  [${name}] No workflow work.`);
     return { outcome: "no-work" };
   }
@@ -1256,7 +1485,9 @@ export async function processNextWorkflow(runner, opts = {}) {
     console.error(`  [${name}] No workflow command — failing`);
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     return { outcome: "failed" };
   }
 
@@ -1275,9 +1506,11 @@ export async function processNextWorkflow(runner, opts = {}) {
       if (res?.kill_requested) {
         killed = true;
         killController.abort();
-      console.log(`  [${name}] Kill requested — stopping`);
+        console.log(`  [${name}] Kill requested — stopping`);
       }
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
   }, killPollIntervalMs);
 
   // Run-scoped env handed to the script. HARBOUR_* let a script post live
@@ -1308,48 +1541,83 @@ export async function processNextWorkflow(runner, opts = {}) {
     const outcome = workflowOutcome({ killed, code: wfResult.code });
 
     if (outcome === "killed") {
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+      } catch {
+        /* best effort */
+      }
       return { outcome: "killed" };
     }
 
     if (outcome === "skipped") {
       console.log(`  [${name}] Workflow exited 77 — skipping`);
       if (wfResult.stderr?.trim()) {
-        try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
+        try {
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+            content: wfResult.stderr.trim(),
+          });
+        } catch {
+          /* best effort */
+        }
       }
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" }); } catch { /* best effort */ }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+      } catch {
+        /* best effort */
+      }
       return { outcome: "skipped" };
     }
 
     if (outcome === "failed") {
       console.error(`  [${name}] Workflow exited ${wfResult.code} — failed`);
-      const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
+      const errOutput =
+        wfResult.stderr?.trim() ||
+        wfResult.stdout?.trim() ||
+        `Workflow exited with code ${wfResult.code}`;
       try {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
-      } catch { /* best effort */ }
+      } catch {
+        /* best effort */
+      }
       try {
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-      } catch { /* best effort */ }
+      } catch {
+        /* best effort */
+      }
       return { outcome: "failed" };
     }
 
     // Exit 0 — success
     const output = wfResult.stdout?.trim();
     if (output) {
-      try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output }); } catch { /* best effort */ }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
+      } catch {
+        /* best effort */
+      }
     }
-    try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" }); } catch { /* best effort */ }
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
+    } catch {
+      /* best effort */
+    }
     console.log(`  [${name}] Workflow run ${runId} completed.`);
     return { outcome: "done" };
   } catch (err) {
     clearInterval(killPoll);
     console.error(`  [${name}] Workflow command failed: ${err.message}`);
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
-    } catch { /* best effort */ }
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Workflow error: ${err.message}`,
+      });
+    } catch {
+      /* best effort */
+    }
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     return { outcome: "failed" };
   }
 }
@@ -1360,7 +1628,9 @@ async function runSingleWorkflowRunner(runner) {
     if (outcome !== "done" && outcome !== "skipped") return;
     console.log(`  [${runner.name}] Continuing to next workflow (iter ${i + 1})...`);
   }
-  console.warn(`  [${runner.name}] Hit workflow iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+  console.warn(
+    `  [${runner.name}] Hit workflow iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`,
+  );
 }
 
 export async function runAgents() {
@@ -1385,7 +1655,9 @@ export async function runAgents() {
 export async function runWorkflows() {
   const runners = loadWorkflowRunnerConfigs();
   if (runners.length === 0) {
-    console.log("No harbour workflow runners configured. Create and connect one from the dashboard.");
+    console.log(
+      "No harbour workflow runners configured. Create and connect one from the dashboard.",
+    );
     return;
   }
 

@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createUser,
   authenticateUser,
-  hashPassword,
-  verifyPassword,
-  createSetPasswordToken,
-  getSetPasswordToken,
   consumeSetPasswordToken,
+  createSetPasswordToken,
+  createUser,
+  getSetPasswordToken,
+  hashPassword,
   pruneSetPasswordTokens,
+  verifyPassword,
 } from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -133,7 +133,7 @@ describe("set_password_tokens", () => {
     // Force the token's expiry into the past.
     getDb()
       .prepare(
-        `UPDATE set_password_tokens SET expires_at = ? WHERE token_hash = (SELECT token_hash FROM set_password_tokens LIMIT 1)`
+        `UPDATE set_password_tokens SET expires_at = ? WHERE token_hash = (SELECT token_hash FROM set_password_tokens LIMIT 1)`,
       )
       .run(Math.floor(Date.now() / 1000) - 10);
 
@@ -153,9 +153,9 @@ describe("set_password_tokens", () => {
     const row = getDb()
       .prepare(`SELECT consumed_at FROM set_password_tokens WHERE id = ?`)
       .get(id) as { consumed_at: number | null };
-    const user = getDb()
-      .prepare(`SELECT password_hash FROM users WHERE id = ?`)
-      .get(userId) as { password_hash: string | null };
+    const user = getDb().prepare(`SELECT password_hash FROM users WHERE id = ?`).get(userId) as {
+      password_hash: string | null;
+    };
 
     // Both sides of the transaction are present (or neither would be).
     expect(row.consumed_at).not.toBeNull();

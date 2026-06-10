@@ -1,39 +1,41 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getDatabaseById, updateRow, deleteRow } from "@/lib/db/queries";
+import { deleteRow, getDatabaseById, updateRow } from "@/lib/db/queries";
 
 const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
 
 export const PUT = withAgentOrUser(
-  async (req, auth, { params }) => {
+  async (req, _auth, { params }) => {
     const { id, rowId } = await params;
     const db = getDatabaseById(id);
     if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
     const body = await req.json();
     try {
-      const row = updateRow(id, parseInt(rowId), body);
+      const row = updateRow(id, parseInt(rowId, 10), body);
       return NextResponse.json(row);
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: dbOrg }
+  { role: "editor", orgFromParams: dbOrg },
 );
 
 export const DELETE = withAgentOrUser(
-  async (req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id, rowId } = await params;
     const db = getDatabaseById(id);
     if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
     try {
-      deleteRow(id, parseInt(rowId));
+      deleteRow(id, parseInt(rowId, 10));
       return NextResponse.json({ ok: true });
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: dbOrg }
+  { role: "editor", orgFromParams: dbOrg },
 );

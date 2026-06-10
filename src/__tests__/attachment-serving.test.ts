@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { isInlineSafe, contentDisposition } from "@/lib/upload";
+import { describe, expect, it } from "vitest";
+import { contentDisposition, isInlineSafe } from "@/lib/upload";
 
 // The attachment MIME type is client-declared at upload time and therefore
 // attacker-controlled. Anything served inline runs in the dashboard origin, so
@@ -91,11 +91,13 @@ describe("contentDisposition", () => {
     const evil = "x.txt\r\nSet-Cookie: pwned=1\r\n\r\n<script>";
     const header = contentDisposition("attachment", evil);
     // CR/LF gone means the smuggled header text is inert value content
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: test intentionally asserts control characters are stripped from the header
     expect(header).not.toMatch(/[\r\n\x00-\x1f\x7f]/);
   });
 
   it("strips control characters embedded mid-filename", () => {
     const header = contentDisposition("inline", "a\x00b\x1fc\x7fd.png");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: test intentionally asserts control characters are stripped from the header
     expect(header).not.toMatch(/[\x00-\x1f\x7f]/);
     expect(header).toContain(`filename="abcd.png"`);
   });

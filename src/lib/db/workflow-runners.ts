@@ -1,9 +1,9 @@
-import { getDb } from "./schema";
+import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
-import crypto from "crypto";
+import { getDb } from "./schema";
 
 function generateWorkflowRunnerKey(): string {
-  return "hwf_" + crypto.randomBytes(32).toString("hex");
+  return `hwf_${crypto.randomBytes(32).toString("hex")}`;
 }
 
 function hashApiKey(key: string): string {
@@ -11,7 +11,7 @@ function hashApiKey(key: string): string {
 }
 
 function normalizeLabels(labels?: string[]): string {
-  const clean = [...new Set((labels || []).map(l => l.trim()).filter(Boolean))];
+  const clean = [...new Set((labels || []).map((l) => l.trim()).filter(Boolean))];
   return JSON.stringify(clean);
 }
 
@@ -33,11 +33,13 @@ export function createWorkflowRunner(orgId: string, name: string, opts?: { label
 export function authenticateWorkflowRunner(apiKey: string) {
   const db = getDb();
   const hash = hashApiKey(apiKey);
-  const runner = db.prepare(`
+  const runner = db
+    .prepare(`
     SELECT id, org_id, name, labels, enabled, last_polled_at, created_at, updated_at
     FROM workflow_runners
     WHERE api_key_hash = ? AND enabled = 1
-  `).get(hash) as any;
+  `)
+    .get(hash) as any;
   if (!runner) return null;
   try {
     runner.labels = JSON.parse(runner.labels || "[]");
@@ -49,21 +51,26 @@ export function authenticateWorkflowRunner(apiKey: string) {
 
 export function touchWorkflowRunner(id: string) {
   const db = getDb();
-  db.prepare(`UPDATE workflow_runners SET last_polled_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(id);
+  db.prepare(
+    `UPDATE workflow_runners SET last_polled_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+  ).run(id);
 }
 
 export function listWorkflowRunners(orgId: string) {
   const db = getDb();
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT id, org_id, name, labels, enabled, last_polled_at, created_at, updated_at
     FROM workflow_runners
     WHERE org_id = ?
     ORDER BY name
-  `).all(orgId).map((r: any) => {
-    try {
-      return { ...r, labels: JSON.parse(r.labels || "[]") };
-    } catch {
-      return { ...r, labels: [] };
-    }
-  });
+  `)
+    .all(orgId)
+    .map((r: any) => {
+      try {
+        return { ...r, labels: JSON.parse(r.labels || "[]") };
+      } catch {
+        return { ...r, labels: [] };
+      }
+    });
 }

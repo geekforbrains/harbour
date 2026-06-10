@@ -7,6 +7,7 @@ Harbour is a control plane for AI agents doing ongoing work.
 One fact, one home — facts about how Harbour works live in [docs/](docs/README.md),
 not here. Don't restate them in this file; route by task and read the doc first:
 
+- **Any development work** → [docs/reference/development-standards.md](docs/reference/development-standards.md) — **required reading before writing or testing any code**: validation commands, Biome rules, component/API/DB conventions, testing layout
 - **Deciding if a change fits** → [docs/prd.md](docs/prd.md) (north star) and [docs/README.md](docs/README.md) (map of every doc)
 - **Changing code** → [docs/reference/architecture.md](docs/reference/architecture.md) first — auth model and route wrappers, polling ladder, run lifecycle, runner internals, and a ranked list of key source files
 - **Touching API routes** → [docs/reference/api.md](docs/reference/api.md) — route map, the auth wrapper each route uses, `?orgId=`/`?projectId=` scoping rules
@@ -33,9 +34,11 @@ npm run dev -- -p 3010
 ## Development workflow
 
 ```bash
-# 1. Make changes, then validate
-npm run lint                    # ESLint (pre-existing `any` warnings are expected)
+# 1. Make changes, then validate (full ladder in docs/reference/development-standards.md)
+npm run typecheck               # tsc --noEmit
+npm run lint                    # Biome (lint + format + import order; lint:fix to auto-fix)
 npm run test                    # Vitest unit tests
+npm run test:e2e                # Playwright smoke suite (when UI/routes changed)
 npm run build                   # Next.js production build
 
 # 2. Rebuild and restart production (REQUIRED after every change — the

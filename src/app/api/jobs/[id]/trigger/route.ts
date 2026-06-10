@@ -31,5 +31,5 @@ export const POST = withAgentOrUser(
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("job", p.id),
-  }
+  },
 );

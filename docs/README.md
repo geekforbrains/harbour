@@ -36,6 +36,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 
 ## Reference — change the code
 
+- [Development standards](reference/development-standards.md) — tooling, conventions, and testing rules; required reading before writing code
 - [Architecture](reference/architecture.md) — what the codebase actually looks like
 - [Database schema](reference/database-schema.md) — every table, its columns, and the FK graph
 - [API](reference/api.md) — the route map; pointer to the live wire contracts

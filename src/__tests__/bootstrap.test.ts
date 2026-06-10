@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import Database from "better-sqlite3";
-import { execFileSync } from "child_process";
-import fs from "fs";
-import os from "os";
-import path from "path";
-import {
-  instanceAdminExists,
-  insertInstanceAdmin,
-  hashPassword as cliHash,
-} from "../../bin/lib/bootstrap.mjs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { verifyPassword as serverVerify } from "@/lib/db/users";
+import {
+  hashPassword as cliHash,
+  insertInstanceAdmin,
+  instanceAdminExists,
+} from "../../bin/lib/bootstrap.mjs";
 
 const CLI = path.resolve(__dirname, "../../bin/harbour.mjs");
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -35,7 +35,11 @@ describe("CLI bootstrap helpers", () => {
   it("instanceAdminExists flips once an admin is inserted", () => {
     const db = memDb();
     expect(instanceAdminExists(db)).toBe(false);
-    insertInstanceAdmin(db, { email: "a@example.com", displayName: "A", password: "supersecret123" });
+    insertInstanceAdmin(db, {
+      email: "a@example.com",
+      displayName: "A",
+      password: "supersecret123",
+    });
     expect(instanceAdminExists(db)).toBe(true);
   });
 

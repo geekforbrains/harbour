@@ -1,10 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { Readable } from "stream";
-import { pipeline } from "stream/promises";
+import fs from "node:fs";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import Busboy from "busboy";
+import type { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
-import { NextRequest } from "next/server";
 import { ensureDir, maxUploadBytes, runUploadsDir, uploadsDir } from "./paths";
 
 /**
@@ -13,13 +13,19 @@ import { ensureDir, maxUploadBytes, runUploadsDir, uploadsDir } from "./paths";
  */
 export function sanitizeFilename(input: string): string {
   const base = path.basename(input || "file");
-  const ext = path.extname(base).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 16);
-  const stem = base.slice(0, base.length - path.extname(base).length)
+  const ext = path
+    .extname(base)
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^[_.]+|[_.]+$/g, "")
-    .slice(0, 80) || "file";
+    .replace(/[^a-z0-9.]/g, "")
+    .slice(0, 16);
+  const stem =
+    base
+      .slice(0, base.length - path.extname(base).length)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^[_.]+|[_.]+$/g, "")
+      .slice(0, 80) || "file";
   return stem + ext;
 }
 
@@ -59,21 +65,22 @@ export function isInlineSafe(mime: string | null | undefined): boolean {
  * from the fallback and percent-encoding covers everything else.
  */
 export function contentDisposition(kind: "inline" | "attachment", filename: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally strips control characters from filenames to prevent header injection
   const name = (filename || "file").replace(/[\x00-\x1f\x7f]/g, "");
-  const fallback = name
-    .replace(/[^\x20-\x7e]/g, "_")
-    .replace(/["\\]/g, "") || "file";
+  const fallback = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "") || "file";
   // encodeURIComponent leaves !'()*~ bare; ' ( ) * are not RFC 5987 attr-chars
-  const encoded = (encodeURIComponent(name) || "file")
-    .replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+  const encoded = (encodeURIComponent(name) || "file").replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
   return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export type StagedUpload = {
-  filename: string;      // original filename (sanitized)
+  filename: string; // original filename (sanitized)
   mimeType: string;
   sizeBytes: number;
-  storagePath: string;   // relative to uploadsDir()
+  storagePath: string; // relative to uploadsDir()
 };
 
 /**
@@ -110,7 +117,9 @@ export async function receiveMultipartUploads(
   let firstError: Error | null = null;
 
   // Web ReadableStream → Node Readable for busboy
-  const nodeStream = Readable.fromWeb(req.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
+  const nodeStream = Readable.fromWeb(
+    req.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+  );
 
   const bb = Busboy({
     headers: { "content-type": contentType },
@@ -128,28 +137,33 @@ export async function receiveMultipartUploads(
       let size = 0;
       let exceeded = false;
 
-      fileStream.on("data", chunk => { size += chunk.length; });
+      fileStream.on("data", (chunk) => {
+        size += chunk.length;
+      });
 
       fileStream.on("limit", () => {
         exceeded = true;
-        if (!firstError) firstError = new UploadError(
-          `File exceeds max upload size of ${Math.round(limit / 1024 / 1024)} MB`,
-          413,
-        );
+        if (!firstError)
+          firstError = new UploadError(
+            `File exceeds max upload size of ${Math.round(limit / 1024 / 1024)} MB`,
+            413,
+          );
       });
 
       filePromises.push(
-        pipeline(fileStream, ws).then(() => {
-          if (exceeded) return;
-          staged.push({
-            filename: origName,
-            mimeType: info.mimeType || "application/octet-stream",
-            sizeBytes: size,
-            storagePath: path.relative(uploadsDir(), path.join(destDir, storageName)),
-          });
-        }).catch(err => {
-          if (!firstError) firstError = err as Error;
-        }),
+        pipeline(fileStream, ws)
+          .then(() => {
+            if (exceeded) return;
+            staged.push({
+              filename: origName,
+              mimeType: info.mimeType || "application/octet-stream",
+              sizeBytes: size,
+              storagePath: path.relative(uploadsDir(), path.join(destDir, storageName)),
+            });
+          })
+          .catch((err) => {
+            if (!firstError) firstError = err as Error;
+          }),
       );
     });
 
@@ -157,7 +171,7 @@ export async function receiveMultipartUploads(
       if (typeof val === "string") fields[name] = val;
     });
 
-    bb.on("error", err => {
+    bb.on("error", (err) => {
       if (!firstError) firstError = err as Error;
       reject(firstError);
     });
@@ -187,7 +201,11 @@ export async function receiveMultipartUploads(
     await cleanupTempFiles(tempPaths);
     // Also clean any already-renamed finals
     for (const s of staged) {
-      try { fs.unlinkSync(path.join(uploadsDir(), s.storagePath)); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(path.join(uploadsDir(), s.storagePath));
+      } catch {
+        /* ignore */
+      }
     }
     throw err;
   }
@@ -197,7 +215,11 @@ export async function receiveMultipartUploads(
 
 async function cleanupTempFiles(paths: string[]) {
   for (const p of paths) {
-    try { fs.unlinkSync(p); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(p);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

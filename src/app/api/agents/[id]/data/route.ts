@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getAgentById, createDatabase, getDatabaseByName, insertRows, linkDatabaseToJob } from "@/lib/db/queries";
+import {
+  createDatabase,
+  getAgentById,
+  getDatabaseByName,
+  insertRows,
+  linkDatabaseToJob,
+} from "@/lib/db/queries";
 
 // POST: Agent creates a database and optionally links it to a job + inserts initial rows.
 // Convenience endpoint for agents — combines create + link + seed in one call.
@@ -26,7 +32,10 @@ export const POST = withAgentOrUser(
       const created = !db;
       if (!db) {
         if (!body.columns?.length) {
-          return NextResponse.json({ error: "columns are required when creating a new database" }, { status: 400 });
+          return NextResponse.json(
+            { error: "columns are required when creating a new database" },
+            { status: 400 },
+          );
         }
         db = createDatabase(auth.orgId, agent.project_id, body.name, body.columns);
       }
@@ -44,12 +53,13 @@ export const POST = withAgentOrUser(
       }
 
       return NextResponse.json(db, { status: created ? 201 : 200 });
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
   {
     role: "editor",
     orgFromParams: (p) => orgIdForResource("agent", p.id),
-  }
+  },
 );

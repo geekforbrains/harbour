@@ -14,5 +14,5 @@ export const GET = withResourceAuth("agent", "id", { role: "viewer" })(
     const includeSkipped = sp.get("includeSkipped") === "1";
 
     return NextResponse.json(listRunsByAgent(id, limit, { includeSkipped, offset }));
-  }
+  },
 );

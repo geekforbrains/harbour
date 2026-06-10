@@ -1,31 +1,70 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Ban,
+  Bot,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  Cog,
+  Copy,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Loader2,
+  MoreVertical,
+  Play,
+  RotateCcw,
+  Send,
+  Terminal,
+  Trash2,
+  User,
+} from "lucide-react";
 import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRun, useRunMutations } from "@/lib/hooks/use-runs";
-import { apiFetch, ApiError } from "@/lib/api/client";
-import { Button } from "@/components/ui/button";
-import { SectionHeader } from "@/components/app/section-header";
-import { EmptyState } from "@/components/app/empty-state";
-import { Textarea } from "@/components/ui/textarea";
-import { BackLink } from "@/components/app/back-link";
-import { PageLoading } from "@/components/app/page-header";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image as ImageIcon, Trash2, MoreVertical, Copy, Check } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { timeAgo } from "@/lib/time";
-import { StatusBadge } from "@/components/app/run-status";
-import { resolveAgentColor } from "@/lib/agent-color";
-import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
+import {
+  AttachmentComposer,
+  type AttachmentComposerHandle,
+} from "@/components/app/attachment-composer";
 import { AttachmentList } from "@/components/app/attachment-display";
+import { BackLink } from "@/components/app/back-link";
+import { EmptyState } from "@/components/app/empty-state";
+import { PageLoading } from "@/components/app/page-header";
+import { StatusBadge } from "@/components/app/run-status";
+import { SectionHeader } from "@/components/app/section-header";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
+import { resolveAgentColor } from "@/lib/agent-color";
+import { ApiError, apiFetch } from "@/lib/api/client";
 import type { SerializedAttachment } from "@/lib/attachments-serialize";
+import { useRun, useRunMutations } from "@/lib/hooks/use-runs";
+import { timeAgo } from "@/lib/time";
 import { detectEmbedProvider } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
 
-const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".wmv", ".flv", ".ogv"]);
+const VIDEO_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".webm",
+  ".m4v",
+  ".wmv",
+  ".flv",
+  ".ogv",
+]);
 function isVideoAttachment(a: SerializedAttachment): boolean {
   if (a.kind !== "file") return false;
   if (a.mime_type?.startsWith("video/")) return true;
@@ -35,16 +74,31 @@ function isVideoAttachment(a: SerializedAttachment): boolean {
 }
 
 type Activity = {
-  id: string; run_id: string; author_type: string; author_id: string | null;
-  author_name: string; content: string; created_at: number;
+  id: string;
+  run_id: string;
+  author_type: string;
+  author_id: string | null;
+  author_name: string;
+  content: string;
+  created_at: number;
 };
 
 type Run = {
-  id: string; job_id: string; agent_id: string | null; status: string;
+  id: string;
+  job_id: string;
+  agent_id: string | null;
+  status: string;
   title: string | null;
-  job_name: string; job_kind: string; agent_name: string | null; agent_color: string | null; agent_cli: string | null;
-  session_id: string | null; session_cwd: string | null;
-  created_at: number; updated_at: number; completed_at: number | null;
+  job_name: string;
+  job_kind: string;
+  agent_name: string | null;
+  agent_color: string | null;
+  agent_cli: string | null;
+  session_id: string | null;
+  session_cwd: string | null;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
   kill_requested_at: number | null;
   activity: Activity[];
   attachments: SerializedAttachment[];
@@ -61,14 +115,26 @@ type OutputEvent = {
 
 function AuthorIcon({ type }: { type: string }) {
   switch (type) {
-    case "agent": return <Bot className="h-4 w-4" />;
-    case "user": return <User className="h-4 w-4" />;
-    case "workflow": return <Terminal className="h-4 w-4" />;
-    default: return <Cog className="h-4 w-4" />;
+    case "agent":
+      return <Bot className="h-4 w-4" />;
+    case "user":
+      return <User className="h-4 w-4" />;
+    case "workflow":
+      return <Terminal className="h-4 w-4" />;
+    default:
+      return <Cog className="h-4 w-4" />;
   }
 }
 
-function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: string; resumeCommand?: React.ReactNode }) {
+function LiveOutput({
+  runId,
+  status,
+  resumeCommand,
+}: {
+  runId: string;
+  status: string;
+  resumeCommand?: React.ReactNode;
+}) {
   const [events, setEvents] = useState<OutputEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -87,12 +153,16 @@ function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: s
           setEvents(data);
           lastIdRef.current = data[data.length - 1].id;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // If run is active, connect SSE for new events
       if (!isActive || cancelled) return;
 
-      const evtSource = new EventSource(`/api/runs/${runId}/output/stream?after=${lastIdRef.current}`);
+      const evtSource = new EventSource(
+        `/api/runs/${runId}/output/stream?after=${lastIdRef.current}`,
+      );
       if (!cancelled) setConnected(true);
 
       evtSource.addEventListener("output", (e) => {
@@ -101,7 +171,7 @@ function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: s
         // Deduplicate by ID
         if (evt.id <= lastIdRef.current) return;
         lastIdRef.current = evt.id;
-        setEvents(prev => [...prev, evt]);
+        setEvents((prev) => [...prev, evt]);
       });
 
       evtSource.addEventListener("done", () => {
@@ -131,6 +201,7 @@ function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: s
   }, [runId, isActive]);
 
   // Auto-scroll to bottom
+  // biome-ignore lint/correctness/useExhaustiveDependencies: events is an intentional trigger — re-scroll whenever new output events arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -166,9 +237,7 @@ function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: s
         {events.length === 0 ? (
           <span className="text-zinc-500">Waiting for output...</span>
         ) : (
-          events.map((evt) => (
-            <OutputLine key={evt.id} event={evt} />
-          ))
+          events.map((evt) => <OutputLine key={evt.id} event={evt} />)
         )}
         {connected && (
           <span className="inline-block w-2 h-3.5 bg-emerald-500/70 animate-pulse ml-0.5" />
@@ -189,33 +258,31 @@ function OutputLine({ event }: { event: OutputEvent }) {
         <div className="text-amber-400/80 mt-1.5 mb-0.5">
           <span className="text-amber-500">{">"}</span>{" "}
           {event.tool_name && <span className="font-semibold">{event.tool_name}</span>}
-          {event.content && <span className="text-zinc-400 ml-1 whitespace-pre-wrap break-all">{event.content.length > 300 ? event.content.slice(0, 300) + "..." : event.content}</span>}
+          {event.content && (
+            <span className="text-zinc-400 ml-1 whitespace-pre-wrap break-all">
+              {event.content.length > 300 ? `${event.content.slice(0, 300)}...` : event.content}
+            </span>
+          )}
         </div>
       );
     case "tool_end":
       return (
         <div className="text-zinc-500 mb-1.5 pl-3 border-l border-zinc-800 whitespace-pre-wrap max-h-40 overflow-y-auto">
-          {event.content ? (event.content.length > 500 ? event.content.slice(0, 500) + "..." : event.content) : "(done)"}
+          {event.content
+            ? event.content.length > 500
+              ? `${event.content.slice(0, 500)}...`
+              : event.content
+            : "(done)"}
         </div>
       );
     case "info":
-      return (
-        <div className="text-blue-400/70 mb-1">
-          {event.content}
-        </div>
-      );
+      return <div className="text-blue-400/70 mb-1">{event.content}</div>;
     case "result":
       return (
-        <div className="text-zinc-500 mt-2 pt-1.5 border-t border-zinc-800">
-          {event.content}
-        </div>
+        <div className="text-zinc-500 mt-2 pt-1.5 border-t border-zinc-800">{event.content}</div>
       );
     case "error":
-      return (
-        <div className="text-red-400 mt-1">
-          {event.content}
-        </div>
-      );
+      return <div className="text-red-400 mt-1">{event.content}</div>;
     default:
       return <span className="text-zinc-400 whitespace-pre-wrap">{event.content}</span>;
   }
@@ -224,15 +291,30 @@ function OutputLine({ event }: { event: OutputEvent }) {
 function getResumeCommand(cli: string, sessionId: string, cwd?: string | null): string {
   let resume: string;
   switch (cli) {
-    case "claude": resume = `claude --resume ${sessionId}`; break;
-    case "codex": resume = `codex exec resume ${sessionId}`; break;
-    case "gemini": resume = `gemini --resume ${sessionId}`; break;
-    default: resume = `${cli} --resume ${sessionId}`;
+    case "claude":
+      resume = `claude --resume ${sessionId}`;
+      break;
+    case "codex":
+      resume = `codex exec resume ${sessionId}`;
+      break;
+    case "gemini":
+      resume = `gemini --resume ${sessionId}`;
+      break;
+    default:
+      resume = `${cli} --resume ${sessionId}`;
   }
   return cwd ? `cd ${cwd} && ${resume}` : resume;
 }
 
-function ResumeCommand({ cli, sessionId, cwd }: { cli: string; sessionId: string; cwd?: string | null }) {
+function ResumeCommand({
+  cli,
+  sessionId,
+  cwd,
+}: {
+  cli: string;
+  sessionId: string;
+  cwd?: string | null;
+}) {
   const [copied, setCopied] = useState(false);
   const command = getResumeCommand(cli, sessionId, cwd);
 
@@ -247,11 +329,16 @@ function ResumeCommand({ cli, sessionId, cwd }: { cli: string; sessionId: string
       <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
       <code className="flex-1 truncate text-muted-foreground select-all">{command}</code>
       <button
+        type="button"
         onClick={handleCopy}
         className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
         title="Copy to clipboard"
       >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? (
+          <Check className="h-3.5 w-3.5 text-emerald-500" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
       </button>
     </div>
   );
@@ -276,7 +363,13 @@ type Screenshot = {
   url: string;
 };
 
-function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment: SerializedAttachment }) {
+function VideoProcessingInfo({
+  runId,
+  attachment,
+}: {
+  runId: string;
+  attachment: SerializedAttachment;
+}) {
   const [triggering, setTriggering] = useState(false);
   const [screenshotsOpen, setScreenshotsOpen] = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -286,7 +379,9 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
     queryKey: ["processing", attachment.id],
     queryFn: async () => {
       try {
-        return await apiFetch<ProcessingRecord>(`/api/runs/${runId}/attachments/${attachment.id}/processing`);
+        return await apiFetch<ProcessingRecord>(
+          `/api/runs/${runId}/attachments/${attachment.id}/processing`,
+        );
       } catch {
         return null;
       }
@@ -298,11 +393,17 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
     },
   });
 
-  const { data: screenshotsData } = useQuery<{ screenshots: Screenshot[]; total: number; pages: number }>({
+  const { data: screenshotsData } = useQuery<{
+    screenshots: Screenshot[];
+    total: number;
+    pages: number;
+  }>({
     queryKey: ["screenshots", attachment.id],
     queryFn: async () => {
       try {
-        return await apiFetch<{ screenshots: Screenshot[]; total: number; pages: number }>(`/api/runs/${runId}/attachments/${attachment.id}/screenshots?limit=20`);
+        return await apiFetch<{ screenshots: Screenshot[]; total: number; pages: number }>(
+          `/api/runs/${runId}/attachments/${attachment.id}/screenshots?limit=20`,
+        );
       } catch {
         return { screenshots: [], total: 0, pages: 0 };
       }
@@ -325,8 +426,12 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   async function handleProcess() {
     setTriggering(true);
     try {
-      await apiFetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`, { method: "POST" });
-    } catch { /* ignore */ }
+      await apiFetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`, {
+        method: "POST",
+      });
+    } catch {
+      /* ignore */
+    }
     queryClient.invalidateQueries({ queryKey: ["processing", attachment.id] });
     setTriggering(false);
   }
@@ -356,7 +461,9 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   if (processing.status === "failed") {
     return (
       <div className="mt-1 space-y-1">
-        <p className="text-xs text-red-600 dark:text-red-400">Processing failed{processing.error ? `: ${processing.error}` : ""}</p>
+        <p className="text-xs text-red-600 dark:text-red-400">
+          Processing failed{processing.error ? `: ${processing.error}` : ""}
+        </p>
         <Button variant="outline" size="sm" onClick={handleProcess} disabled={triggering}>
           <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
           {triggering ? "Queuing..." : "Retry"}
@@ -370,18 +477,23 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
       {processing.screenshot_count > 0 && (
         <div>
           <button
-            onClick={() => setScreenshotsOpen(v => !v)}
+            type="button"
+            onClick={() => setScreenshotsOpen((v) => !v)}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            {screenshotsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {screenshotsOpen ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
             <ImageIcon className="h-3 w-3" />
             {processing.screenshot_count} screenshot{processing.screenshot_count !== 1 ? "s" : ""}
           </button>
           {screenshotsOpen && screenshotsData && (
             <div className="flex gap-1.5 mt-1.5 overflow-x-auto pb-1">
-              {screenshotsData.screenshots.map(s => (
+              {screenshotsData.screenshots.map((s) => (
                 <a key={s.index} href={s.url} target="_blank" rel="noreferrer" className="shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {/* biome-ignore lint/performance/noImgElement: dynamic video-screenshot URLs served by our API; next/image optimization adds no value here */}
                   <img
                     src={s.url}
                     alt={`Screenshot at ${s.timestamp}s`}
@@ -401,15 +513,22 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
       {processing.transcript_path && (
         <div>
           <button
-            onClick={() => setTranscriptOpen(v => !v)}
+            type="button"
+            onClick={() => setTranscriptOpen((v) => !v)}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            {transcriptOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {transcriptOpen ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
             <FileText className="h-3 w-3" />
             Transcript
           </button>
           {transcriptOpen && transcript !== undefined && (
-            <pre className="mt-1.5 text-xs bg-muted rounded-md border p-3 max-h-64 overflow-y-auto whitespace-pre-wrap">{transcript || "No transcript content."}</pre>
+            <pre className="mt-1.5 text-xs bg-muted rounded-md border p-3 max-h-64 overflow-y-auto whitespace-pre-wrap">
+              {transcript || "No transcript content."}
+            </pre>
           )}
         </div>
       )}
@@ -451,7 +570,9 @@ export default function RunDetailPage() {
     try {
       await mutations.addActivity.mutateAsync({ content: trimmed, attachment_ids: attachmentIds });
       setMessage("");
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setSending(false);
   }
 
@@ -487,14 +608,17 @@ export default function RunDetailPage() {
     setRetrying(true);
     try {
       await mutations.retry.mutateAsync();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setRetrying(false);
   }
 
   async function handleKill() {
-    const message = run?.job_kind === "workflow"
-      ? "Kill this run? The workflow command will be stopped — retry to run it again."
-      : "Kill this run? The CLI session will be saved so you can resume it with a comment.";
+    const message =
+      run?.job_kind === "workflow"
+        ? "Kill this run? The workflow command will be stopped — retry to run it again."
+        : "Kill this run? The CLI session will be saved so you can resume it with a comment.";
     if (!confirm(message)) return;
     setKilling(true);
     try {
@@ -511,7 +635,9 @@ export default function RunDetailPage() {
   async function handleChangeStatus(newStatus: string) {
     try {
       await mutations.setStatus.mutateAsync(newStatus);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async function handleDelete() {
@@ -519,11 +645,14 @@ export default function RunDetailPage() {
     try {
       await mutations.remove.mutateAsync();
       router.push("/");
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   if (loading) return <PageLoading />;
-  if (!run) return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
+  if (!run)
+    return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
 
   // Kill button should only be clickable once per run — derive the visible
   // "killing" state from the server flag so it survives page refreshes too.
@@ -541,12 +670,17 @@ export default function RunDetailPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight truncate">{run.title || run.job_name}</h1>
+            <h1 className="text-xl font-semibold tracking-tight truncate">
+              {run.title || run.job_name}
+            </h1>
             <span className="hidden sm:inline-flex">
               <StatusBadge status={run.status} />
             </span>
           </div>
-          <Link href={`/jobs/${run.job_id}`} className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate">
+          <Link
+            href={`/jobs/${run.job_id}`}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate"
+          >
             {run.job_name}
           </Link>
         </div>
@@ -574,7 +708,9 @@ export default function RunDetailPage() {
             )}
             {run.job_id && (
               <Link href={`/jobs/${run.job_id}`}>
-                <Button variant="outline" size="sm">View Job</Button>
+                <Button variant="outline" size="sm">
+                  View Job
+                </Button>
               </Link>
             )}
             {manageableStatuses.includes(run.status) && (
@@ -583,13 +719,18 @@ export default function RunDetailPage() {
                   <MoreVertical className="h-3.5 w-3.5" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {manageableStatuses.filter(s => s !== run.status).map(s => (
-                    <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
-                      Mark as {s}
-                    </DropdownMenuItem>
-                  ))}
+                  {manageableStatuses
+                    .filter((s) => s !== run.status)
+                    .map((s) => (
+                      <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
+                        Mark as {s}
+                      </DropdownMenuItem>
+                    ))}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleDelete} className="text-red-600 dark:text-red-400">
+                  <DropdownMenuItem
+                    onClick={handleDelete}
+                    className="text-red-600 dark:text-red-400"
+                  >
                     <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                     Delete run
                   </DropdownMenuItem>
@@ -608,7 +749,12 @@ export default function RunDetailPage() {
                 className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
                 style={{ backgroundColor: resolveAgentColor(run.agent_color, run.agent_name) }}
               />
-              <Link href={`/agents/${run.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{run.agent_name}</Link>
+              <Link
+                href={`/agents/${run.agent_id}`}
+                className="text-muted-foreground hover:text-foreground transition-colors truncate"
+              >
+                {run.agent_name}
+              </Link>
             </>
           ) : (
             <>
@@ -623,7 +769,9 @@ export default function RunDetailPage() {
         </div>
         <div className="flex items-center gap-2 text-sm">
           <CheckCheck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{run.completed_at ? timeAgo(run.completed_at) : "\u2014"}</span>
+          <span className="text-muted-foreground truncate">
+            {run.completed_at ? timeAgo(run.completed_at) : "\u2014"}
+          </span>
         </div>
       </div>
 
@@ -635,24 +783,36 @@ export default function RunDetailPage() {
           {run.activity.length === 0 ? (
             <EmptyState>{isWorkflow ? "No output yet." : "No activity yet."}</EmptyState>
           ) : (
-            run.activity.map(entry => {
-              const entryAttachments = (run.attachments ?? []).filter(a => a.activity_id === entry.id);
+            run.activity.map((entry) => {
+              const entryAttachments = (run.attachments ?? []).filter(
+                (a) => a.activity_id === entry.id,
+              );
               return (
-                <div key={entry.id} className={`flex gap-3 ${entry.author_type === "system" ? "opacity-60" : ""}`}>
+                <div
+                  key={entry.id}
+                  className={`flex gap-3 ${entry.author_type === "system" ? "opacity-60" : ""}`}
+                >
                   <div
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 bg-muted text-muted-foreground"
-                    style={entry.author_type === "agent"
-                      ? { backgroundColor: `${resolveAgentColor(run.agent_color, run.agent_name)}1f`, color: resolveAgentColor(run.agent_color, run.agent_name) }
-                      : entry.author_type === "user"
-                      ? { backgroundColor: "var(--foreground)", color: "var(--background)" }
-                      : undefined}
+                    style={
+                      entry.author_type === "agent"
+                        ? {
+                            backgroundColor: `${resolveAgentColor(run.agent_color, run.agent_name)}1f`,
+                            color: resolveAgentColor(run.agent_color, run.agent_name),
+                          }
+                        : entry.author_type === "user"
+                          ? { backgroundColor: "var(--foreground)", color: "var(--background)" }
+                          : undefined
+                    }
                   >
                     <AuthorIcon type={entry.author_type} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{entry.author_name}</span>
-                      <span className="text-xs text-muted-foreground">{timeAgo(entry.created_at)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {timeAgo(entry.created_at)}
+                      </span>
                     </div>
                     {entry.content && (
                       <div className="prose prose-sm dark:prose-invert max-w-none mt-0.5 text-sm">
@@ -660,9 +820,11 @@ export default function RunDetailPage() {
                       </div>
                     )}
                     <AttachmentList items={entryAttachments} />
-                    {entryAttachments.filter(a => isVideoAttachment(a)).map(a => (
-                      <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
-                    ))}
+                    {entryAttachments
+                      .filter((a) => isVideoAttachment(a))
+                      .map((a) => (
+                        <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
+                      ))}
                   </div>
                 </div>
               );
@@ -673,15 +835,17 @@ export default function RunDetailPage() {
 
       {/* Agent-uploaded attachments (no activity_id) */}
       {(() => {
-        const orphaned = (run.attachments ?? []).filter(a => a.activity_id === null);
+        const orphaned = (run.attachments ?? []).filter((a) => a.activity_id === null);
         if (!orphaned.length) return null;
         return (
           <div className="space-y-1">
             <SectionHeader>Attachments</SectionHeader>
             <AttachmentList items={orphaned} />
-            {orphaned.filter(a => isVideoAttachment(a)).map(a => (
-              <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
-            ))}
+            {orphaned
+              .filter((a) => isVideoAttachment(a))
+              .map((a) => (
+                <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
+              ))}
           </div>
         );
       })()}
@@ -689,50 +853,58 @@ export default function RunDetailPage() {
       {/* Reply Form (waiting, pending, done, failed — but not running).
           Workflow runs have no message thread — their activity log is runner
           output only, so there is nothing to reply to. */}
-      {!isWorkflow && (run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
-        <form
-          onSubmit={handleSend}
-          className={cn(
-            "space-y-2 rounded-lg border border-transparent transition-colors",
-            dragging && "border-primary/60 bg-primary/5",
-          )}
-          onDragOver={e => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={e => {
-            // Only clear when leaving the form entirely, not crossing child nodes
-            if (e.currentTarget === e.target) setDragging(false);
-          }}
-          onDrop={handleDrop}
-        >
-          <Textarea
-            value={message}
-            onChange={e => setMessage(e.target.value)}
-            onPaste={handlePaste}
-            placeholder="Type a response — or drop / paste files & embed URLs..."
-            rows={3}
-            onKeyDown={e => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                handleSend(e);
-              }
+      {!isWorkflow &&
+        run.status !== "running" &&
+        run.status !== "scheduled" &&
+        run.status !== "skipped" && (
+          <form
+            onSubmit={handleSend}
+            className={cn(
+              "space-y-2 rounded-lg border border-transparent transition-colors",
+              dragging && "border-primary/60 bg-primary/5",
+            )}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
             }}
-          />
-          <AttachmentComposer ref={composerRef} runId={id} />
-          <div className="flex justify-end">
-            <Button type="submit" size="sm" disabled={sending}>
-              <Send className="h-3.5 w-3.5 mr-1.5" /> Send
-            </Button>
-          </div>
-        </form>
-      )}
+            onDragLeave={(e) => {
+              // Only clear when leaving the form entirely, not crossing child nodes
+              if (e.currentTarget === e.target) setDragging(false);
+            }}
+            onDrop={handleDrop}
+          >
+            <Textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onPaste={handlePaste}
+              placeholder="Type a response — or drop / paste files & embed URLs..."
+              rows={3}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  handleSend(e);
+                }
+              }}
+            />
+            <AttachmentComposer ref={composerRef} runId={id} />
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" disabled={sending}>
+                <Send className="h-3.5 w-3.5 mr-1.5" /> Send
+              </Button>
+            </div>
+          </form>
+        )}
 
       {/* Live Output (agent runs only — workflows have no agent). */}
       {run.agent_id && (
         <LiveOutput
           runId={run.id}
           status={run.status}
-          resumeCommand={run.session_id && run.agent_cli ? (
-            <ResumeCommand cli={run.agent_cli} sessionId={run.session_id} cwd={run.session_cwd} />
-          ) : undefined}
+          resumeCommand={
+            run.session_id && run.agent_cli ? (
+              <ResumeCommand cli={run.agent_cli} sessionId={run.session_id} cwd={run.session_cwd} />
+            ) : undefined
+          }
         />
       )}
     </div>

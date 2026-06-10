@@ -1,9 +1,9 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { publicBaseUrl } from "@/lib/request-url";
 
@@ -20,7 +20,7 @@ export const GET = withAgentOrUser(
     }
 
     const processing = getProcessingByAttachment(aid);
-    if (!processing || !processing.screenshots_dir) {
+    if (!processing?.screenshots_dir) {
       return NextResponse.json({ error: "No screenshots available" }, { status: 404 });
     }
 
@@ -29,7 +29,10 @@ export const GET = withAgentOrUser(
       return NextResponse.json({ error: "Screenshots directory missing" }, { status: 404 });
     }
 
-    const files = fs.readdirSync(dir).filter(f => f.endsWith(".jpg")).sort();
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".jpg"))
+      .sort();
     const total = files.length;
 
     const page = Math.max(1, parseInt(req.nextUrl.searchParams.get("page") || "1", 10) || 1);
@@ -41,7 +44,7 @@ export const GET = withAgentOrUser(
     const base = publicBaseUrl(req);
     const interval = processing.screenshot_interval || 5;
 
-    const screenshots = slice.map((file, i) => {
+    const screenshots = slice.map((_file, i) => {
       const globalIndex = start + i;
       return {
         index: globalIndex,
@@ -52,5 +55,5 @@ export const GET = withAgentOrUser(
 
     return NextResponse.json({ screenshots, total, page, pages, limit });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) }
+  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
 );

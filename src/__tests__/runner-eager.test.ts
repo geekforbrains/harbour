@@ -1,9 +1,17 @@
-import { describe, it, expect } from "vitest";
-import { shouldContinueEagerLoop, EAGER_MAX_ITERATIONS } from "../../bin/lib/runner.mjs";
+import { describe, expect, it } from "vitest";
+import { EAGER_MAX_ITERATIONS, shouldContinueEagerLoop } from "../../bin/lib/runner.mjs";
 
 describe("shouldContinueEagerLoop", () => {
   it("never loops when eager is off", () => {
-    for (const outcome of ["done", "waiting", "skipped", "failed", "killed", "no-work", "poll-error"]) {
+    for (const outcome of [
+      "done",
+      "waiting",
+      "skipped",
+      "failed",
+      "killed",
+      "no-work",
+      "poll-error",
+    ]) {
       expect(shouldContinueEagerLoop(outcome, false)).toBe(false);
     }
   });

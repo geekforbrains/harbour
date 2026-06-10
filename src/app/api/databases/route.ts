@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { withOrgAuth, withAgentOrUser } from "@/lib/auth";
+import { withAgentOrUser, withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
-import { listDatabases, createDatabase, getDatabaseByName } from "@/lib/db/queries";
+import { createDatabase, getDatabaseByName, listDatabases } from "@/lib/db/queries";
 
 export const GET = withOrgAuth(
   async (req, auth) => {
     const projectId = req.nextUrl.searchParams.get("projectId") || null;
     return NextResponse.json(listDatabases(auth.orgId, projectId));
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );
 
 // Created by dashboard users and by agents (per the agent API guide).
@@ -16,7 +16,8 @@ export const POST = withAgentOrUser(
   async (req, auth) => {
     const body = await req.json();
     if (!body.name) return NextResponse.json({ error: "name is required" }, { status: 400 });
-    if (!body.columns?.length) return NextResponse.json({ error: "at least one column is required" }, { status: 400 });
+    if (!body.columns?.length)
+      return NextResponse.json({ error: "at least one column is required" }, { status: 400 });
 
     const projectId =
       body.projectId ??
@@ -35,9 +36,10 @@ export const POST = withAgentOrUser(
     try {
       const db = createDatabase(auth.orgId, projectId, body.name, body.columns);
       return NextResponse.json(db, { status: 201 });
-    } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor" }
+  { role: "editor" },
 );

@@ -19,7 +19,11 @@ export type AttachmentProcessing = {
   created_at: number;
 };
 
-export function createProcessingRecord(attachmentId: string, runId: string, screenshotInterval: number): AttachmentProcessing {
+export function createProcessingRecord(
+  attachmentId: string,
+  runId: string,
+  screenshotInterval: number,
+): AttachmentProcessing {
   const db = getDb();
   const id = uuid();
   db.prepare(`
@@ -31,17 +35,27 @@ export function createProcessingRecord(attachmentId: string, runId: string, scre
 
 export function getProcessingByAttachment(attachmentId: string): AttachmentProcessing | null {
   const db = getDb();
-  return db.prepare(`SELECT * FROM attachment_processing WHERE attachment_id = ?`).get(attachmentId) as AttachmentProcessing | undefined || null;
+  return (
+    (db.prepare(`SELECT * FROM attachment_processing WHERE attachment_id = ?`).get(attachmentId) as
+      | AttachmentProcessing
+      | undefined) || null
+  );
 }
 
 export function getProcessingById(id: string): AttachmentProcessing | null {
   const db = getDb();
-  return db.prepare(`SELECT * FROM attachment_processing WHERE id = ?`).get(id) as AttachmentProcessing | undefined || null;
+  return (
+    (db.prepare(`SELECT * FROM attachment_processing WHERE id = ?`).get(id) as
+      | AttachmentProcessing
+      | undefined) || null
+  );
 }
 
 export function listProcessingByRun(runId: string): AttachmentProcessing[] {
   const db = getDb();
-  return db.prepare(`SELECT * FROM attachment_processing WHERE run_id = ? ORDER BY created_at ASC`).all(runId) as AttachmentProcessing[];
+  return db
+    .prepare(`SELECT * FROM attachment_processing WHERE run_id = ? ORDER BY created_at ASC`)
+    .all(runId) as AttachmentProcessing[];
 }
 
 export function updateProcessingStatus(
@@ -53,7 +67,7 @@ export function updateProcessingStatus(
     screenshot_count?: number;
     duration_seconds?: number;
     error?: string;
-  }
+  },
 ): void {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);

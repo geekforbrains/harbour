@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
+import { isRunning, stop } from "@/lib/captain/process-manager";
 import { getConversation } from "@/lib/db/captain";
-import { stop, isRunning } from "@/lib/captain/process-manager";
 
 export const POST = withOrgAuth(
   async (_req, auth, { params }) => {
@@ -18,5 +18,5 @@ export const POST = withOrgAuth(
     stop(id);
     return NextResponse.json({ ok: true });
   },
-  { role: "editor" }
+  { role: "editor" },
 );

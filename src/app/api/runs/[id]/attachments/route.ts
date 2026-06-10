@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser, AuthContext } from "@/lib/auth";
+import { serializeAttachment } from "@/lib/attachments-serialize";
+import { type AuthContext, withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import {
+  createEmbedAttachment,
+  createFileAttachment,
+  detectEmbedProvider,
   getRunById,
   listAttachmentsByRun,
-  createFileAttachment,
-  createEmbedAttachment,
-  detectEmbedProvider,
-  RunAttachment,
-  Uploader,
+  type RunAttachment,
+  type Uploader,
 } from "@/lib/db/queries";
-import { receiveMultipartUploads, UploadError } from "@/lib/upload";
-import { serializeAttachment } from "@/lib/attachments-serialize";
-import { publicBaseUrl } from "@/lib/request-url";
 import { isVideoAutoProcessEnabled } from "@/lib/db/settings";
+import { publicBaseUrl } from "@/lib/request-url";
+import { receiveMultipartUploads, UploadError } from "@/lib/upload";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
@@ -22,7 +22,8 @@ const runOrg = (p: Record<string, string>) => orgIdForResource("run", p.id);
 
 function uploaderFromAuth(auth: AuthContext): Uploader {
   if (auth.type === "user") return { type: "user", id: auth.userId, name: auth.displayName };
-  if (auth.type === "workflow_runner") return { type: "agent", id: auth.runnerId, name: auth.runnerName };
+  if (auth.type === "workflow_runner")
+    return { type: "agent", id: auth.runnerId, name: auth.runnerName };
   return { type: "agent", id: auth.agentId, name: auth.agentName };
 }
 
@@ -41,9 +42,9 @@ export const GET = withAgentOrUser(
 
     const rows = listAttachmentsByRun(id);
     const base = publicBaseUrl(req);
-    return NextResponse.json(rows.map(r => serializeAttachment(r, base)));
+    return NextResponse.json(rows.map((r) => serializeAttachment(r, base)));
   },
-  { role: "viewer", allowWorkflowRunner: true, orgFromParams: runOrg }
+  { role: "viewer", allowWorkflowRunner: true, orgFromParams: runOrg },
 );
 
 export const POST = withAgentOrUser(
@@ -66,26 +67,37 @@ export const POST = withAgentOrUser(
     // Embed (URL) — JSON body
     if (contentType.toLowerCase().startsWith("application/json")) {
       let body: { url?: string; title?: string };
-      try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+      try {
+        body = await req.json();
+      } catch {
+        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+      }
       if (!body.url) return NextResponse.json({ error: "url is required" }, { status: 400 });
       if (!detectEmbedProvider(body.url)) {
         return NextResponse.json({ error: "Invalid embed URL" }, { status: 400 });
       }
-      const att = createEmbedAttachment({ runId: id, url: body.url, title: body.title ?? null, uploader });
+      const att = createEmbedAttachment({
+        runId: id,
+        url: body.url,
+        title: body.title ?? null,
+        uploader,
+      });
       return NextResponse.json(serializeAttachment(att, base), { status: 201 });
     }
 
     // File upload — multipart/form-data
     try {
       const { files } = await receiveMultipartUploads(req, id);
-      const created: RunAttachment[] = files.map(f => createFileAttachment({
-        runId: id,
-        filename: f.filename,
-        storagePath: f.storagePath,
-        mimeType: f.mimeType,
-        sizeBytes: f.sizeBytes,
-        uploader,
-      }));
+      const created: RunAttachment[] = files.map((f) =>
+        createFileAttachment({
+          runId: id,
+          filename: f.filename,
+          storagePath: f.storagePath,
+          mimeType: f.mimeType,
+          sizeBytes: f.sizeBytes,
+          uploader,
+        }),
+      );
 
       if (isVideoAutoProcessEnabled()) {
         for (const att of created) {
@@ -95,7 +107,10 @@ export const POST = withAgentOrUser(
         }
       }
 
-      return NextResponse.json(created.map(r => serializeAttachment(r, base)), { status: 201 });
+      return NextResponse.json(
+        created.map((r) => serializeAttachment(r, base)),
+        { status: 201 },
+      );
     } catch (err) {
       if (err instanceof UploadError) {
         return NextResponse.json({ error: err.message }, { status: err.status });
@@ -104,5 +119,5 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Upload failed" }, { status: 500 });
     }
   },
-  { role: "editor", allowWorkflowRunner: true, orgFromParams: runOrg }
+  { role: "editor", allowWorkflowRunner: true, orgFromParams: runOrg },
 );

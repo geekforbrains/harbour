@@ -1,5 +1,5 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
+import { getDb } from "./schema";
 
 // --- Org CRUD ---
 
@@ -9,14 +9,14 @@ export function createOrg(name: string, settings?: Record<string, unknown>) {
   db.prepare(`INSERT INTO orgs (id, name, settings) VALUES (?, ?, ?)`).run(
     id,
     name,
-    JSON.stringify(settings ?? {})
+    JSON.stringify(settings ?? {}),
   );
   return getOrgById(id);
 }
 
 export function getOrgById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM orgs WHERE id = ?`).get(id) as any || null;
+  return (db.prepare(`SELECT * FROM orgs WHERE id = ?`).get(id) as any) || null;
 }
 
 /**
@@ -32,21 +32,29 @@ export function listOrgs(opts: { includeArchived?: boolean } = {}) {
 /** Orgs a user has access to via membership (instance admins see all elsewhere). */
 export function listOrgsForUser(userId: string) {
   const db = getDb();
-  return db.prepare(
-    `SELECT o.*, m.role AS member_role
+  return db
+    .prepare(
+      `SELECT o.*, m.role AS member_role
      FROM orgs o
      JOIN memberships m ON m.org_id = o.id
      WHERE m.user_id = ? AND o.archived_at IS NULL
-     ORDER BY o.name ASC`
-  ).all(userId);
+     ORDER BY o.name ASC`,
+    )
+    .all(userId);
 }
 
 export function updateOrg(id: string, data: { name?: string; settings?: Record<string, unknown> }) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
-  if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
-  if (data.settings !== undefined) { fields.push("settings = ?"); values.push(JSON.stringify(data.settings)); }
+  if (data.name !== undefined) {
+    fields.push("name = ?");
+    values.push(data.name);
+  }
+  if (data.settings !== undefined) {
+    fields.push("settings = ?");
+    values.push(JSON.stringify(data.settings));
+  }
   if (fields.length === 0) return getOrgById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
@@ -68,7 +76,7 @@ export function getOrgSettings(id: string): Record<string, unknown> {
 export function archiveOrg(id: string) {
   const db = getDb();
   db.prepare(
-    `UPDATE orgs SET archived_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND archived_at IS NULL`
+    `UPDATE orgs SET archived_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND archived_at IS NULL`,
   ).run(id);
   return getOrgById(id);
 }
@@ -95,7 +103,7 @@ export function addMembership(userId: string, orgId: string, role: "editor" | "v
   const db = getDb();
   db.prepare(
     `INSERT INTO memberships (user_id, org_id, role) VALUES (?, ?, ?)
-     ON CONFLICT(user_id, org_id) DO UPDATE SET role = excluded.role`
+     ON CONFLICT(user_id, org_id) DO UPDATE SET role = excluded.role`,
   ).run(userId, orgId, role);
 }
 
@@ -106,10 +114,12 @@ export function removeMembership(userId: string, orgId: string) {
 
 export function listMemberships(orgId: string) {
   const db = getDb();
-  return db.prepare(
-    `SELECT m.user_id, m.role, u.email, u.display_name
+  return db
+    .prepare(
+      `SELECT m.user_id, m.role, u.email, u.display_name
      FROM memberships m JOIN users u ON m.user_id = u.id
      WHERE m.org_id = ?
-     ORDER BY u.email ASC`
-  ).all(orgId);
+     ORDER BY u.email ASC`,
+    )
+    .all(orgId);
 }

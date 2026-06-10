@@ -1,23 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useApp } from "./app-context";
-import { ThemeToggle } from "./theme-toggle";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   Activity,
-  Briefcase,
   Bot,
-  FileText,
+  Briefcase,
   Database,
+  FileText,
   KeyRound,
-  Users,
-  Settings,
-  MoreHorizontal,
   MessageSquare,
+  MoreHorizontal,
+  Settings,
+  Users,
 } from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { useApp } from "./app-context";
+import { ThemeToggle } from "./theme-toggle";
 
 export function MobileBottomNav() {
   const pathname = usePathname();
@@ -26,8 +26,19 @@ export function MobileBottomNav() {
   const router = useRouter();
 
   const tabs = [
-    { href: "/captain", label: "Captain", icon: MessageSquare, match: (p: string) => p.startsWith("/captain") },
-    { href: "/", label: "Runs", icon: Activity, badge: waitingCount, match: (p: string) => p === "/" || p.startsWith("/runs") },
+    {
+      href: "/captain",
+      label: "Captain",
+      icon: MessageSquare,
+      match: (p: string) => p.startsWith("/captain"),
+    },
+    {
+      href: "/",
+      label: "Runs",
+      icon: Activity,
+      badge: waitingCount,
+      match: (p: string) => p === "/" || p.startsWith("/runs"),
+    },
     { href: "/jobs", label: "Jobs", icon: Briefcase, match: (p: string) => p.startsWith("/jobs") },
     { href: "/agents", label: "Agents", icon: Bot, match: (p: string) => p.startsWith("/agents") },
   ];
@@ -67,6 +78,7 @@ export function MobileBottomNav() {
             );
           })}
           <button
+            type="button"
             onClick={() => setMoreOpen(true)}
             className={`flex flex-col items-center gap-0.5 px-3 py-2.5 text-[11px] font-medium transition-colors ${
               isMoreActive ? "text-primary" : "text-muted-foreground"
@@ -85,13 +97,16 @@ export function MobileBottomNav() {
               const isActive = pathname.startsWith(link.href);
               return (
                 <button
+                  type="button"
                   key={link.href}
                   onClick={() => {
                     setMoreOpen(false);
                     router.push(link.href);
                   }}
                   className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-4 text-sm font-medium transition-colors ${
-                    isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   }`}
                 >
                   <link.icon className="h-5 w-5" />
@@ -104,7 +119,9 @@ export function MobileBottomNav() {
             <span className="text-xs text-muted-foreground">Theme</span>
             <ThemeToggle />
           </div>
-          <p className="text-[11px] text-muted-foreground/50 text-center pt-2">v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
+          <p className="text-[11px] text-muted-foreground/50 text-center pt-2">
+            v{process.env.NEXT_PUBLIC_APP_VERSION}
+          </p>
         </SheetContent>
       </Sheet>
     </>

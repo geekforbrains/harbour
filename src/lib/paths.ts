@@ -1,6 +1,6 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /**
  * Centralized paths for Harbour's local state.

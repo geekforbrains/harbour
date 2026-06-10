@@ -1,22 +1,35 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Trash2, Plus, Copy, Check } from "lucide-react";
-import { useApp } from "@/components/app/app-context";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { CLI_CONFIG } from "@/lib/cli-config";
+import { useMemo, useState } from "react";
+import { useApp } from "@/components/app/app-context";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
+import { CLI_CONFIG } from "@/lib/cli-config";
 import { useUpdateOrg } from "@/lib/hooks/use-orgs";
-import { PageHeader, PageLoading } from "@/components/app/page-header";
 
 type Settings = Record<string, string>;
+
+type AdminApiKey = {
+  id: string;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+};
 
 type VideoCheck = {
   ffmpeg: boolean;
@@ -25,7 +38,13 @@ type VideoCheck = {
   gemini: { available: boolean; reason?: string };
 } | null;
 
-function VideoProcessingSettings({ settings, updateSetting }: { settings: Settings; updateSetting: (key: string, value: string) => Promise<void> }) {
+function VideoProcessingSettings({
+  settings,
+  updateSetting,
+}: {
+  settings: Settings;
+  updateSetting: (key: string, value: string) => Promise<void>;
+}) {
   const queryClient = useQueryClient();
   const autoProcess = settings.video_auto_process === "true";
   const interval = settings.video_screenshot_interval || "5";
@@ -39,11 +58,12 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
     queryFn: () => apiFetch<VideoCheck>("/api/settings/video-processing/check").catch(() => null),
   });
 
-  const maskedKey = provider === "openai"
-    ? settings.video_openai_api_key || ""
-    : provider === "gemini"
-    ? settings.video_gemini_api_key || ""
-    : "";
+  const maskedKey =
+    provider === "openai"
+      ? settings.video_openai_api_key || ""
+      : provider === "gemini"
+        ? settings.video_gemini_api_key || ""
+        : "";
 
   const displayKey = apiKeyDirty ? apiKey : maskedKey;
   const settingKey = provider === "openai" ? "video_openai_api_key" : "video_gemini_api_key";
@@ -63,19 +83,26 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
     <div className="rounded-lg border p-4 space-y-4">
       <div>
         <Label className="text-base font-medium">Video Processing</Label>
-        <p className="text-xs text-muted-foreground mt-0.5">Automatically extract screenshots and transcripts from uploaded videos.</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Automatically extract screenshots and transcripts from uploaded videos.
+        </p>
       </div>
 
       <div className="flex items-center justify-between">
         <div>
           <Label>Auto-process videos</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">When enabled, uploaded videos are processed automatically.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            When enabled, uploaded videos are processed automatically.
+          </p>
         </div>
         <button
+          type="button"
           onClick={() => updateSetting("video_auto_process", autoProcess ? "false" : "true")}
           className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${autoProcess ? "bg-primary" : "bg-muted"}`}
         >
-          <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${autoProcess ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`} />
+          <span
+            className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${autoProcess ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`}
+          />
         </button>
       </div>
 
@@ -86,7 +113,7 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
           min={1}
           className="font-mono text-sm w-32"
           value={interval}
-          onChange={e => {
+          onChange={(e) => {
             const v = parseInt(e.target.value, 10);
             if (v > 0) updateSetting("video_screenshot_interval", String(v));
           }}
@@ -97,7 +124,7 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
         <Label>Transcript provider</Label>
         <select
           value={provider}
-          onChange={e => {
+          onChange={(e) => {
             updateSetting("video_transcript_provider", e.target.value);
             setApiKey("");
             setApiKeyDirty(false);
@@ -113,22 +140,52 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
 
       {videoCheck && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          <span className={videoCheck.ffmpeg ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+          <span
+            className={
+              videoCheck.ffmpeg
+                ? "text-green-600 dark:text-green-400"
+                : "text-red-600 dark:text-red-400"
+            }
+          >
             ffmpeg: {videoCheck.ffmpeg ? "\u2713 detected" : "\u2717 not found"}
           </span>
           {provider === "whisper" && (
-            <span className={videoCheck.whisper ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+            <span
+              className={
+                videoCheck.whisper
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-red-600 dark:text-red-400"
+              }
+            >
               whisper: {videoCheck.whisper ? "\u2713 detected" : "\u2717 not found"}
             </span>
           )}
           {provider === "openai" && (
-            <span className={videoCheck.openai.available ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-              OpenAI: {videoCheck.openai.available ? "\u2713 ready" : `\u2717 ${videoCheck.openai.reason || "not available"}`}
+            <span
+              className={
+                videoCheck.openai.available
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-red-600 dark:text-red-400"
+              }
+            >
+              OpenAI:{" "}
+              {videoCheck.openai.available
+                ? "\u2713 ready"
+                : `\u2717 ${videoCheck.openai.reason || "not available"}`}
             </span>
           )}
           {provider === "gemini" && (
-            <span className={videoCheck.gemini.available ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-              Gemini: {videoCheck.gemini.available ? "\u2713 ready" : `\u2717 ${videoCheck.gemini.reason || "not available"}`}
+            <span
+              className={
+                videoCheck.gemini.available
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-red-600 dark:text-red-400"
+              }
+            >
+              Gemini:{" "}
+              {videoCheck.gemini.available
+                ? "\u2713 ready"
+                : `\u2717 ${videoCheck.gemini.reason || "not available"}`}
             </span>
           )}
         </div>
@@ -142,9 +199,14 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
             className="font-mono text-sm"
             placeholder={provider === "openai" ? "sk-..." : "AI..."}
             value={displayKey}
-            onChange={e => { setApiKey(e.target.value); setApiKeyDirty(true); }}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              setApiKeyDirty(true);
+            }}
             onBlur={saveApiKey}
-            onKeyDown={e => { if (e.key === "Enter") saveApiKey(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveApiKey();
+            }}
           />
         </div>
       )}
@@ -156,7 +218,7 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
   const { projects, activeProjectId, setActiveProjectId, activeOrgId, timezone } = useApp();
-  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null;
+  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null;
   const updateOrg = useUpdateOrg(activeOrgId);
 
   const [tzSearch, setTzSearch] = useState("");
@@ -211,9 +273,9 @@ export default function SettingsPage() {
     queryFn: () => apiFetch<string[]>("/api/settings/timezones").catch(() => []),
   });
 
-  const { data: adminKeys = [] } = useQuery<any[]>({
+  const { data: adminKeys = [] } = useQuery<AdminApiKey[]>({
     queryKey: ["admin-api-keys"],
-    queryFn: () => apiFetch<any[]>("/api/admin-api-keys").catch(() => []),
+    queryFn: () => apiFetch<AdminApiKey[]>("/api/admin-api-keys").catch(() => []),
   });
 
   const createKeyMutation = useMutation({
@@ -230,8 +292,7 @@ export default function SettingsPage() {
   });
 
   const deleteKeyMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiFetch(`/api/admin-api-keys/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => apiFetch(`/api/admin-api-keys/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
     },
@@ -240,7 +301,7 @@ export default function SettingsPage() {
   const filteredTimezones = useMemo(() => {
     if (!tzSearch) return timezones;
     const lower = tzSearch.toLowerCase();
-    return timezones.filter(tz => tz.toLowerCase().includes(lower));
+    return timezones.filter((tz) => tz.toLowerCase().includes(lower));
   }, [timezones, tzSearch]);
 
   async function updateSetting(key: string, value: string) {
@@ -279,16 +340,21 @@ export default function SettingsPage() {
               <Label>Name</Label>
               <Input
                 value={projectName}
-                onChange={e => setProjectName(e.target.value)}
+                onChange={(e) => setProjectName(e.target.value)}
                 onBlur={handleRenameProject}
-                onKeyDown={e => { if (e.key === "Enter") handleRenameProject(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleRenameProject();
+                }}
                 className="text-sm"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
               <div>
                 <p className="text-sm font-medium">Delete project</p>
-                <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, jobs, docs, and secrets are not deleted.</p>
+                <p className="text-xs text-muted-foreground">
+                  Removes the project and all links. Agents, jobs, docs, and secrets are not
+                  deleted.
+                </p>
               </div>
               <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
                 <Trash2 className="h-4 w-4 mr-1.5" /> Delete
@@ -301,23 +367,31 @@ export default function SettingsPage() {
         {activeOrgId && (
           <div className="space-y-2">
             <Label>Timezone</Label>
-            <p className="text-xs text-muted-foreground">Used for scheduling jobs and displaying times in this organization.</p>
+            <p className="text-xs text-muted-foreground">
+              Used for scheduling jobs and displaying times in this organization.
+            </p>
             <div className="relative">
               <Input
                 value={tzOpen ? tzSearch : timezone}
-                onChange={e => { setTzSearch(e.target.value); setTzOpen(true); }}
-                onFocus={() => { setTzSearch(""); setTzOpen(true); }}
+                onChange={(e) => {
+                  setTzSearch(e.target.value);
+                  setTzOpen(true);
+                }}
+                onFocus={() => {
+                  setTzSearch("");
+                  setTzOpen(true);
+                }}
                 onBlur={() => setTimeout(() => setTzOpen(false), 200)}
                 placeholder="Search timezones..."
                 className="font-mono text-sm"
               />
               {tzOpen && filteredTimezones.length > 0 && (
                 <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-md">
-                  {filteredTimezones.slice(0, 50).map(tz => (
+                  {filteredTimezones.slice(0, 50).map((tz) => (
                     <button
                       key={tz}
                       type="button"
-                      onMouseDown={e => e.preventDefault()}
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         updateTimezone(tz);
                         setTzOpen(false);
@@ -337,13 +411,15 @@ export default function SettingsPage() {
         {/* Recent Runs Limit */}
         <div className="space-y-2">
           <Label>Recent Runs Shown</Label>
-          <p className="text-xs text-muted-foreground">Number of completed runs to display on the main Runs page.</p>
+          <p className="text-xs text-muted-foreground">
+            Number of completed runs to display on the main Runs page.
+          </p>
           <Input
             type="number"
             min={1}
             className="font-mono text-sm w-32"
             value={settings?.recent_runs_limit || "10"}
-            onChange={e => {
+            onChange={(e) => {
               const v = parseInt(e.target.value, 10);
               if (v > 0) updateSetting("recent_runs_limit", String(v));
             }}
@@ -354,17 +430,21 @@ export default function SettingsPage() {
         <div className="rounded-lg border p-4 space-y-4">
           <div>
             <Label className="text-base font-medium">Captain</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">Chat with a CLI tool directly from the dashboard.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Chat with a CLI tool directly from the dashboard.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>CLI Tool</Label>
             <select
               value={settings?.captain_cli || "claude"}
-              onChange={e => updateSetting("captain_cli", e.target.value)}
+              onChange={(e) => updateSetting("captain_cli", e.target.value)}
               className={SELECT_CLASS}
             >
-              {Object.keys(CLI_CONFIG).map(cli => (
-                <option key={cli} value={cli}>{cli.charAt(0).toUpperCase() + cli.slice(1)}</option>
+              {Object.keys(CLI_CONFIG).map((cli) => (
+                <option key={cli} value={cli}>
+                  {cli.charAt(0).toUpperCase() + cli.slice(1)}
+                </option>
               ))}
             </select>
           </div>
@@ -372,29 +452,31 @@ export default function SettingsPage() {
             cli={settings?.captain_cli || "claude"}
             model={settings?.captain_model || ""}
             thinking={settings?.captain_thinking || ""}
-            onModelChange={v => updateSetting("captain_model", v)}
-            onThinkingChange={v => updateSetting("captain_thinking", v)}
+            onModelChange={(v) => updateSetting("captain_model", v)}
+            onThinkingChange={(v) => updateSetting("captain_thinking", v)}
             defaultModelLabel="Default"
             defaultThinkingLabel="Default"
           />
           <div className="space-y-2">
             <Label>Working Directory</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">Where the CLI tool runs. Point this at a project repo for file access.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Where the CLI tool runs. Point this at a project repo for file access.
+            </p>
             <Input
               placeholder="~/.harbour/captain"
               className="font-mono text-sm"
               value={settings?.captain_cwd || ""}
-              onChange={e => {
+              onChange={(e) => {
                 const v = e.target.value;
                 if (!v.trim()) {
                   updateSetting("captain_cwd", "");
                 }
               }}
-              onBlur={e => {
+              onBlur={(e) => {
                 const v = e.target.value.trim();
                 updateSetting("captain_cwd", v);
               }}
-              onKeyDown={e => {
+              onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   updateSetting("captain_cwd", (e.target as HTMLInputElement).value.trim());
                 }
@@ -416,16 +498,30 @@ export default function SettingsPage() {
           </div>
           {adminKeys.length > 0 && (
             <div className="space-y-2">
-              {adminKeys.map((key: any) => (
-                <div key={key.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+              {adminKeys.map((key) => (
+                <div
+                  key={key.id}
+                  className="flex items-center justify-between rounded-md border px-3 py-2"
+                >
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{key.name}</p>
                     <p className="text-xs text-muted-foreground">
                       Created {new Date(key.created_at * 1000).toLocaleDateString()}
-                      {key.last_used_at && <> &middot; Last used {new Date(key.last_used_at * 1000).toLocaleDateString()}</>}
+                      {key.last_used_at && (
+                        <>
+                          {" "}
+                          &middot; Last used{" "}
+                          {new Date(key.last_used_at * 1000).toLocaleDateString()}
+                        </>
+                      )}
                     </p>
                   </div>
-                  <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => deleteKeyMutation.mutate(key.id)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0 h-8 w-8"
+                    onClick={() => deleteKeyMutation.mutate(key.id)}
+                  >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
@@ -439,25 +535,43 @@ export default function SettingsPage() {
       </div>
 
       {/* Create admin key dialog */}
-      <Dialog open={showNewKey} onOpenChange={(open) => { setShowNewKey(open); if (!open) setNewKeyName(""); }}>
+      <Dialog
+        open={showNewKey}
+        onOpenChange={(open) => {
+          setShowNewKey(open);
+          if (!open) setNewKeyName("");
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New Admin API Key</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Give this key a name to identify which agent or integration uses it.</p>
+            <p className="text-sm text-muted-foreground">
+              Give this key a name to identify which agent or integration uses it.
+            </p>
             <Input
               placeholder="e.g. Claude Code assistant"
               value={newKeyName}
-              onChange={e => setNewKeyName(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && newKeyName.trim()) { createKeyMutation.mutate(newKeyName.trim()); setShowNewKey(false); } }}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newKeyName.trim()) {
+                  createKeyMutation.mutate(newKeyName.trim());
+                  setShowNewKey(false);
+                }
+              }}
             />
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowNewKey(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setShowNewKey(false)}>
+              Cancel
+            </Button>
             <Button
               disabled={!newKeyName.trim() || createKeyMutation.isPending}
-              onClick={() => { createKeyMutation.mutate(newKeyName.trim()); setShowNewKey(false); }}
+              onClick={() => {
+                createKeyMutation.mutate(newKeyName.trim());
+                setShowNewKey(false);
+              }}
             >
               Create
             </Button>
@@ -466,13 +580,24 @@ export default function SettingsPage() {
       </Dialog>
 
       {/* Show created key dialog */}
-      <Dialog open={!!createdKey} onOpenChange={(open) => { if (!open) { setCreatedKey(null); setCopied(false); } }}>
+      <Dialog
+        open={!!createdKey}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreatedKey(null);
+            setCopied(false);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Admin API Key Created</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Copy this invite and paste it into your management agent. The key won&apos;t be shown again.</p>
+            <p className="text-sm text-muted-foreground">
+              Copy this invite and paste it into your management agent. The key won&apos;t be shown
+              again.
+            </p>
             <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all select-all max-h-64 overflow-y-auto">
               {`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${typeof window !== "undefined" ? window.location.origin : ""}\n\nTo get started, fetch the admin guide:\n  GET ${typeof window !== "undefined" ? window.location.origin : ""}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, databases, env vars, projects, and settings.`}
             </div>
@@ -481,11 +606,21 @@ export default function SettingsPage() {
               className="w-full"
               onClick={() => {
                 const base = typeof window !== "undefined" ? window.location.origin : "";
-                navigator.clipboard.writeText(`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${base}\n\nTo get started, fetch the admin guide:\n  GET ${base}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, databases, env vars, projects, and settings.`);
+                navigator.clipboard.writeText(
+                  `You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${base}\n\nTo get started, fetch the admin guide:\n  GET ${base}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, databases, env vars, projects, and settings.`,
+                );
                 setCopied(true);
               }}
             >
-              {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Invite</>}
+              {copied ? (
+                <>
+                  <Check className="h-4 w-4 mr-1.5" /> Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4 mr-1.5" /> Copy Invite
+                </>
+              )}
             </Button>
           </div>
         </DialogContent>
@@ -497,10 +632,13 @@ export default function SettingsPage() {
             <DialogTitle>Delete {activeProject?.name}?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove the project and all its links. Your agents, jobs, docs, and secrets will not be deleted.
+            This will remove the project and all its links. Your agents, jobs, docs, and secrets
+            will not be deleted.
           </p>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
             <Button variant="destructive" onClick={handleDeleteProject} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete Project"}
             </Button>

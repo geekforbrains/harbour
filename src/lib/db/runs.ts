@@ -1,11 +1,11 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
-import { getDecryptedEnvVarsForJob } from "./env-vars";
-import { getComposedDocsForJob } from "./docs";
-import { getComposedDatabasesForJob, getDatabaseById } from "./database";
-import { advanceJobSchedule } from "./jobs";
-import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 import { defaultRunTitle } from "../run-title";
+import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
+import { getComposedDatabasesForJob, getDatabaseById } from "./database";
+import { getComposedDocsForJob } from "./docs";
+import { getDecryptedEnvVarsForJob } from "./env-vars";
+import { advanceJobSchedule } from "./jobs";
+import { getDb } from "./schema";
 
 // Creates a brand-new run already 'running'. There is no prior status to
 // transition from, so this INSERT is a deliberate bypass of the
@@ -28,14 +28,16 @@ export function createRun(jobId: string, agentId: string | null) {
 
 export function getRunById(id: string) {
   const db = getDb();
-  const run = db.prepare(`
+  const run = db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.id = ?
-  `).get(id) as any;
+  `)
+    .get(id) as any;
   return run || null;
 }
 
@@ -84,7 +86,10 @@ const LEGAL_RUN_TRANSITIONS: Record<string, readonly string[]> = {
  * precise message without re-parsing.
  */
 export class IllegalRunStatusTransition extends Error {
-  constructor(public readonly from: string, public readonly to: string) {
+  constructor(
+    public readonly from: string,
+    public readonly to: string,
+  ) {
     super(`Illegal run status transition: ${from} → ${to}`);
     this.name = "IllegalRunStatusTransition";
   }
@@ -108,9 +113,10 @@ export function updateRunStatus(id: string, status: string) {
     }
   }
 
-  const completedAt = (status === "done" || status === "failed" || status === "skipped" || status === "killed")
-    ? ", completed_at = unixepoch()"
-    : ", completed_at = NULL";
+  const completedAt =
+    status === "done" || status === "failed" || status === "skipped" || status === "killed"
+      ? ", completed_at = unixepoch()"
+      : ", completed_at = NULL";
   // When a run transitions out of 'running' (to any status), clear any pending
   // kill request so it can't linger and affect a subsequent run.
   const clearKill = status !== "running" ? ", kill_requested_at = NULL" : "";
@@ -119,7 +125,9 @@ export function updateRunStatus(id: string, status: string) {
   // from here. Self-transitions (running -> running) already returned above as
   // no-ops, so this never resets the clock on a re-reported status.
   const enterRunning = status === "running" ? ", claimed_at = unixepoch()" : "";
-  db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`).run(status, id);
+  db.prepare(
+    `UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`,
+  ).run(status, id);
 
   // Advance the job's next_run_at when a run completes.
   // 'killed' is terminal for this run but does NOT advance the job's schedule —
@@ -167,15 +175,17 @@ export function requestKillRun(id: string): boolean {
   if (!run) return false;
   if (run.status !== "running") return false;
   if (run.kill_requested_at) return true; // already requested — idempotent
-  db.prepare(`UPDATE runs SET kill_requested_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(id);
+  db.prepare(
+    `UPDATE runs SET kill_requested_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+  ).run(id);
   return true;
 }
 
 export function setRunTitle(id: string, title: string) {
   const db = getDb();
-  const result = db.prepare(
-    `UPDATE runs SET title = ?, updated_at = unixepoch() WHERE id = ?`
-  ).run(title, id);
+  const result = db
+    .prepare(`UPDATE runs SET title = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(title, id);
   if (result.changes === 0) return null;
   return getRunById(id);
 }
@@ -183,9 +193,14 @@ export function setRunTitle(id: string, title: string) {
 export function updateRunSessionId(id: string, sessionId: string, cwd?: string) {
   const db = getDb();
   if (cwd) {
-    db.prepare(`UPDATE runs SET session_id = ?, session_cwd = ?, updated_at = unixepoch() WHERE id = ?`).run(sessionId, cwd, id);
+    db.prepare(
+      `UPDATE runs SET session_id = ?, session_cwd = ?, updated_at = unixepoch() WHERE id = ?`,
+    ).run(sessionId, cwd, id);
   } else {
-    db.prepare(`UPDATE runs SET session_id = ?, updated_at = unixepoch() WHERE id = ?`).run(sessionId, id);
+    db.prepare(`UPDATE runs SET session_id = ?, updated_at = unixepoch() WHERE id = ?`).run(
+      sessionId,
+      id,
+    );
   }
 }
 
@@ -201,11 +216,16 @@ export function deleteRun(id: string) {
   deleteRunAttachmentsDir(id);
 }
 
-export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
+export function listRunsByJob(
+  jobId: string,
+  limit = 10,
+  opts: { includeSkipped?: boolean; offset?: number } = {},
+) {
   const db = getDb();
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
@@ -216,14 +236,20 @@ export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?
     WHERE r.job_id = ? ${skipFilter}
     ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(jobId, limit, offset);
+  `)
+    .all(jobId, limit, offset);
 }
 
-export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkipped?: boolean; offset?: number } = {}) {
+export function listRunsByAgent(
+  agentId: string,
+  limit = 10,
+  opts: { includeSkipped?: boolean; offset?: number } = {},
+) {
   const db = getDb();
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
@@ -234,7 +260,8 @@ export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkip
     WHERE r.agent_id = ? ${skipFilter}
     ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(agentId, limit, offset);
+  `)
+    .all(agentId, limit, offset);
 }
 
 // Run list queries are MANDATORILY scoped to an org: runs have no org_id column,
@@ -243,7 +270,8 @@ export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkip
 export function listScheduledRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
@@ -252,13 +280,15 @@ export function listScheduledRuns(orgId: string, projectId?: string) {
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status = 'scheduled' AND p.org_id = ? ${projectFilter}
     ORDER BY r.scheduled_for ASC
-  `).all(...(projectId ? [orgId, projectId] : [orgId]));
+  `)
+    .all(...(projectId ? [orgId, projectId] : [orgId]));
 }
 
 export function listRunningRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
@@ -267,13 +297,15 @@ export function listRunningRuns(orgId: string, projectId?: string) {
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status = 'running' AND p.org_id = ? ${projectFilter}
     ORDER BY r.updated_at DESC
-  `).all(...(projectId ? [orgId, projectId] : [orgId]));
+  `)
+    .all(...(projectId ? [orgId, projectId] : [orgId]));
 }
 
 export function listWaitingRuns(orgId: string, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
@@ -282,13 +314,15 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status IN ('waiting', 'pending') AND p.org_id = ? ${projectFilter}
     ORDER BY r.updated_at ASC
-  `).all(...(projectId ? [orgId, projectId] : [orgId]));
+  `)
+    .all(...(projectId ? [orgId, projectId] : [orgId]));
 }
 
 export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
@@ -297,24 +331,39 @@ export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status IN ('done', 'failed', 'killed') AND p.org_id = ? ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
-  `).all(...(projectId ? [orgId, projectId, limit] : [orgId, limit]));
+  `)
+    .all(...(projectId ? [orgId, projectId, limit] : [orgId, limit]));
 }
 
-const ALL_STATUSES = ["scheduled", "running", "waiting", "pending", "done", "failed", "killed", "skipped"] as const;
+const ALL_STATUSES = [
+  "scheduled",
+  "running",
+  "waiting",
+  "pending",
+  "done",
+  "failed",
+  "killed",
+  "skipped",
+] as const;
 type RunStatus = (typeof ALL_STATUSES)[number];
 
 export type RunsHistoryFilters = {
-  statuses?: RunStatus[];        // omit/empty → all except 'skipped' (use includeSkipped to opt in)
-  includeSkipped?: boolean;      // only meaningful if statuses is omitted
+  statuses?: RunStatus[]; // omit/empty → all except 'skipped' (use includeSkipped to opt in)
+  includeSkipped?: boolean; // only meaningful if statuses is omitted
   agentId?: string;
   jobId?: string;
   projectId?: string;
-  from?: number;                 // unix seconds (inclusive)
-  to?: number;                   // unix seconds (inclusive)
+  from?: number; // unix seconds (inclusive)
+  to?: number; // unix seconds (inclusive)
   sort?: "newest" | "oldest";
 };
 
-export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {}, limit = 25, offset = 0) {
+export function listRunsHistory(
+  orgId: string,
+  filters: RunsHistoryFilters = {},
+  limit = 25,
+  offset = 0,
+) {
   const db = getDb();
   const where: string[] = [];
   const params: (string | number)[] = [];
@@ -325,9 +374,12 @@ export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {},
   params.push(orgId);
 
   // Status filter: validate against allowed set; default excludes 'skipped'
-  let statuses = filters.statuses?.filter((s): s is RunStatus => (ALL_STATUSES as readonly string[]).includes(s)) ?? [];
+  let statuses =
+    filters.statuses?.filter((s): s is RunStatus =>
+      (ALL_STATUSES as readonly string[]).includes(s),
+    ) ?? [];
   if (statuses.length === 0) {
-    statuses = ALL_STATUSES.filter(s => filters.includeSkipped || s !== "skipped");
+    statuses = ALL_STATUSES.filter((s) => filters.includeSkipped || s !== "skipped");
   }
   where.push(`r.status IN (${statuses.map(() => "?").join(",")})`);
   params.push(...statuses);
@@ -358,7 +410,8 @@ export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {},
   const safeLimit = Math.min(Math.max(1, limit | 0), 200);
   const safeOffset = Math.max(0, offset | 0);
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command,
            a.name as agent_name, a.color as agent_color, a.cli as agent_cli
@@ -369,7 +422,8 @@ export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {},
     WHERE ${where.join(" AND ")}
     ORDER BY COALESCE(r.completed_at, r.created_at) ${order}, r.created_at ${order}
     LIMIT ? OFFSET ?
-  `).all(...params, safeLimit + 1, safeOffset) as any[];
+  `)
+    .all(...params, safeLimit + 1, safeOffset) as any[];
 
   const hasMore = rows.length > safeLimit;
   return { runs: hasMore ? rows.slice(0, safeLimit) : rows, hasMore };
@@ -383,7 +437,13 @@ function redactSensitiveContent(content: string): string {
 
 // Activity log
 
-export function addRunActivity(runId: string, authorType: string, authorId: string | null, authorName: string, content: string) {
+export function addRunActivity(
+  runId: string,
+  authorType: string,
+  authorId: string | null,
+  authorName: string,
+  content: string,
+) {
   const db = getDb();
   const id = uuid();
   const safeContent = redactSensitiveContent(content);
@@ -392,12 +452,32 @@ export function addRunActivity(runId: string, authorType: string, authorId: stri
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, runId, authorType, authorId, authorName, safeContent);
   db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
-  return { id, run_id: runId, author_type: authorType, author_id: authorId, author_name: authorName, content: safeContent, created_at: Math.floor(Date.now() / 1000) };
+  return {
+    id,
+    run_id: runId,
+    author_type: authorType,
+    author_id: authorId,
+    author_name: authorName,
+    content: safeContent,
+    created_at: Math.floor(Date.now() / 1000),
+  };
 }
 
-export function listRunActivity(runId: string) {
+export type RunActivityEntry = {
+  id: string;
+  run_id: string;
+  author_type: "agent" | "user" | "system" | "workflow";
+  author_id: string | null;
+  author_name: string | null;
+  content: string;
+  created_at: number;
+};
+
+export function listRunActivity(runId: string): RunActivityEntry[] {
   const db = getDb();
-  return db.prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`).all(runId);
+  return db
+    .prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`)
+    .all(runId) as RunActivityEntry[];
 }
 
 // Run output (streaming events from CLI agents)
@@ -411,7 +491,10 @@ export type RunOutputEvent = {
   created_at?: number;
 };
 
-export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id" | "id" | "created_at">[]) {
+export function addRunOutput(
+  runId: string,
+  events: Omit<RunOutputEvent, "run_id" | "id" | "created_at">[],
+) {
   const db = getDb();
   const stmt = db.prepare(`
     INSERT INTO run_output (run_id, event_type, content, tool_name)
@@ -419,7 +502,12 @@ export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id
   `);
   const insertMany = db.transaction((evts: typeof events) => {
     for (const e of evts) {
-      stmt.run(runId, e.event_type, e.content ? redactSensitiveContent(e.content) : null, e.tool_name || null);
+      stmt.run(
+        runId,
+        e.event_type,
+        e.content ? redactSensitiveContent(e.content) : null,
+        e.tool_name || null,
+      );
     }
   });
   insertMany(events);
@@ -428,9 +516,11 @@ export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id
 
 export function listRunOutput(runId: string, afterId = 0) {
   const db = getDb();
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT * FROM run_output WHERE run_id = ? AND id > ? ORDER BY id ASC
-  `).all(runId, afterId) as RunOutputEvent[];
+  `)
+    .all(runId, afterId) as RunOutputEvent[];
 }
 
 /**
@@ -444,9 +534,11 @@ export function listRunOutput(runId: string, afterId = 0) {
 export function failTimedOutRun(runId: string, timeoutMinutes: number): boolean {
   const db = getDb();
   const fail = db.transaction(() => {
-    const result = db.prepare(
-      `UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'running'`
-    ).run(runId);
+    const result = db
+      .prepare(
+        `UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'running'`,
+      )
+      .run(runId);
     if (result.changes !== 1) return false;
     db.prepare(`
       INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
@@ -467,12 +559,14 @@ function failStaleRuns(agentId: string) {
   // never fires for a chatty-but-stuck run. claimed_at is reset on every entry
   // into 'running' (see createRun, the poll claims, and updateRunStatus), so
   // this is a true ceiling: a run cannot stay 'running' past timeout_minutes.
-  const stale = db.prepare(`
+  const stale = db
+    .prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'running'
     AND r.claimed_at + (j.timeout_minutes * 60) < ?
-  `).all(agentId, now) as { id: string; timeout_minutes: number }[];
+  `)
+    .all(agentId, now) as { id: string; timeout_minutes: number }[];
 
   let failed = 0;
   for (const run of stale) {
@@ -493,17 +587,21 @@ export function getAgentNextRun(agentId: string) {
   // Wrap in a transaction so run assignment is atomic
   const assignRun = db.transaction(() => {
     // 1. Agent already has a running run? Return nothing (busy)
-    const running = db.prepare(`
+    const running = db
+      .prepare(`
       SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-    `).get(agentId) as any;
+    `)
+      .get(agentId) as any;
     if (running) return null;
 
     // 2. Pending run? (human responded, ready for agent to resume)
-    const pendingRun = db.prepare(`
+    const pendingRun = db
+      .prepare(`
       SELECT id FROM runs
       WHERE agent_id = ? AND status = 'pending'
       ORDER BY updated_at ASC LIMIT 1
-    `).get(agentId) as any;
+    `)
+      .get(agentId) as any;
 
     if (pendingRun) {
       // Guard the claim: only flip it if it is still 'pending'. If a concurrent
@@ -513,7 +611,11 @@ export function getAgentNextRun(agentId: string) {
       // timeout hard cap (failStaleRuns) measures from here — without the reset
       // a run that sat in 'pending' (human wait, retry) would be capped on the
       // very next poll. See failStaleRuns for the claimed_at contract.
-      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'pending'`).run(pendingRun.id);
+      const claimed = db
+        .prepare(
+          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'pending'`,
+        )
+        .run(pendingRun.id);
       if (claimed.changes !== 1) return null;
       return pendingRun.id as string;
     }
@@ -521,22 +623,31 @@ export function getAgentNextRun(agentId: string) {
     const now = Math.floor(Date.now() / 1000);
 
     // 3. Scheduled run ready to start? (manually triggered via dashboard)
-    const scheduledRun = db.prepare(`
+    const scheduledRun = db
+      .prepare(`
       SELECT id FROM runs
       WHERE agent_id = ? AND status = 'scheduled' AND scheduled_for <= ?
       ORDER BY scheduled_for ASC LIMIT 1
-    `).get(agentId, now) as any;
+    `)
+      .get(agentId, now) as any;
 
     if (scheduledRun) {
       // Guarded claim — see the pending branch above.
-      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`).run(scheduledRun.id);
+      const claimed = db
+        .prepare(
+          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`,
+        )
+        .run(scheduledRun.id);
       if (claimed.changes !== 1) return null;
-      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
+      db.prepare(
+        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`,
+      ).run(scheduledRun.id);
       return scheduledRun.id as string;
     }
 
     // 4. Any recurring job past its schedule time without an active run?
-    const readyJob = db.prepare(`
+    const readyJob = db
+      .prepare(`
       SELECT j.id, j.agent_id FROM jobs j
       WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
@@ -544,11 +655,14 @@ export function getAgentNextRun(agentId: string) {
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
-    `).get(agentId, now) as any;
+    `)
+      .get(agentId, now) as any;
 
     if (readyJob) {
       const run = createRun(readyJob.id, agentId);
-      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(readyJob.id);
+      db.prepare(
+        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+      ).run(readyJob.id);
       // Advance next_run_at immediately so the job doesn't re-fire on the next poll
       advanceJobSchedule(readyJob.id);
       return run!.id as string;
@@ -571,40 +685,51 @@ export function getNextWorkflowRun(orgId: string) {
   // Fail stale workflow runs (scoped to this org)
   const now = Math.floor(Date.now() / 1000);
   // Hard cap keyed on claimed_at, not updated_at — see failStaleRuns for why.
-  const stale = db.prepare(`
+  const stale = db
+    .prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
       WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND p.org_id = ?
     AND r.claimed_at + (j.timeout_minutes * 60) < ?
-  `).all(orgId, now) as { id: string; timeout_minutes: number }[];
+  `)
+    .all(orgId, now) as { id: string; timeout_minutes: number }[];
   for (const run of stale) {
     failTimedOutRun(run.id, run.timeout_minutes);
   }
 
   const assignRun = db.transaction(() => {
     // Scheduled run ready to start? (scoped to this org)
-    const scheduledRun = db.prepare(`
+    const scheduledRun = db
+      .prepare(`
       SELECT r.id FROM runs r
       JOIN projects p ON r.project_id = p.id
       JOIN jobs j ON r.job_id = j.id
       WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
       AND p.org_id = ?
       ORDER BY r.scheduled_for ASC LIMIT 1
-    `).get(now, orgId) as any;
+    `)
+      .get(now, orgId) as any;
 
     if (scheduledRun) {
       // Guarded claim — only if still 'scheduled', so a runner that lost the
       // race to a sibling runner in the same org backs off instead of
       // re-claiming a run that is already executing.
-      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`).run(scheduledRun.id);
+      const claimed = db
+        .prepare(
+          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`,
+        )
+        .run(scheduledRun.id);
       if (claimed.changes !== 1) return null;
-      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
+      db.prepare(
+        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`,
+      ).run(scheduledRun.id);
       return scheduledRun.id as string;
     }
 
     // Any recurring workflow job past its schedule time? (scoped to this org)
-    const readyJob = db.prepare(`
+    const readyJob = db
+      .prepare(`
       SELECT j.id FROM jobs j
       JOIN projects p ON j.project_id = p.id
       WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
@@ -615,11 +740,14 @@ export function getNextWorkflowRun(orgId: string) {
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
       )
       ORDER BY j.next_run_at ASC LIMIT 1
-    `).get(orgId, now) as any;
+    `)
+      .get(orgId, now) as any;
 
     if (readyJob) {
       const run = createRun(readyJob.id, null);
-      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(readyJob.id);
+      db.prepare(
+        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+      ).run(readyJob.id);
       advanceJobSchedule(readyJob.id);
       return run!.id as string;
     }
@@ -636,20 +764,28 @@ export function peekWorkflowNext(orgId: string) {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
 
-  const scheduledRun = db.prepare(`
+  const scheduledRun = db
+    .prepare(`
     SELECT r.id, j.name as job_name FROM runs r
     JOIN projects p ON r.project_id = p.id
     JOIN jobs j ON r.job_id = j.id
     WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
     AND p.org_id = ?
     ORDER BY r.scheduled_for ASC LIMIT 1
-  `).get(now, orgId) as any;
+  `)
+    .get(now, orgId) as any;
 
   if (scheduledRun) {
-    return { available: true, type: "scheduled_run", run_id: scheduledRun.id, job_name: scheduledRun.job_name };
+    return {
+      available: true,
+      type: "scheduled_run",
+      run_id: scheduledRun.id,
+      job_name: scheduledRun.job_name,
+    };
   }
 
-  const readyJob = db.prepare(`
+  const readyJob = db
+    .prepare(`
     SELECT j.id, j.name FROM jobs j
     JOIN projects p ON j.project_id = p.id
     WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
@@ -660,7 +796,8 @@ export function peekWorkflowNext(orgId: string) {
       SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
     )
     ORDER BY j.next_run_at ASC LIMIT 1
-  `).get(orgId, now) as any;
+  `)
+    .get(orgId, now) as any;
 
   if (readyJob) {
     return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
@@ -675,42 +812,60 @@ export function peekAgentNext(agentId: string) {
   // Fail stale runs so peek accurately reflects availability
   failStaleRuns(agentId);
 
-  const running = db.prepare(`
+  const running = db
+    .prepare(`
     SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-  `).get(agentId) as any;
+  `)
+    .get(agentId) as any;
   if (running) return { available: false, reason: "busy" };
 
-  const pendingRun = db.prepare(`
+  const pendingRun = db
+    .prepare(`
     SELECT r.id, j.name as job_name FROM runs r
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'pending'
     ORDER BY r.updated_at ASC LIMIT 1
-  `).get(agentId) as any;
+  `)
+    .get(agentId) as any;
 
   if (pendingRun) {
-    return { available: true, type: "pending_resume", run_id: pendingRun.id, job_name: pendingRun.job_name };
+    return {
+      available: true,
+      type: "pending_resume",
+      run_id: pendingRun.id,
+      job_name: pendingRun.job_name,
+    };
   }
 
   const now = Math.floor(Date.now() / 1000);
 
-  const scheduledRun = db.prepare(`
+  const scheduledRun = db
+    .prepare(`
     SELECT r.id, j.name as job_name FROM runs r
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'scheduled' AND r.scheduled_for <= ?
     ORDER BY r.scheduled_for ASC LIMIT 1
-  `).get(agentId, now) as any;
+  `)
+    .get(agentId, now) as any;
 
   if (scheduledRun) {
-    return { available: true, type: "scheduled_run", run_id: scheduledRun.id, job_name: scheduledRun.job_name };
+    return {
+      available: true,
+      type: "scheduled_run",
+      run_id: scheduledRun.id,
+      job_name: scheduledRun.job_name,
+    };
   }
 
-  const readyJob = db.prepare(`
+  const readyJob = db
+    .prepare(`
     SELECT j.id, j.name FROM jobs j
     WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
     AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending'))
     ORDER BY j.next_run_at ASC LIMIT 1
-  `).get(agentId, now) as any;
+  `)
+    .get(agentId, now) as any;
 
   if (readyJob) {
     return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
@@ -735,12 +890,15 @@ export function buildRunPayload(runId: string) {
   // (target insert_rows/read_rows by id, with valid column names) — not just
   // read the injected rows. `data` is keyed by logical name.
   const composedDbs = getComposedDatabasesForJob(run.job_id);
-  const data: Record<string, { id: string; columns: { name: string; type: string }[]; rows: any[] }> = {};
+  const data: Record<
+    string,
+    { id: string; columns: { name: string; type: string }[]; rows: any[] }
+  > = {};
   for (const d of composedDbs) {
     const meta = getDatabaseById(d.id);
     data[d.name] = {
       id: d.id,
-      columns: (meta?.columns ?? []).map(c => ({ name: c.name, type: c.type })),
+      columns: (meta?.columns ?? []).map((c) => ({ name: c.name, type: c.type })),
       rows: db.prepare(`SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`).all(),
     };
   }
@@ -776,8 +934,11 @@ export function buildRunPayload(runId: string) {
   // cli/model/thinking/eager all come from here. Job-level model/thinking still
   // override these agent defaults (see job.model/job.thinking above).
   const agentRow = run.agent_id
-    ? db.prepare(`SELECT cli, model, thinking, eager FROM agents WHERE id = ?`).get(run.agent_id) as
-        { cli: string | null; model: string | null; thinking: string | null; eager: number } | undefined
+    ? (db
+        .prepare(`SELECT cli, model, thinking, eager FROM agents WHERE id = ?`)
+        .get(run.agent_id) as
+        | { cli: string | null; model: string | null; thinking: string | null; eager: number }
+        | undefined)
     : undefined;
   const agent = agentRow
     ? {

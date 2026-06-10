@@ -1,8 +1,8 @@
+import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { execSync } from "child_process";
-import { homedir } from "os";
-import path from "path";
 
 const CLI_TOOLS = [
   { id: "claude", name: "Claude", binary: "claude", versionFlag: "--version" },
@@ -20,18 +20,27 @@ const EXTRA_PATHS = [
 
 const extendedPath = [...EXTRA_PATHS, process.env.PATH].join(":");
 
-function checkTool(tool: typeof CLI_TOOLS[number]) {
+function checkTool(tool: (typeof CLI_TOOLS)[number]) {
   try {
-    const whichResult = execSync(`which ${tool.binary} 2>/dev/null`, { encoding: "utf-8", env: { ...process.env, PATH: extendedPath } }).trim();
+    const whichResult = execSync(`which ${tool.binary} 2>/dev/null`, {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: extendedPath },
+    }).trim();
     if (!whichResult) return { id: tool.id, name: tool.name, installed: false };
 
     let version = null;
     try {
-      version = execSync(`${tool.binary} ${tool.versionFlag} 2>/dev/null`, { encoding: "utf-8", timeout: 5000, env: { ...process.env, PATH: extendedPath } }).trim();
+      version = execSync(`${tool.binary} ${tool.versionFlag} 2>/dev/null`, {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, PATH: extendedPath },
+      }).trim();
       // Extract just the version number if there's extra text
       const match = version.match(/[\d]+\.[\d]+[\d.]*/);
       if (match) version = match[0];
-    } catch { /* version check failed, binary still exists */ }
+    } catch {
+      /* version check failed, binary still exists */
+    }
 
     return { id: tool.id, name: tool.name, installed: true, version, path: whichResult };
   } catch {

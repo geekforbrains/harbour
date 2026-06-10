@@ -13,13 +13,13 @@
 // byte-identical to src/lib/db/schema.ts so a CLI-bootstrapped DB matches a
 // server-bootstrapped one.
 
-import fs from "fs";
-import path from "path";
-import os from "os";
-import readline from "readline";
-import crypto from "crypto";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import { Algorithm, hashSync, verifySync } from "@node-rs/argon2";
 import Database from "better-sqlite3";
-import { hashSync, verifySync, Algorithm } from "@node-rs/argon2";
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id };
 
@@ -55,9 +55,7 @@ function openDb() {
 
 /** True if any instance admin already exists. */
 export function instanceAdminExists(db) {
-  const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM users WHERE is_instance_admin = 1`)
-    .get();
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE is_instance_admin = 1`).get();
   return row.n > 0;
 }
 
@@ -70,7 +68,7 @@ export function insertInstanceAdmin(db, { email, displayName, password }) {
   const passwordHash = hashSync(password, ARGON2_OPTS);
   db.prepare(
     `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin)
-     VALUES (?, ?, ?, ?, 1)`
+     VALUES (?, ?, ?, ?, 1)`,
   ).run(id, email, passwordHash, displayName);
   return id;
 }
@@ -118,7 +116,7 @@ function promptHidden(rl, question) {
  */
 function createAdmin({ email, displayName, password, force }) {
   if (!isValidEmail(email)) throw new Error("A valid email is required.");
-  if (!displayName || !displayName.trim()) throw new Error("A display name is required.");
+  if (!displayName?.trim()) throw new Error("A display name is required.");
   if (!password || password.length < 12)
     throw new Error("Password must be at least 12 characters.");
 
@@ -127,7 +125,7 @@ function createAdmin({ email, displayName, password, force }) {
     if (!force && instanceAdminExists(db)) {
       throw new Error(
         "An instance admin already exists. Bootstrap is first-run only. " +
-          "Add more users from the dashboard's Users page, or pass --force to override."
+          "Add more users from the dashboard's Users page, or pass --force to override.",
       );
     }
     const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
@@ -151,7 +149,7 @@ export async function runSetup(argv = []) {
     if (exists && !force) {
       console.error(
         "An instance admin already exists. Bootstrap is first-run only.\n" +
-          "Add more users from the dashboard's Users page, or run with --force to override."
+          "Add more users from the dashboard's Users page, or run with --force to override.",
       );
       process.exit(1);
     }
@@ -219,7 +217,7 @@ export async function runAdminCreate(argv = []) {
   if (!email || !displayName || !password) {
     console.error(
       "Usage: harbour admin create --email <email> --name <display name> --password <password> [--force]\n" +
-        "       (password may also come from HARBOUR_ADMIN_PASSWORD)"
+        "       (password may also come from HARBOUR_ADMIN_PASSWORD)",
     );
     process.exit(1);
   }

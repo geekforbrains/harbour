@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { authenticateUser, createSession, sessionTtlSeconds } from "@/lib/db/queries";
+import { type NextRequest, NextResponse } from "next/server";
 import { sessionCookieOptions } from "@/lib/auth";
+import { authenticateUser, createSession, sessionTtlSeconds } from "@/lib/db/queries";
 import { clientIp, loginLimiter } from "@/lib/rate-limit";
 
 // Intentionally public (no auth wrapper) — brute force is throttled per
@@ -11,27 +11,21 @@ export async function POST(req: NextRequest) {
     const { email, password } = body;
 
     if (!email || !password) {
-      return NextResponse.json(
-        { error: "email and password are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "email and password are required" }, { status: 400 });
     }
 
     const limitKey = `${String(email).trim().toLowerCase()}:${clientIp(req)}`;
     if (loginLimiter.isLimited(limitKey)) {
       return NextResponse.json(
         { error: "Too many failed login attempts. Try again later." },
-        { status: 429 }
+        { status: 429 },
       );
     }
 
     const user = authenticateUser(email, password);
     if (!user) {
       loginLimiter.record(limitKey);
-      return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
     loginLimiter.reset(limitKey);
@@ -41,13 +35,14 @@ export async function POST(req: NextRequest) {
       user: { id: user.id, email: user.email, displayName: user.display_name },
     });
 
-    response.cookies.set("harbour_session", sessionId, sessionCookieOptions(req, sessionTtlSeconds()));
+    response.cookies.set(
+      "harbour_session",
+      sessionId,
+      sessionCookieOptions(req, sessionTtlSeconds()),
+    );
 
     return response;
   } catch {
-    return NextResponse.json(
-      { error: "Failed to login" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to login" }, { status: 500 });
   }
 }

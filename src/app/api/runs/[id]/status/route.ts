@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, updateRunStatus, addRunActivity, IllegalRunStatusTransition } from "@/lib/db/queries";
+import {
+  addRunActivity,
+  getRunById,
+  IllegalRunStatusTransition,
+  updateRunStatus,
+} from "@/lib/db/queries";
 
 const AGENT_RUN_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
 // Workflow runs are non-interactive: no message thread, so the human-loop
@@ -29,7 +34,7 @@ export const GET = withAgentOrUser(
     role: "viewer",
     allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );
 
 export const PUT = withAgentOrUser(
@@ -50,19 +55,22 @@ export const PUT = withAgentOrUser(
     // 400: not a valid status value. 409 (below): a valid value but an illegal
     // transition from the run's current status (the lifecycle guard).
     if (!body.status || !validStatuses.includes(body.status)) {
-      return NextResponse.json({ error: `status must be one of: ${validStatuses.join(", ")}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `status must be one of: ${validStatuses.join(", ")}` },
+        { status: 400 },
+      );
     }
 
     const isNoOp = run.status === body.status;
 
-    let updated;
+    let updated: ReturnType<typeof updateRunStatus>;
     try {
       updated = updateRunStatus(id, body.status);
     } catch (err) {
       if (err instanceof IllegalRunStatusTransition) {
         return NextResponse.json(
           { error: `Cannot change run status from ${err.from} to ${err.to}` },
-          { status: 409 }
+          { status: 409 },
         );
       }
       throw err;
@@ -80,5 +88,5 @@ export const PUT = withAgentOrUser(
     role: "editor",
     allowWorkflowRunner: true,
     orgFromParams: (p) => orgIdForResource("run", p.id),
-  }
+  },
 );

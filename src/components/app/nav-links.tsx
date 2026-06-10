@@ -1,19 +1,19 @@
 "use client";
 
+import {
+  Activity,
+  Bot,
+  Briefcase,
+  Database,
+  FileText,
+  KeyRound,
+  MessageSquare,
+  Settings,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useApp } from "./app-context";
-import {
-  Activity,
-  Briefcase,
-  Bot,
-  FileText,
-  Database,
-  KeyRound,
-  Users,
-  Settings,
-  MessageSquare,
-} from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
@@ -34,9 +34,10 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
   return (
     <nav className="flex flex-col gap-0.5 px-2">
       {links.map((link) => {
-        const isActive = link.href === "/"
-          ? pathname === "/" || pathname.startsWith("/runs")
-          : pathname.startsWith(link.href);
+        const isActive =
+          link.href === "/"
+            ? pathname === "/" || pathname.startsWith("/runs")
+            : pathname.startsWith(link.href);
         return (
           <Link
             key={link.href}
@@ -48,7 +49,9 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
                 : "text-muted-foreground font-medium hover:bg-accent hover:text-foreground"
             }`}
           >
-            <link.icon className={`h-4 w-4 shrink-0 ${isActive ? "" : "text-muted-foreground group-hover:text-foreground"}`} />
+            <link.icon
+              className={`h-4 w-4 shrink-0 ${isActive ? "" : "text-muted-foreground group-hover:text-foreground"}`}
+            />
             {link.label}
             {"badge" in link && (link.badge ?? 0) > 0 && (
               <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold leading-none text-white">

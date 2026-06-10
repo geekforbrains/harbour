@@ -1,42 +1,33 @@
 "use client";
 
+import { Check, Copy, Link2, Plus, Shield, Trash2, User as UserIcon, X } from "lucide-react";
 import { useState } from "react";
-import {
-  User as UserIcon,
-  Shield,
-  Plus,
-  Trash2,
-  Link2,
-  Check,
-  Copy,
-  X,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useApp } from "@/components/app/app-context";
+import { EmptyState } from "@/components/app/empty-state";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { EmptyState } from "@/components/app/empty-state";
-import { PageHeader, PageLoading } from "@/components/app/page-header";
-import { useApp } from "@/components/app/app-context";
-import { useMe, orgsFromMe } from "@/lib/hooks/use-orgs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { orgsFromMe, useMe } from "@/lib/hooks/use-orgs";
 import {
-  useUsers,
-  useCreateUser,
-  useUpdateUser,
-  useDeleteUser,
-  useSetPasswordLink,
-  useAddMembership,
-  useRemoveMembership,
-  type UserRow,
   type SetPasswordLink,
+  type UserRow,
+  useAddMembership,
+  useCreateUser,
+  useDeleteUser,
+  useRemoveMembership,
+  useSetPasswordLink,
+  useUpdateUser,
+  useUsers,
 } from "@/lib/hooks/use-users";
 
 export default function UsersPage() {
@@ -157,7 +148,10 @@ function UserCard({
             <span className="text-sm font-medium">{user.display_name}</span>
             {isAdmin && <Badge variant="secondary">Instance admin</Badge>}
             {user.pending && (
-              <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-500/40">
+              <Badge
+                variant="outline"
+                className="text-amber-600 dark:text-amber-400 border-amber-500/40"
+              >
                 Pending — link not used
               </Badge>
             )}
@@ -175,7 +169,12 @@ function UserCard({
             <Shield className="h-3.5 w-3.5 mr-1.5" />
             {isAdmin ? "Revoke admin" : "Make admin"}
           </Button>
-          <Button size="sm" variant="outline" onClick={generateLink} disabled={setPasswordLink.isPending}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={generateLink}
+            disabled={setPasswordLink.isPending}
+          >
             <Link2 className="h-3.5 w-3.5 mr-1.5" />
             {user.pending ? "Set-password link" : "Reset link"}
           </Button>
@@ -210,9 +209,7 @@ function UserCard({
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-destructive"
-                    onClick={() =>
-                      removeMembership.mutate({ orgId: m.org_id, userId: user.id })
-                    }
+                    onClick={() => removeMembership.mutate({ orgId: m.org_id, userId: user.id })}
                     title="Remove from org"
                   >
                     <X className="h-3 w-3" />
@@ -338,12 +335,19 @@ function NewUserDialog({
   const busy = createUser.isPending || addMembership.isPending || setPasswordLink.isPending;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) reset();
+        onOpenChange(o);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New User</DialogTitle>
           <DialogDescription>
-            Creates the account with no password. You&apos;ll get a one-time set-password link to hand over.
+            Creates the account with no password. You&apos;ll get a one-time set-password link to
+            hand over.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreate} className="space-y-4">
@@ -380,8 +384,8 @@ function NewUserDialog({
               <Label>Organization</Label>
               {orgs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No organizations yet. Create one first — a non-admin user has no access until
-                  they belong to an org.
+                  No organizations yet. Create one first — a non-admin user has no access until they
+                  belong to an org.
                 </p>
               ) : (
                 <>
@@ -452,10 +456,9 @@ function LinkDialog({
         <DialogHeader>
           <DialogTitle>Set-password link</DialogTitle>
           <DialogDescription>
-            Send this single-use link to{" "}
-            <span className="font-medium">{link?.user.email}</span>{" "}
-            however you normally reach them — chat, email, or in person. It expires
-            in 24 hours and can only be used once. It won&apos;t be shown again.
+            Send this single-use link to <span className="font-medium">{link?.user.email}</span>{" "}
+            however you normally reach them — chat, email, or in person. It expires in 24 hours and
+            can only be used once. It won&apos;t be shown again.
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">

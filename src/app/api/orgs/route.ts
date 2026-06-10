@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { withOrgAuth, withInstanceAdmin } from "@/lib/auth";
-import { getOrgById, updateOrg, getOrgSettings, createOrg } from "@/lib/db/queries";
+import { withInstanceAdmin, withOrgAuth } from "@/lib/auth";
+import { createOrg, getOrgById, getOrgSettings, updateOrg } from "@/lib/db/queries";
 
 // Create an org. Only instance admins create orgs (they manage the instance).
 // An optional `timezone` is folded into the org's `settings` JSON so a freshly
@@ -35,5 +35,5 @@ export const PUT = withOrgAuth(
     if (!org) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json(org);
   },
-  { role: "editor" }
+  { role: "editor" },
 );

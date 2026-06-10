@@ -1,8 +1,8 @@
-import { execSync } from "child_process";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import { fileURLToPath } from "url";
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const harbourBin = path.resolve(__dirname, "..", "harbour.mjs");
@@ -10,7 +10,12 @@ const harbourBin = path.resolve(__dirname, "..", "harbour.mjs");
 const PLIST_LABEL = "com.harbour.agent-runner";
 const WORKFLOW_PLIST_LABEL = "com.harbour.workflow-runner";
 const PLIST_PATH = path.join(os.homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
-const WORKFLOW_PLIST_PATH = path.join(os.homedir(), "Library", "LaunchAgents", `${WORKFLOW_PLIST_LABEL}.plist`);
+const WORKFLOW_PLIST_PATH = path.join(
+  os.homedir(),
+  "Library",
+  "LaunchAgents",
+  `${WORKFLOW_PLIST_LABEL}.plist`,
+);
 const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 const LOG_PATH = path.join(HARBOUR_DIR, "runner.log");
 const ERR_LOG_PATH = path.join(HARBOUR_DIR, "runner.err.log");
@@ -42,7 +47,7 @@ function buildPlist({
   <array>
     <string>${nodePath}</string>
     <string>${harbourBin}</string>
-    ${args.map(arg => `<string>${arg}</string>`).join("\n    ")}
+    ${args.map((arg) => `<string>${arg}</string>`).join("\n    ")}
   </array>
   <key>StartInterval</key>
   <integer>60</integer>
@@ -79,7 +84,7 @@ function installLaunchAgent({ plistPath, label, args, logPath, errLogPath, noun,
   try {
     execSync(`launchctl load ${plistPath}`, { stdio: "inherit" });
   } catch {
-    console.error("Failed to load launch agent. Try manually: launchctl load " + plistPath);
+    console.error(`Failed to load launch agent. Try manually: launchctl load ${plistPath}`);
     return;
   }
 
@@ -95,7 +100,9 @@ function uninstallLaunchAgent({ plistPath, noun }) {
 
   try {
     execSync(`launchctl unload ${plistPath}`, { stdio: "inherit" });
-  } catch { /* may already be unloaded */ }
+  } catch {
+    /* may already be unloaded */
+  }
 
   fs.unlinkSync(plistPath);
   console.log(`Uninstalled. Harbour ${noun} runner removed.`);

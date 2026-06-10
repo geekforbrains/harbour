@@ -1,5 +1,5 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { ensureDir, getHarbourDir, loadRunnerConfigs } from "./config.mjs";
 
 // Identity-only: the agent's cli/model/thinking come live from the /next
@@ -54,7 +54,9 @@ async function verifyAuth(url, agentId, apiKey) {
     throw new Error(`Cannot reach ${endpoint}: ${err.message}`);
   }
   if (res.status === 401 || res.status === 403) {
-    throw new Error(`Authentication failed (HTTP ${res.status}) — the API key is invalid or doesn't match this agent`);
+    throw new Error(
+      `Authentication failed (HTTP ${res.status}) — the API key is invalid or doesn't match this agent`,
+    );
   }
   if (!res.ok) {
     throw new Error(`Server returned HTTP ${res.status} — expected 200 on peek`);
@@ -70,7 +72,9 @@ async function verifyWorkflowAuth(url, apiKey) {
     throw new Error(`Cannot reach ${endpoint}: ${err.message}`);
   }
   if (res.status === 401 || res.status === 403) {
-    throw new Error(`Authentication failed (HTTP ${res.status}) — the workflow runner API key is invalid`);
+    throw new Error(
+      `Authentication failed (HTTP ${res.status}) — the workflow runner API key is invalid`,
+    );
   }
   if (!res.ok) {
     throw new Error(`Server returned HTTP ${res.status} — expected 200 on workflow poll`);
@@ -80,7 +84,7 @@ async function verifyWorkflowAuth(url, apiKey) {
 function writeRunner(config) {
   ensureDir();
   const runners = loadRunnerConfigs();
-  const existing = runners.findIndex(r => r.agentId === config.agentId);
+  const existing = runners.findIndex((r) => r.agentId === config.agentId);
   const entry = {
     agentId: config.agentId,
     name: config.name,
@@ -108,7 +112,7 @@ function writeWorkflowRunner(config) {
       runners = [];
     }
   }
-  const existing = runners.findIndex(r => r.runnerId === config.runnerId);
+  const existing = runners.findIndex((r) => r.runnerId === config.runnerId);
   const entry = {
     runnerId: config.runnerId,
     name: config.name,
@@ -171,7 +175,9 @@ export async function connectWorkflowRunner(blob) {
     process.exit(1);
   }
 
-  console.log(`Connecting to ${config.url} as workflow runner "${config.name}" (${config.runnerId})...`);
+  console.log(
+    `Connecting to ${config.url} as workflow runner "${config.name}" (${config.runnerId})...`,
+  );
 
   try {
     await verifyWorkflowAuth(config.url, config.apiKey);
@@ -181,7 +187,9 @@ export async function connectWorkflowRunner(blob) {
   }
 
   const { file, replaced } = writeWorkflowRunner(config);
-  console.log(`${replaced ? "Updated" : "Added"} workflow runner config for "${config.name}" in ${file}`);
+  console.log(
+    `${replaced ? "Updated" : "Added"} workflow runner config for "${config.name}" in ${file}`,
+  );
   console.log();
   console.log(`Next steps:`);
   console.log(`  harbour workflow run       # run one poll cycle now`);

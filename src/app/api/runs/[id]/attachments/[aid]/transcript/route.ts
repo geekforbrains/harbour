@@ -1,12 +1,12 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
-import { readStoryboard } from "@/lib/video-processing";
 import { publicBaseUrl } from "@/lib/request-url";
+import { readStoryboard } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export const GET = withAgentOrUser(
     }
 
     const processing = getProcessingByAttachment(aid);
-    if (!processing || !processing.transcript_path) {
+    if (!processing?.transcript_path) {
       return NextResponse.json({ error: "No transcript available" }, { status: 404 });
     }
 
@@ -49,5 +49,5 @@ export const GET = withAgentOrUser(
       headers: { "Content-Type": "text/plain" },
     });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) }
+  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
 );

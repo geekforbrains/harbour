@@ -1,17 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { setDb, resetDb, initializeSchema, getDb } from "@/lib/db/schema";
-import {
-  createUser,
-  createSession,
-  createSetPasswordToken,
-  getSetPasswordToken,
-  authenticateUser,
-} from "@/lib/db/queries";
-
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as setPasswordPOST } from "@/app/api/auth/set-password/route";
 import { POST as linkPOST } from "@/app/api/users/[id]/set-password-link/route";
+import {
+  authenticateUser,
+  createSession,
+  createSetPasswordToken,
+  createUser,
+  getSetPasswordToken,
+} from "@/lib/db/queries";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 import { setPasswordLimiter } from "@/lib/rate-limit";
 
 // The set-password route is a plain `POST(req)` with no route params; wrap it so
@@ -65,7 +64,10 @@ describe("POST /api/auth/set-password", () => {
     const { rawToken } = createSetPasswordToken(userId, null);
 
     const res = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "newpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: rawToken,
+        password: "newpassword1",
+      }),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain("harbour_session=");
@@ -80,7 +82,10 @@ describe("POST /api/auth/set-password", () => {
 
     // 11 chars — one under the 12-character minimum.
     const res = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "elevenchars" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: rawToken,
+        password: "elevenchars",
+      }),
     );
     expect(res.status).toBe(400);
     expect(getSetPasswordToken(rawToken)?.consumed_at).toBeNull();
@@ -88,7 +93,7 @@ describe("POST /api/auth/set-password", () => {
 
   it("rejects a missing token", async () => {
     const res = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { password: "newpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", { password: "newpassword1" }),
     );
     expect(res.status).toBe(400);
   });
@@ -98,12 +103,18 @@ describe("POST /api/auth/set-password", () => {
     const { rawToken } = createSetPasswordToken(userId, null);
 
     const first = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "firstpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: rawToken,
+        password: "firstpassword1",
+      }),
     );
     expect(first.status).toBe(200);
 
     const second = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "secondpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: rawToken,
+        password: "secondpassword1",
+      }),
     );
     expect(second.status).toBe(400);
     // Password unchanged.
@@ -119,7 +130,10 @@ describe("POST /api/auth/set-password", () => {
       .run(Math.floor(Date.now() / 1000) - 10);
 
     const res = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: rawToken, password: "newpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: rawToken,
+        password: "newpassword1",
+      }),
     );
     expect(res.status).toBe(400);
   });
@@ -132,8 +146,8 @@ describe("POST /api/auth/set-password rate limiting", () => {
         jsonReq(
           "http://localhost/api/auth/set-password",
           { token: "bogus-token", password: "longenoughpassword" },
-          { "x-forwarded-for": "9.9.9.9" }
-        )
+          { "x-forwarded-for": "9.9.9.9" },
+        ),
       );
       expect(res.status).toBe(400);
     }
@@ -142,8 +156,8 @@ describe("POST /api/auth/set-password rate limiting", () => {
       jsonReq(
         "http://localhost/api/auth/set-password",
         { token: "bogus-token", password: "longenoughpassword" },
-        { "x-forwarded-for": "9.9.9.9" }
-      )
+        { "x-forwarded-for": "9.9.9.9" },
+      ),
     );
     expect(blocked.status).toBe(429);
     const data = (await blocked.json()) as { error: string };
@@ -156,8 +170,8 @@ describe("POST /api/auth/set-password rate limiting", () => {
         jsonReq(
           "http://localhost/api/auth/set-password",
           { token: "bogus-token", password: "longenoughpassword" },
-          { "x-forwarded-for": "9.9.9.9" }
-        )
+          { "x-forwarded-for": "9.9.9.9" },
+        ),
       );
     }
 
@@ -167,8 +181,8 @@ describe("POST /api/auth/set-password rate limiting", () => {
       jsonReq(
         "http://localhost/api/auth/set-password",
         { token: rawToken, password: "longenoughpassword" },
-        { "x-forwarded-for": "8.8.8.8" }
-      )
+        { "x-forwarded-for": "8.8.8.8" },
+      ),
     );
     expect(res.status).toBe(200);
   });
@@ -188,7 +202,7 @@ describe("POST /api/users/:id/set-password-link", () => {
 
     const res = await linkPOST(
       adminReq(adminId, "http://localhost/api/users/x/set-password-link"),
-      idParams(target.id)
+      idParams(target.id),
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { token: string; url: string };
@@ -197,7 +211,10 @@ describe("POST /api/users/:id/set-password-link", () => {
 
     // The minted token actually works.
     const redeem = await callSetPassword(
-      jsonReq("http://localhost/api/auth/set-password", { token: data.token, password: "freshpassword1" })
+      jsonReq("http://localhost/api/auth/set-password", {
+        token: data.token,
+        password: "freshpassword1",
+      }),
     );
     expect(redeem.status).toBe(200);
     expect(authenticateUser("target@example.com", "freshpassword1")).not.toBeNull();
@@ -209,7 +226,7 @@ describe("POST /api/users/:id/set-password-link", () => {
 
     const res = await linkPOST(
       adminReq(editor.id, "http://localhost/api/users/x/set-password-link"),
-      idParams(target.id)
+      idParams(target.id),
     );
     expect(res.status).toBe(403);
   });
@@ -218,7 +235,7 @@ describe("POST /api/users/:id/set-password-link", () => {
     const adminId = makeAdmin();
     const res = await linkPOST(
       adminReq(adminId, "http://localhost/api/users/x/set-password-link"),
-      idParams("no-such-user")
+      idParams("no-such-user"),
     );
     expect(res.status).toBe(404);
   });

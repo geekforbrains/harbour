@@ -35,7 +35,7 @@ export function AgentColorPicker({
           <Bot className="h-5 w-5" />
         </div>
         <div className="grid grid-cols-8 gap-2">
-          {AGENT_COLORS.map(color => {
+          {AGENT_COLORS.map((color) => {
             const selected = value === color;
             return (
               <button

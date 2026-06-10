@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
-import { getAgentById, listJobsByAgent, createJob } from "@/lib/db/queries";
+import { createJob, getAgentById, listJobsByAgent } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withResourceAuth("agent", "id", { role: "viewer" })(
-  async (req, auth, { params }) => {
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const agent = getAgentById(id);
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
     return NextResponse.json(listJobsByAgent(id));
-  }
+  },
 );
 
 export const POST = withResourceAuth("agent", "id", { role: "editor" })(
-  async (req, auth, { params }) => {
+  async (req, _auth, { params }) => {
     const { id } = await params;
     const agent = getAgentById(id);
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
@@ -26,11 +26,17 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
 
     const normalized = normalizeSchedule(body.schedule);
     if (!normalized) {
-      return NextResponse.json({ error: "Invalid schedule format. Use {\"every\":N} for intervals or {\"days\":[0-6],\"time\":\"HH:MM\"} for weekly." }, { status: 400 });
+      return NextResponse.json(
+        {
+          error:
+            'Invalid schedule format. Use {"every":N} for intervals or {"days":[0-6],"time":"HH:MM"} for weekly.',
+        },
+        { status: 400 },
+      );
     }
     body.schedule = normalized;
 
     const job = createJob(agent.project_id, id, body);
     return NextResponse.json(job, { status: 201 });
-  }
+  },
 );

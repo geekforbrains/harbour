@@ -1,21 +1,28 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
+import { getDb } from "./schema";
 
 /**
  * Create a doc. Dual-tier: pass projectId for a project-level doc, or omit it
  * (null) for an org-level doc shared across the org's projects.
  */
-export function createDoc(orgId: string, projectId: string | null, title: string, content?: string, authorType?: string, authorId?: string) {
+export function createDoc(
+  orgId: string,
+  projectId: string | null,
+  title: string,
+  content?: string,
+  authorType?: string,
+  authorId?: string,
+) {
   const db = getDb();
   const id = uuid();
   db.prepare(
-    `INSERT INTO docs (id, org_id, project_id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO docs (id, org_id, project_id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(id, orgId, projectId, title, authorType || null, authorId || null);
 
   if (content) {
     const revId = uuid();
     db.prepare(
-      `INSERT INTO doc_revisions (id, doc_id, content, author_type, author_id) VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO doc_revisions (id, doc_id, content, author_type, author_id) VALUES (?, ?, ?, ?, ?)`,
     ).run(revId, id, content, authorType || null, authorId || null);
   }
 
@@ -27,9 +34,9 @@ export function getDocById(id: string) {
   const doc = db.prepare(`SELECT * FROM docs WHERE id = ?`).get(id) as any;
   if (!doc) return null;
 
-  const revision = db.prepare(
-    `SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC LIMIT 1`
-  ).get(id) as any;
+  const revision = db
+    .prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(id) as any;
 
   return { ...doc, content: revision?.content || "", last_revision: revision };
 }
@@ -38,7 +45,7 @@ export function updateDoc(docId: string, content: string, authorType: string, au
   const db = getDb();
   const revId = uuid();
   db.prepare(
-    `INSERT INTO doc_revisions (id, doc_id, content, author_type, author_id) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO doc_revisions (id, doc_id, content, author_type, author_id) VALUES (?, ?, ?, ?, ?)`,
   ).run(revId, docId, content, authorType, authorId);
   db.prepare(`UPDATE docs SET updated_at = unixepoch() WHERE id = ?`).run(docId);
   return getDocById(docId);
@@ -65,18 +72,22 @@ export function listDocs(orgId: string, projectId: string | null = null) {
     ? "AND (d.project_id = ? OR d.project_id IS NULL)"
     : "AND d.project_id IS NULL";
   const params = projectId ? [orgId, projectId] : [orgId];
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT d.id, d.title, d.org_id, d.project_id, d.pinned, d.created_at, d.updated_at,
       (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
     FROM docs d
     WHERE d.org_id = ? ${projectFilter}
     ORDER BY d.pinned DESC, d.title ASC
-  `).all(...params);
+  `)
+    .all(...params);
 }
 
 export function toggleDocPinned(id: string) {
   const db = getDb();
-  db.prepare(`UPDATE docs SET pinned = CASE WHEN pinned = 1 THEN 0 ELSE 1 END, updated_at = unixepoch() WHERE id = ?`).run(id);
+  db.prepare(
+    `UPDATE docs SET pinned = CASE WHEN pinned = 1 THEN 0 ELSE 1 END, updated_at = unixepoch() WHERE id = ?`,
+  ).run(id);
   return getDocById(id);
 }
 
@@ -87,11 +98,17 @@ export function toggleDocPinned(id: string) {
 export function listPinnedDocIds(projectId: string): string[] {
   const db = getDb();
   // Resolve the org from the project so org-level pinned docs are included.
-  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as { org_id: string } | undefined;
+  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as
+    | { org_id: string }
+    | undefined;
   if (!proj) return [];
-  return (db.prepare(
-    `SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`
-  ).all(proj.org_id, projectId) as { id: string }[]).map(r => r.id);
+  return (
+    db
+      .prepare(
+        `SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`,
+      )
+      .all(proj.org_id, projectId) as { id: string }[]
+  ).map((r) => r.id);
 }
 
 /**
@@ -106,21 +123,26 @@ export function listPinnedDocIds(projectId: string): string[] {
  * id de-duplication. Returned shape matches the agent contract:
  * `{ id, title, content }`.
  */
-export function getComposedDocsForJob(jobId: string): { id: string; title: string; content: string }[] {
+export function getComposedDocsForJob(
+  jobId: string,
+): { id: string; title: string; content: string }[] {
   const db = getDb();
 
-  const scope = db.prepare(`
+  const scope = db
+    .prepare(`
     SELECT j.project_id, p.org_id
     FROM jobs j
     JOIN projects p ON j.project_id = p.id
     WHERE j.id = ?
-  `).get(jobId) as { project_id: string; org_id: string } | undefined;
+  `)
+    .get(jobId) as { project_id: string; org_id: string } | undefined;
   if (!scope) return [];
 
   // Union of org-level + project-level + job-linked doc ids for this job, then
   // resolve each to its latest-revision content. DISTINCT de-dups ids that
   // appear in more than one tier.
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT d.id, d.title, dr.content
     FROM docs d
     LEFT JOIN doc_revisions dr ON dr.doc_id = d.id
@@ -133,11 +155,17 @@ export function getComposedDocsForJob(jobId: string): { id: string; title: strin
       SELECT doc_id FROM job_docs WHERE job_id = ?
     )
     ORDER BY d.title ASC
-  `).all(scope.org_id, scope.org_id, scope.project_id, jobId) as
-    { id: string; title: string; content: string }[];
+  `)
+    .all(scope.org_id, scope.org_id, scope.project_id, jobId) as {
+    id: string;
+    title: string;
+    content: string;
+  }[];
 }
 
 export function getDocRevisions(docId: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC`).all(docId);
+  return db
+    .prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC`)
+    .all(docId);
 }

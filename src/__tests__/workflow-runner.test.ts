@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
-import { mkdtempSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { runWorkflow, workflowOutcome, processNextWorkflow } from "../../bin/lib/runner.mjs";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { processNextWorkflow, runWorkflow, workflowOutcome } from "../../bin/lib/runner.mjs";
 
 // ---------------------------------------------------------------------------
 // workflowOutcome: pure exit-code -> terminal-status mapping, including the
@@ -89,7 +89,8 @@ describe("processNextWorkflow orchestration", () => {
     const fetchMock = async (u: string, init: { method?: string; body?: string } = {}) => {
       const method = init.method || "GET";
       if (u.endsWith("/api/workflows/next")) return res(payload);
-      if (/\/kill$/.test(u)) return res({ kill_requested: !!opts.killRequested, status: currentStatus });
+      if (/\/kill$/.test(u))
+        return res({ kill_requested: !!opts.killRequested, status: currentStatus });
       if (/\/status$/.test(u) && method === "GET") return res({ status: currentStatus });
       if (/\/status$/.test(u) && method === "PUT") {
         const b = JSON.parse(init.body || "{}");

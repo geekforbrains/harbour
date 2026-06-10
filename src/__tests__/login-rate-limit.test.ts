@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { setDb, resetDb, initializeSchema } from "@/lib/db/schema";
-import { createUser } from "@/lib/db/queries";
-
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as loginPOST } from "@/app/api/auth/login/route";
+import { createUser } from "@/lib/db/queries";
+import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 const PASSWORD = "correcthorsebattery";
 

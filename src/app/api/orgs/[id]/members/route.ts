@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
-import {
-  getOrgById,
-  getUserById,
-  addMembership,
-  listMemberships,
-} from "@/lib/db/queries";
+import { addMembership, getOrgById, getUserById, listMemberships } from "@/lib/db/queries";
 
 /** Instance-admin-only: list an org's members (user id, email, name, role). */
 export const GET = withInstanceAdmin(async (_req, _auth, ctx) => {
@@ -31,7 +26,10 @@ export const POST = withInstanceAdmin(async (req, _auth, ctx) => {
   const userId = typeof body.userId === "string" ? body.userId : "";
   const role = body.role === "editor" || body.role === "viewer" ? body.role : null;
   if (!userId || !role) {
-    return NextResponse.json({ error: "userId and role ('editor'|'viewer') are required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "userId and role ('editor'|'viewer') are required" },
+      { status: 400 },
+    );
   }
   const user = getUserById(userId);
   if (!user) {
@@ -39,8 +37,11 @@ export const POST = withInstanceAdmin(async (req, _auth, ctx) => {
   }
   if (user.is_instance_admin) {
     return NextResponse.json(
-      { error: "Instance admins already have access to every org and cannot hold explicit memberships" },
-      { status: 400 }
+      {
+        error:
+          "Instance admins already have access to every org and cannot hold explicit memberships",
+      },
+      { status: 400 },
     );
   }
   addMembership(userId, orgId, role);

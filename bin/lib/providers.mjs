@@ -1,8 +1,8 @@
-import { spawn, execSync } from "child_process";
-import path from "path";
-import os from "os";
-import fs from "fs";
-import crypto from "crypto";
+import { execSync, spawn } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // Cache resolved binary paths
 const binaryPathCache = {};
@@ -32,18 +32,27 @@ function formatToolInput(toolName, inputJson) {
   try {
     const input = JSON.parse(inputJson);
     switch (toolName) {
-      case "Bash": return input.command || null;
-      case "Read": return input.file_path || null;
-      case "Write": return input.file_path || null;
-      case "Edit": return input.file_path || null;
-      case "Grep": return input.pattern || null;
-      case "Glob": return input.pattern || null;
-      case "Agent": return input.description || null;
-      case "WebSearch": return input.query || null;
-      case "WebFetch": return input.url || null;
+      case "Bash":
+        return input.command || null;
+      case "Read":
+        return input.file_path || null;
+      case "Write":
+        return input.file_path || null;
+      case "Edit":
+        return input.file_path || null;
+      case "Grep":
+        return input.pattern || null;
+      case "Glob":
+        return input.pattern || null;
+      case "Agent":
+        return input.description || null;
+      case "WebSearch":
+        return input.query || null;
+      case "WebFetch":
+        return input.url || null;
       default: {
         const str = JSON.stringify(input);
-        return str.length > 200 ? str.slice(0, 200) + "..." : str;
+        return str.length > 200 ? `${str.slice(0, 200)}...` : str;
       }
     }
   } catch {
@@ -66,7 +75,8 @@ const PROVIDERS = {
     buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
       const args = [
         "-p",
-        "--output-format", "stream-json",
+        "--output-format",
+        "stream-json",
         "--verbose",
         "--include-partial-messages",
       ];
@@ -133,7 +143,7 @@ const PROVIDERS = {
                 if (evt.delta?.type === "text_delta" && evt.delta.text) {
                   let text = evt.delta.text;
                   if (needsLeadingBreak) {
-                    text = "\n\n" + text;
+                    text = `\n\n${text}`;
                     needsLeadingBreak = false;
                   }
                   events.push({ event_type: "text_delta", content: text });
@@ -179,7 +189,10 @@ const PROVIDERS = {
                 if (block.type === "tool_result") {
                   events.push({
                     event_type: "tool_end",
-                    content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+                    content:
+                      typeof block.content === "string"
+                        ? block.content
+                        : JSON.stringify(block.content),
                     tool_name: null,
                   });
                 }
@@ -213,7 +226,9 @@ const PROVIDERS = {
             content = obj.result;
           }
           if (obj.session_id) sessionId = obj.session_id;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
       if (!content) content = stdout;
       return { content: content.trim(), sessionId };
@@ -265,9 +280,10 @@ const PROVIDERS = {
           if (obj.item.type === "command_execution") {
             events.push({
               event_type: "tool_end",
-              content: obj.item.aggregated_output != null && obj.item.aggregated_output !== ""
-                ? obj.item.aggregated_output
-                : `exit ${obj.item.exit_code}`,
+              content:
+                obj.item.aggregated_output != null && obj.item.aggregated_output !== ""
+                  ? obj.item.aggregated_output
+                  : `exit ${obj.item.exit_code}`,
               tool_name: "shell",
             });
           }
@@ -276,7 +292,9 @@ const PROVIDERS = {
         if (obj.type === "turn.completed") {
           events.push({
             event_type: "result",
-            content: obj.usage ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out` : null,
+            content: obj.usage
+              ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out`
+              : null,
           });
         }
 
@@ -307,7 +325,7 @@ const PROVIDERS = {
               let text = "";
               for (const c of obj.item.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  text += (c.text || "") + "\n";
+                  text += `${c.text || ""}\n`;
                 }
               }
               if (text.trim()) lastMessage = text.trim();
@@ -320,13 +338,15 @@ const PROVIDERS = {
               let text = "";
               for (const c of obj.message.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  text += (c.text || "") + "\n";
+                  text += `${c.text || ""}\n`;
                 }
               }
               if (text.trim()) lastMessage = text.trim();
             }
           }
-        } catch { /* Not JSON line */ }
+        } catch {
+          /* Not JSON line */
+        }
       }
 
       if (!lastMessage.trim()) lastMessage = stdout;
@@ -381,7 +401,9 @@ const PROVIDERS = {
           const stats = obj.stats;
           events.push({
             event_type: "result",
-            content: stats ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms` : null,
+            content: stats
+              ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms`
+              : null,
           });
         }
 
@@ -411,7 +433,9 @@ const PROVIDERS = {
           if (obj.type === "message" && obj.role === "assistant" && obj.content) {
             content += obj.content;
           }
-        } catch { /* Not JSON — skip stderr noise */ }
+        } catch {
+          /* Not JSON — skip stderr noise */
+        }
       }
 
       if (!content.trim()) content = stdout;
@@ -471,8 +495,18 @@ export function ensureWorkingDir(agentName) {
  * Pass `signal` (an AbortSignal) to request a graceful kill: SIGTERM is sent
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
+ *
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} cwd
+ * @param {{ inactivityTimeoutMs?: number, killGraceMs?: number, onLine?: (line: string) => void, signal?: AbortSignal, extraEnv?: Record<string, string> }} [opts]
  */
-export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
+export function runCliTool(
+  binary,
+  args,
+  cwd,
+  { inactivityTimeoutMs = 3 * 60 * 1000, killGraceMs = 3000, onLine, signal, extraEnv } = {},
+) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards, then layer
     // run-scoped env vars (decrypted Harbour env vars for this job) on top.
@@ -491,7 +525,9 @@ export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1
       if (fs.statSync(workspaceBin).isDirectory()) {
         env.PATH = `${workspaceBin}:${env.PATH || ""}`;
       }
-    } catch { /* no workspace bin/, ignore */ }
+    } catch {
+      /* no workspace bin/, ignore */
+    }
 
     const child = spawn(binary, args, {
       cwd,
@@ -528,8 +564,14 @@ export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
         timedOut = true;
-        try { child.kill("SIGTERM"); } catch {}
-        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, killGraceMs);
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+        setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }, killGraceMs);
       }, inactivityTimeoutMs);
     }
     armInactivity();
@@ -538,9 +580,13 @@ export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1
     function handleAbort() {
       if (aborted) return;
       aborted = true;
-      try { child.kill("SIGTERM"); } catch {}
+      try {
+        child.kill("SIGTERM");
+      } catch {}
       killFollowupTimer = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch {}
+        try {
+          child.kill("SIGKILL");
+        } catch {}
       }, killGraceMs);
     }
     if (signal) {
@@ -565,7 +611,10 @@ export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1
       }
     });
 
-    child.stderr.on("data", (data) => { armInactivity(); stderr += data.toString(); });
+    child.stderr.on("data", (data) => {
+      armInactivity();
+      stderr += data.toString();
+    });
 
     child.on("error", (err) => {
       if (inactivityTimer) clearTimeout(inactivityTimer);
@@ -577,8 +626,12 @@ export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1
     child.on("exit", () => {
       postExitTimer = setTimeout(() => {
         if (closeFired) return;
-        try { child.stdout?.destroy(); } catch {}
-        try { child.stderr?.destroy(); } catch {}
+        try {
+          child.stdout?.destroy();
+        } catch {}
+        try {
+          child.stderr?.destroy();
+        } catch {}
       }, POST_EXIT_GRACE_MS);
     });
     child.on("close", (code) => {

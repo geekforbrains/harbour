@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { Check, ChevronDown, ChevronRight, Loader2, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, ChevronRight, Loader2, Check, Wrench } from "lucide-react";
 import { pairToolEvents } from "@/lib/captain/tool-events";
 
 type OutputEvent = {
@@ -90,12 +90,13 @@ function ToolBlock({
   const outputPreview = useMemo(() => {
     if (!output) return null;
     const firstLine = output.split("\n").find((l) => l.trim()) || "";
-    return firstLine.length > 120 ? firstLine.slice(0, 120) + "..." : firstLine;
+    return firstLine.length > 120 ? `${firstLine.slice(0, 120)}...` : firstLine;
   }, [output]);
 
   return (
     <div className="rounded border border-border bg-muted/30 text-xs font-mono overflow-hidden">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-muted/50 transition-colors"
       >
@@ -107,7 +108,7 @@ function ToolBlock({
         <span className="text-foreground font-semibold shrink-0">{name}</span>
         {input && (
           <span className="text-muted-foreground truncate">
-            {input.length > 80 ? input.slice(0, 80) + "..." : input}
+            {input.length > 80 ? `${input.slice(0, 80)}...` : input}
           </span>
         )}
         <span className="ml-auto shrink-0 text-muted-foreground">
@@ -115,9 +116,7 @@ function ToolBlock({
         </span>
       </button>
       {!open && outputPreview && (
-        <div className="px-2.5 pb-1.5 text-muted-foreground/70 truncate">
-          {outputPreview}
-        </div>
+        <div className="px-2.5 pb-1.5 text-muted-foreground/70 truncate">{outputPreview}</div>
       )}
       {open && output && (
         <div className="px-2.5 py-2 border-t border-border text-muted-foreground whitespace-pre-wrap max-h-60 overflow-y-auto">
@@ -143,10 +142,7 @@ export function ToolCalls({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  const calls = useMemo(
-    () => pairToolEvents(toolEvents, streaming),
-    [toolEvents, streaming]
-  );
+  const calls = useMemo(() => pairToolEvents(toolEvents, streaming), [toolEvents, streaming]);
 
   if (calls.length === 0) return null;
 
@@ -155,6 +151,7 @@ export function ToolCalls({
   return (
     <div className="mt-3">
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-1.5"
       >
@@ -166,7 +163,9 @@ export function ToolCalls({
         ) : (
           <Wrench className="h-3 w-3" />
         )}
-        <span>{calls.length} tool call{calls.length !== 1 ? "s" : ""}</span>
+        <span>
+          {calls.length} tool call{calls.length !== 1 ? "s" : ""}
+        </span>
         {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>
       {expanded && (
@@ -201,7 +200,7 @@ export function StreamingOutput({
         .filter((e) => e.event_type === "text_delta")
         .map((e) => e.content || "")
         .join(""),
-    [events]
+    [events],
   );
 
   const errorEvents = events.filter((e) => e.event_type === "error");

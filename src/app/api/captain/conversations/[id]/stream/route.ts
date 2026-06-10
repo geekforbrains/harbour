@@ -1,6 +1,6 @@
 import { withOrgAuth } from "@/lib/auth";
-import { getConversation, listCaptainOutput } from "@/lib/db/captain";
 import { isRunning } from "@/lib/captain/process-manager";
+import { getConversation, listCaptainOutput } from "@/lib/db/captain";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ export const GET = withOrgAuth(
           if (closed) return;
           try {
             controller.enqueue(
-              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
             );
           } catch {
             closed = true;
@@ -81,5 +81,5 @@ export const GET = withOrgAuth(
       },
     });
   },
-  { role: "viewer" }
+  { role: "viewer" },
 );

@@ -7,9 +7,9 @@
  * so the user can customize them.
  */
 
-import fs from "fs";
-import path from "path";
-import { harbourHome, dbPath } from "../paths";
+import fs from "node:fs";
+import path from "node:path";
+import { dbPath, harbourHome } from "../paths";
 
 const CAPTAIN_MD = `# Captain — Harbour Assistant
 

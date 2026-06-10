@@ -1,12 +1,12 @@
 "use client";
 
-import { Database, Briefcase } from "lucide-react";
-import { timeAgo } from "@/lib/time";
-import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { Briefcase, Database } from "lucide-react";
 import { ListState } from "@/components/app/list-state";
+import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { useDatabases } from "@/lib/hooks/use-databases";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { timeAgo } from "@/lib/time";
 
 type DatabaseEntry = {
   id: string;
@@ -42,7 +42,7 @@ export default function DatabasesPage() {
         emptyMessage="No databases yet. Agents create them through the API."
       >
         <div className="space-y-2">
-          {databases.map(db => (
+          {databases.map((db) => (
             <RowLink key={db.id} href={`/databases/${db.id}`}>
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                 <Database className="h-4 w-4 text-muted-foreground" />
@@ -53,13 +53,17 @@ export default function DatabasesPage() {
                   {db.jobs.length > 0 && (
                     <span className="flex items-center gap-1">
                       <Briefcase className="h-3 w-3" />
-                      <span className="truncate">{db.jobs.map(j => j.name).join(", ")}</span>
+                      <span className="truncate">{db.jobs.map((j) => j.name).join(", ")}</span>
                     </span>
                   )}
-                  <span>{db.row_count} {db.row_count === 1 ? "row" : "rows"}</span>
+                  <span>
+                    {db.row_count} {db.row_count === 1 ? "row" : "rows"}
+                  </span>
                 </div>
               </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap pt-1">{timeAgo(db.updated_at)}</span>
+              <span className="text-xs text-muted-foreground whitespace-nowrap pt-1">
+                {timeAgo(db.updated_at)}
+              </span>
             </RowLink>
           ))}
         </div>

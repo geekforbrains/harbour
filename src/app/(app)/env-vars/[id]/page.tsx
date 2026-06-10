@@ -1,16 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { Eye, EyeOff, KeyRound, Pencil, Pin, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { useState } from "react";
 import { BackLink } from "@/components/app/back-link";
 import { PageLoading } from "@/components/app/page-header";
-import { KeyRound, Eye, EyeOff, Pin, Pencil, Trash2 } from "lucide-react";
-import { timeAgo } from "@/lib/time";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useEnvVar, useEnvVarMutations } from "@/lib/hooks/use-env-vars";
+import { timeAgo } from "@/lib/time";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
 
@@ -96,7 +102,8 @@ export default function EnvVarDetailPage() {
   }
 
   if (loading) return <PageLoading />;
-  if (!envVar) return <div className="text-sm text-muted-foreground py-12 text-center">Secret not found.</div>;
+  if (!envVar)
+    return <div className="text-sm text-muted-foreground py-12 text-center">Secret not found.</div>;
 
   return (
     <div className="space-y-6">
@@ -109,17 +116,37 @@ export default function EnvVarDetailPage() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight font-mono">{envVar.name}</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Created {timeAgo(envVar.created_at)} · Updated {timeAgo(envVar.updated_at)}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Created {timeAgo(envVar.created_at)} · Updated {timeAgo(envVar.updated_at)}
+            </p>
           </div>
         </div>
         <div className="flex gap-1.5">
-          <Button variant={envVar.pinned ? "default" : "outline"} size="icon" className="h-8 w-8" onClick={handleTogglePin} title={envVar.pinned ? "Unpin" : "Pin to all jobs"}>
+          <Button
+            variant={envVar.pinned ? "default" : "outline"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={handleTogglePin}
+            title={envVar.pinned ? "Unpin" : "Pin to all jobs"}
+          >
             <Pin className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={startEditing} title="Edit">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={startEditing}
+            title="Edit"
+          >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowDelete(true)} title="Delete">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setShowDelete(true)}
+            title="Delete"
+          >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -152,13 +179,17 @@ export default function EnvVarDetailPage() {
       {/* Edit Dialog */}
       <Dialog open={editing} onOpenChange={setEditing}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Edit Secret</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Edit Secret</DialogTitle>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
               <Input
                 value={editName}
-                onChange={e => setEditName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+                onChange={(e) =>
+                  setEditName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))
+                }
                 className="font-mono"
               />
             </div>
@@ -168,7 +199,7 @@ export default function EnvVarDetailPage() {
                 <Input
                   type={showEditValue ? "text" : "password"}
                   value={editValue}
-                  onChange={e => setEditValue(e.target.value)}
+                  onChange={(e) => setEditValue(e.target.value)}
                   placeholder="Leave empty to keep current value"
                   className="font-mono"
                 />
@@ -182,12 +213,18 @@ export default function EnvVarDetailPage() {
                   {showEditValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">Leave empty to keep the current value unchanged.</p>
+              <p className="text-xs text-muted-foreground">
+                Leave empty to keep the current value unchanged.
+              </p>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save"}</Button>
+            <Button variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -195,13 +232,20 @@ export default function EnvVarDetailPage() {
       {/* Delete Confirmation */}
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Delete Secret</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Delete Secret</DialogTitle>
+          </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Delete <span className="font-mono font-medium text-foreground">{envVar.name}</span>? It will be removed from all jobs.
+            Delete <span className="font-mono font-medium text-foreground">{envVar.name}</span>? It
+            will be removed from all jobs.
           </p>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowDelete(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete</Button>
+            <Button variant="ghost" onClick={() => setShowDelete(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete}>
+              Delete
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
