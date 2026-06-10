@@ -25,31 +25,13 @@ Harbour is polling-based — it never calls out to agents; they pull work on the
 
 It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Every agent, job, and resource lives inside a project; resources never cross org lines.
 
-> Going deeper: the [concepts](docs/concepts/) explain the model in prose, and [GUIDE.md](GUIDE.md) is the exact wire contract an agent reads at `/api/guide`.
+> Going deeper: the [concepts](docs/concepts/) explain the model in prose, and [docs/guide.md](docs/guide.md) is the exact wire contract an agent reads at `/api/guide`.
 
 ## Getting started
 
 There's no web signup — the first admin is created from the shell (the operator has host access, so first-run setup belongs there). After that, admins create orgs, projects, and users from the dashboard.
 
-### With Docker (recommended)
-
-Only requirement is Docker.
-
-```bash
-git clone https://github.com/geekforbrains/harbour.git
-cd harbour
-make run
-```
-
-Create the instance admin (one-time, interactive — runs inside the container):
-
-```bash
-docker compose exec harbour node bin/harbour.mjs setup
-```
-
-Then visit [http://localhost:3030](http://localhost:3030), log in, and create your first org and project. All state (DB, uploads, encryption key) lives in `./data` — back up that directory and you have everything. `make logs` / `make down` / `make rebuild` / `make clean` manage the container.
-
-### Without Docker
+All you need is Node 20+ on macOS or Linux.
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
@@ -60,11 +42,11 @@ npm run harbour -- setup   # one-time: create the instance admin (interactive)
 npm start
 ```
 
-Visit [http://localhost:3000](http://localhost:3000) and log in. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
+Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
 
 ### Deploy to production
 
-Terraform for a single-droplet DigitalOcean deployment (Ubuntu + Caddy + Let's Encrypt, systemd) lives in [`terraform/`](terraform/README.md) — one `terraform apply`. See [deploying to production](docs/guides/deploy-to-production.md) for the full path, and `npm run release` for in-place macOS/launchd updates.
+See [deploying to production](docs/guides/deploy-to-production.md) for the Linux path — systemd units for the server and runner, with Caddy terminating TLS in front. On macOS, `npm run release` handles in-place launchd updates.
 
 ### Running agents
 
@@ -80,7 +62,7 @@ npm run harbour -- agent install   # polls every 60s; logs at ~/.harbour/runner.
 
 ### Managing Harbour over the API
 
-An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, databases, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
+An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, databases, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).
 
 ## Captain
 
@@ -90,13 +72,13 @@ An **admin API key** lets a separate management agent operate Harbour itself —
 
 ## Documentation
 
-Start with the **[docs map](docs/README.md)**, which routes you to the right page. The **[PRD](docs/PRD.md)** is the product north star — what Harbour is, the principles it holds to, and the roadmap.
+Start with the **[docs map](docs/README.md)**, which routes you to the right page. The **[PRD](docs/prd.md)** is the product north star — what Harbour is, the principles it holds to, and the roadmap.
 
 - **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
 - **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
 - **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API](docs/reference/api.md), [design language](docs/reference/design-language.md)
 
-The wire contracts — [GUIDE.md](GUIDE.md) (worker agents) and [ADMIN_GUIDE.md](ADMIN_GUIDE.md) (admin agents) — are served live and are the source of truth for on-the-wire behavior.
+The wire contracts — [docs/guide.md](docs/guide.md) (worker agents) and [docs/admin-guide.md](docs/admin-guide.md) (admin agents) — are served live and are the source of truth for on-the-wire behavior.
 
 ## Tech stack
 

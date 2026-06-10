@@ -2,50 +2,13 @@
 
 The first 30 minutes with Harbour. By the end of this you'll have a server running, a project, an agent, a recurring job, and a verified end-to-end polling loop.
 
-Pick one of the three paths below — Docker is the easiest way to try it, plain `npm` is the easiest way to develop against it, and Harbour Agent layers the built-in CLI runner on top of either.
+The flow: install and run the server, then drive the agent loop by hand with curl (the way any external runtime would), then optionally let the built-in Harbour Agent runner do that for you.
 
 > If you want the *why* behind any of this — why polling, why no webhooks, why one run at a time per agent — read [Agents](../concepts/agents.md) and [Jobs and runs](../concepts/jobs-and-runs.md). This page is the *how*.
 
-## Path A — Docker (recommended for trying it out)
+## Install and run
 
-Only requirement is Docker.
-
-```bash
-git clone https://github.com/geekforbrains/harbour.git
-cd harbour
-make run
-```
-
-`make run` is a thin wrapper over `docker compose up -d --build` plus a friendly post-run banner. It builds the image (~2 min on a cold cache, ~10s on a warm one), starts the container, and prints:
-
-```
-Harbour is running at http://localhost:3030
-Data is persisted in ./data (DB, uploads, encryption key)
-```
-
-There's no web signup — create the instance admin from the shell (one-time, interactive, runs inside the container):
-
-```bash
-docker compose exec harbour node bin/harbour.mjs setup
-```
-
-Then visit [http://localhost:3030](http://localhost:3030), log in, and create your first org and project from the dashboard — every agent and job lives inside a project.
-
-> All state lives in `./data` next to the repo. Back that directory up and you have a snapshot of everything (DB, uploads, encryption key, runner config). `make clean` deletes it; don't run that on a real install.
-
-Useful side commands:
-
-```bash
-make logs     # follow the server logs
-make down     # stop the container, keep ./data
-make rebuild  # rebuild the image and restart (after pulling code changes)
-```
-
-Skip ahead to [First agent and first job](#first-agent-and-first-job).
-
-## Path B — Without Docker (for development)
-
-You'll need Node 20+ and a working `npm`.
+You'll need Node 20+ and a working `npm` (macOS or Linux).
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
@@ -56,19 +19,15 @@ npm run harbour -- setup   # one-time: create the instance admin (interactive)
 npm start
 ```
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
+`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project from the dashboard — every agent and job lives inside a project. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
 
-> Plain `npm start` uses port 3000; Docker uses 3030. They're not interchangeable URLs — make sure your bookmarks match the path you took.
-
-State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Override with `HARBOUR_HOME` if you want to keep installs separate.
+State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 
 For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 — that's reserved for production in this repo's conventions.
 
 ## First agent and first job
 
-Whichever path you took, the dashboard is now up and you have a project. Every agent picks a CLI tool (Claude Code, Codex, or Gemini) at creation, but the wire contract is plain HTTP — so this walkthrough drives the loop with curl from your terminal, exactly the way any external runtime would. (Path C below lets the built-in runner do this for you.)
-
-> Replace `http://localhost:3030` with `http://localhost:3000` if you took Path B. The rest of the commands are identical.
+The dashboard is now up and you have a project. Every agent picks a CLI tool (Claude Code, Codex, or Gemini) at creation, but the wire contract is plain HTTP — so this walkthrough drives the loop with curl from your terminal, exactly the way any external runtime would. (The [Harbour Agent section](#harbour-agent-built-in-cli-runner) below lets the built-in runner do this for you.)
 
 ### 1. Create an agent
 
@@ -84,7 +43,7 @@ The dialog flips to a confirmation panel showing a connect command ending in a b
 
 ```bash
 echo '<blob>' | base64 -d
-# {"url":"http://localhost:3030","agentId":"...","apiKey":"hbr_...","name":"Researcher"}
+# {"url":"http://localhost:3000","agentId":"...","apiKey":"hbr_...","name":"Researcher"}
 ```
 
 Copy the `apiKey` now. The full key is shown once and never again. (You can rotate it later from the agent's detail page if you lose it.)
@@ -98,14 +57,14 @@ On the agent's detail page, click **New Job**. Fill in:
 - **Instructions** — `Say hello.`
 - **Create**
 
-Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [admin guide](../../ADMIN_GUIDE.md#create-an-agent-job).
+Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [admin guide](../admin-guide.md#create-an-agent-job).
 
 ### 3. Verify the polling loop with curl
 
 Set a couple of shell variables (use the API key you just copied and the agent ID from the URL on the agent's detail page):
 
 ```bash
-export HARBOUR_URL=http://localhost:3030
+export HARBOUR_URL=http://localhost:3000
 export AGENT_ID=<paste-agent-id>
 export KEY=<paste-api-key>
 ```
@@ -160,9 +119,9 @@ curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/jso
   -d '{"status":"done"}' "$HARBOUR_URL/api/runs/$RUN_ID/status"
 ```
 
-That's the entire agent contract. The full reference is at `GET /api/guide` (also in [`GUIDE.md`](../../GUIDE.md)).
+That's the entire agent contract. The full reference is at `GET /api/guide` (also in [`docs/guide.md`](../guide.md)).
 
-## Path C — Harbour Agent (built-in CLI runner)
+## Harbour Agent (built-in CLI runner)
 
 If you'd rather have Harbour run a local CLI tool (Claude Code, Codex, or Gemini CLI) for you, swap the External agent above for a Harbour Agent.
 
@@ -227,7 +186,7 @@ npm run harbour -- agent install
 
 This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` so launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log` (stdout) and `~/.harbour/runner.err.log` (stderr).
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, write your own systemd unit or schedule `npm run harbour -- agent run` from cron.
+> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, run the runner as a systemd service (see the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units)) or schedule `npm run harbour -- agent run` from cron.
 
 To stop polling: `npm run harbour -- agent uninstall` (removes the plist and unloads it).
 

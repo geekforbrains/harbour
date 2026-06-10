@@ -1,185 +1,147 @@
 # Deploying to production
 
-Harbour is a single-process Next.js app with a SQLite file. Anything that can run Node and persist a directory will host it. This guide covers the two paths the repo supports out of the box: Docker Compose on a single host, and a one-command DigitalOcean droplet via Terraform.
+Harbour is a single-process Next.js app with a SQLite file. Anything that can run Node and persist a directory will host it — no external database, no Redis, no background workers. This guide covers a plain Linux host (systemd + a reverse proxy); the macOS/launchd path is covered briefly at the end.
 
-Pick Docker if you already have a server and just want harbour on it. Pick the Terraform path if you don't have a server yet and want one provisioned for you with HTTPS, basic auth, and a hardened SSH config baked in.
+> Prefer containers? Harbour is a standard Next.js + SQLite app and containerizes the usual way (build, copy `.next/standalone`, persist `HARBOUR_HOME` as a volume). The repo doesn't ship or support a Dockerfile, but nothing about harbour resists one.
 
-## Path A — Docker Compose (single host)
+## Linux (systemd)
 
-Use this when you already have a Linux host with Docker installed. The shipped [`docker-compose.yml`](../../docker-compose.yml) maps host port `3030` to the container's `3000`, persists everything to `./data`, and uses [`Dockerfile`](../../Dockerfile) to build a Node 22 Alpine image.
-
-### 1. Clone and run
-
-```bash
-git clone https://github.com/geekforbrains/harbour.git
-cd harbour
-make run
-```
-
-`make run` is just `docker compose up -d --build` plus a friendly status message — see [`Makefile`](../../Makefile). On first run it builds the image (a few minutes) and starts the container.
-
-Create the instance admin (one-time, interactive — runs inside the container):
-
-```bash
-docker compose exec harbour node bin/harbour.mjs setup
-```
-
-Then visit `http://<host>:3030` and log in. There's no web signup — further accounts are created from the dashboard (Settings → Users) via set-password links.
-
-### 2. Operating it
-
-```bash
-make logs     # follow logs (docker compose logs -f harbour)
-make restart  # restart container
-make down     # stop the container
-make rebuild  # rebuild image and restart (after pulling new code)
-make shell    # exec into the container
-make clean    # stop and wipe ./data — destructive
-```
-
-> `make clean` deletes the `./data` directory. That's the database, all uploaded attachments, and the encryption key. Don't run it without a backup.
-
-### 3. Updating
-
-```bash
-git pull
-make rebuild
-```
-
-`make rebuild` is `docker compose up -d --build --force-recreate` — it rebuilds the image and recreates the container. The `./data` volume persists across rebuilds, so users, jobs, runs, and credentials survive.
-
-> The README's `npm run release` script is for **bare-metal macOS / launchd installs only** — see [`scripts/release.sh`](../../scripts/release.sh). It bails out on non-Darwin systems. For Docker, always use `make rebuild`.
-
-### 4. State lives in `./data`
-
-Everything harbour persists is under `./data` because [`docker-compose.yml`](../../docker-compose.yml) sets `HARBOUR_HOME=/data` and bind-mounts `./data` to it:
-
-| What | Where |
-|---|---|
-| SQLite DB | `./data/harbour.db` |
-| Uploads | `./data/uploads/` |
-| Encryption key | `./data/encryption.key` |
-| Captain workspace | `./data/captain/` |
-| Runner config (server-side runner) | `./data/runners.json` |
-
-Backing up harbour is "tar up `./data`". Nothing else.
-
-> **Back up `./data/encryption.key` separately.** Lose it and every encrypted env var becomes unrecoverable garbage. Keep a copy somewhere that isn't on the same disk as the database.
-
-### 5. HTTPS in front
-
-The container speaks plaintext HTTP on `:3000` (mapped to host `:3030`). Don't expose that to the internet directly. Stand up a reverse proxy in front:
-
-- **Caddy** is what the [Terraform path](#path-b-digitalocean-droplet-via-terraform) uses internally — auto-issues Let's Encrypt certs, easy to configure.
-- **Nginx / Traefik / Cloudflare Tunnel** all work fine. Anything that can do TLS termination + reverse proxy.
-
-Whatever proxy you pick, terminate TLS there and forward to `localhost:3030`.
-
-### 6. The optional `remote` profile
-
-If you want to test the [run-on-a-different-machine](run-on-different-machine.md) flow without a second machine, the compose file ships a `harbour-remote` service under the `remote` profile:
-
-```bash
-docker compose --profile remote up -d
-```
-
-This brings up a second container with the runner-only image ([`Dockerfile.runner`](../../Dockerfile.runner)) that polls in a 60s loop. See the [run-on-a-different-machine guide](run-on-different-machine.md#trying-it-locally-before-pointing-at-a-real-remote-box) for the connect step — it's a sandbox, not a production setup.
-
-## Path B — DigitalOcean droplet via Terraform
-
-Use this when you don't have a server yet. One `terraform apply` provisions an Ubuntu 24.04 droplet with HTTPS, Basic Auth, fail2ban, automatic security updates, and harbour running as a systemd service. About 5 minutes from `apply` to a logged-in dashboard, plus DNS propagation.
-
-What it gives you, traced through [`terraform/cloud-init.yml.tftpl`](../../terraform/cloud-init.yml.tftpl):
-
-- Caddy out front terminating TLS with Let's Encrypt, gating with HTTP Basic Auth.
-- Harbour bound to `localhost:3030` only — never directly reachable from the internet.
-- DigitalOcean cloud firewall + UFW: only `22/80/443` open.
-- fail2ban watching Caddy's access log; bans IPs after 20 failed Basic Auth attempts in 10 minutes.
-- SSH hardened: key-only login, no root password.
-- Unattended security upgrades, with auto-reboot at 04:30 local if needed.
-- Node 22, Claude Code, Codex, and Gemini CLI installed under a dedicated `harbour` user.
-- `harbour.service` (the Next.js server) and `harbour-agent-runner.service` (the runner, polling every 60s) installed and enabled as systemd units.
+Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. You'll end with harbour running as two systemd services (server + agent runner) under a dedicated user, bound to localhost, with Caddy terminating TLS in front.
 
 ### 1. Prerequisites
 
-1. **A domain you control.** You'll point an A record at the droplet's IP after apply. Caddy waits for DNS to resolve before requesting a cert (see `wait-for-dns.sh` in the cloud-init template).
-2. **DigitalOcean account** with:
-   - An API token at https://cloud.digitalocean.com/account/api/tokens.
-   - At least one SSH key registered (`doctl compute ssh-key list`).
-3. **Terraform** ≥ 1.5 locally.
+- **Node 22** (e.g. via [NodeSource](https://github.com/nodesource/distributions): `curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs`)
+- **A domain you control**, with an A record you can point at the host.
+- Whatever AI CLIs your agents use (Claude Code, Codex, Gemini CLI) — installed later, under the service user.
 
-### 2. Configure tfvars
+Create a dedicated user. The runner refuses to drive Claude Code as root (`--dangerously-skip-permissions` is always passed, and Claude Code rejects it when running as root), so both services run unprivileged:
 
 ```bash
-cd terraform/
-cp terraform.tfvars.example terraform.tfvars
+useradd -m -s /bin/bash harbour
 ```
 
-Edit `terraform.tfvars`. Required (see [`variables.tf`](../../terraform/variables.tf) for the full list with validation):
-
-| Variable | What it is |
-|---|---|
-| `do_token` | DigitalOcean API token |
-| `domain` | FQDN you'll serve harbour at, e.g. `harbour.example.com` |
-| `letsencrypt_email` | Email for ACME registration (used for cert expiry notices) |
-| `basic_auth_password` | The shared HTTP Basic Auth password — must be ≥ 16 chars; generate with `openssl rand -base64 24` |
-| `ssh_key_names` | Names of SSH keys already registered in your DO account |
-
-Sensible defaults:
-
-- `basic_auth_user = "team"` — the Basic Auth username.
-- `region = "sfo3"` — droplet region.
-- `size = "s-2vcpu-4gb"` — about $24/mo. `s-1vcpu-2gb` (~$12/mo) works for light use.
-- `harbour_ref = "main"` — the git ref to check out after cloning. Pin to a tag for production (e.g. `"v2.0.0-beta.1"`).
-
-Optionally lock SSH down to your IP:
-
-```hcl
-ssh_allowed_cidrs = ["1.2.3.4/32"]
-```
-
-### 3. Apply
+### 2. Clone and build
 
 ```bash
-terraform init
-terraform plan
-terraform apply
+git clone https://github.com/geekforbrains/harbour.git /opt/harbour
+cd /opt/harbour
+npm ci
+npm run build
+# Next.js standalone output: server.js expects public/ and .next/static/
+# (and docs/, which /api/guide serves from) as siblings — next build
+# doesn't put them there, so copy explicitly:
+cp -r public .next/standalone/
+cp -r .next/static .next/standalone/.next/
+chown -R harbour:harbour /opt/harbour
+mkdir -p /home/harbour/.harbour && chown harbour:harbour /home/harbour/.harbour
 ```
 
-Outputs include `droplet_ip`, `ssh_command`, `url`, and a `next_steps` block. Copy the IP.
+### 3. systemd units
 
-### 4. Point DNS at the droplet
+`/etc/systemd/system/harbour.service` — the Next.js server:
 
-Create an A record `<your-domain> → <droplet_ip>`. If you're using Cloudflare, set the proxy to **DNS only** (grey cloud) until the initial Let's Encrypt cert is issued — then you can flip to proxied.
+```ini
+[Unit]
+Description=Harbour (Next.js server)
+After=network-online.target
+Wants=network-online.target
 
-### 5. Watch the bootstrap finish
+[Service]
+Type=simple
+User=harbour
+Group=harbour
+# Next.js is configured with output: standalone. The standalone server.js
+# only resolves ./public and ./.next/static relative to its own directory,
+# so run from inside .next/standalone/ (see the cp steps above).
+WorkingDirectory=/opt/harbour/.next/standalone
+ExecStart=/usr/bin/node server.js
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=HARBOUR_HOME=/home/harbour/.harbour
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=20
 
-```bash
-ssh root@<droplet_ip> 'tail -f /var/log/cloud-init-output.log'
+[Install]
+WantedBy=multi-user.target
 ```
 
-Look for the line `HARBOUR READY -- https://<your-domain>`. Typical time: 3–6 minutes (longer if cert issuance takes a few retries).
+`/etc/systemd/system/harbour-agent-runner.service` — the runner (skip if this host won't run agents):
 
-### 6. Create the admin and log in
+```ini
+[Unit]
+Description=Harbour agent runner (polls /next, spawns CLIs)
+After=harbour.service network-online.target
+# Wants (not Requires) so a harbour restart doesn't stop the runner.
+Wants=harbour.service network-online.target
 
-There's no web signup — create the instance admin over SSH (one-time, interactive). Run it as the `harbour` user so the CLI writes to the same `/home/harbour/.harbour` state the service uses:
+[Service]
+Type=simple
+User=harbour
+Group=harbour
+WorkingDirectory=/opt/harbour
+# Loop locally so one poll failure doesn't kill the service.
+ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs agent run || true; sleep 60; done'
+Environment=HARBOUR_HOME=/home/harbour/.harbour
+# Explicit PATH so the service session finds CLIs installed under the
+# harbour user's home (the claude installer puts itself in ~/.local/bin).
+Environment=PATH=/home/harbour/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable both:
 
 ```bash
-ssh root@<droplet_ip>
+systemctl daemon-reload
+systemctl enable --now harbour.service
+systemctl enable --now harbour-agent-runner.service
+```
+
+### 4. HTTPS in front
+
+The server speaks plaintext HTTP on `127.0.0.1:3000` — never expose that directly. Put a TLS-terminating reverse proxy in front. [Caddy](https://caddyserver.com/) is the least-config option (auto-issues Let's Encrypt certs); a minimal `/etc/caddy/Caddyfile`:
+
+```
+harbour.example.com {
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  reverse_proxy localhost:3000
+}
+```
+
+Nginx, Traefik, or a Cloudflare Tunnel all work just as well. If the dashboard is internet-facing, consider an extra gate in front of harbour's own login — Caddy's `basic_auth` directive, an IP allowlist, or a VPN/Tailscale-only bind. Standard host hygiene applies too: firewall down to `22/80/443` (ufw), fail2ban, unattended security upgrades, key-only SSH.
+
+### 5. Create the admin and log in
+
+There's no web signup — create the instance admin over SSH (one-time, interactive). Run it as the `harbour` user so the CLI writes to the same `HARBOUR_HOME` the service uses:
+
+```bash
 su - harbour
 cd /opt/harbour
 node bin/harbour.mjs setup
-exit
 ```
 
-Visit `https://<your-domain>`. The browser will prompt for HTTP Basic Auth — use the user/password from `terraform.tfvars`. Past Basic Auth, log in with the admin account you just created. The Basic Auth gate is shared across the team; harbour accounts are per-person — mint them from the dashboard (Settings → Users) via set-password links.
+Visit `https://<your-domain>` and log in. Further accounts are created from the dashboard (Settings → Users) via set-password links.
 
-### 7. Auth the AI CLIs
+### 6. Auth the AI CLIs
 
-The CLIs each need an interactive auth flow once. The runner runs as the `harbour` user on the droplet, not root, so auth state has to land in `/home/harbour/`.
+Each CLI needs an interactive auth flow once, as the `harbour` user (the runner runs as that user, so auth state has to land in `/home/harbour/`):
 
 ```bash
-ssh root@<droplet_ip>
 su - harbour
 claude   # OAuth device-code flow — or: export ANTHROPIC_API_KEY=...
 codex    # Browser sign-in — or: export OPENAI_API_KEY=...
@@ -198,70 +160,43 @@ Environment=OPENAI_API_KEY=...
 Environment=GEMINI_API_KEY=...
 ```
 
-### 8. Updating
+### 7. Updating
 
 ```bash
-ssh root@<droplet_ip>
 cd /opt/harbour
 git pull
 npm ci
 npm run build
-# Next.js standalone needs public/ and .next/static/ copied next to server.js
+# Standalone needs public/, .next/static/ (and the traced files) refreshed
 cp -r public .next/standalone/
 cp -r .next/static .next/standalone/.next/
 systemctl restart harbour
 systemctl restart harbour-agent-runner
 ```
 
-The `cp` steps mirror what cloud-init does on first install (see the cloud-init template). The systemd unit's `WorkingDirectory` is `/opt/harbour/.next/standalone`, and the standalone server only finds `public` and `.next/static` if they're siblings of `server.js`.
+> Don't run `npm run release` here — that script is for macOS/launchd installs and refuses to run on Linux ([`scripts/release.sh`](../../scripts/release.sh) checks `uname -s`).
 
-> Don't run `npm run release` on the droplet — that script is for bare-metal macOS launchd installs and will refuse to run on Linux ([`scripts/release.sh`](../../scripts/release.sh) checks `uname -s`).
-
-### 9. Logs
+### 8. Logs
 
 ```bash
 journalctl -u harbour -f               # the Next.js server
 journalctl -u harbour-agent-runner -f  # the runner
 journalctl -u caddy -f                 # the proxy / cert issuance
-tail -f /var/log/caddy/access.log      # request log (also what fail2ban watches)
 ```
 
-### 10. Tearing down
+## macOS (launchd)
 
-```bash
-terraform destroy
-```
-
-Then delete the DNS record manually.
+macOS is the developer-machine path: `npm run build && npm start` from the repo, with the runner installed via `npm run harbour -- agent install` (a launchd plist that fires `agent run` every 60s — see [Getting started](getting-started.md)). If you run the server itself under launchd (label `com.harbour.server`), `npm run release` rebuilds and bounces the full stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
 
 ## State and backups
 
-Whichever path you took, harbour's state lives in one directory:
+Wherever it runs, harbour's state lives in one directory — `HARBOUR_HOME`, default `~/.harbour/` (so `/home/harbour/.harbour/` in the Linux setup above).
 
-| Setup | Directory |
-|---|---|
-| Docker Compose | `./data/` (bind-mounted to `/data` inside the container) |
-| Terraform droplet | `/home/harbour/.harbour/` |
-| Bare-metal macOS | `~/.harbour/` |
-
-What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runners.json` (server-side runner config), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
+What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runners.json` (runner config), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
 
 Backup strategy: snapshot the directory. Restoring is "put it back, restart the service".
 
 > The encryption key is the one piece you should back up **separately** from the database. The DB encrypts env vars with that key, so a backup of the DB without the key is half-useless. A backup of the key without the DB is fine — you can always re-create env vars in a fresh install.
-
-## Choosing between the paths
-
-| | Docker Compose | Terraform droplet |
-|---|---|---|
-| You already have a host | Yes | No (it provisions one) |
-| TLS / cert handling | Bring your own proxy | Caddy + Let's Encrypt baked in |
-| Auth gate | Bring your own | Basic Auth + fail2ban baked in |
-| Updates | `git pull && make rebuild` | `git pull && npm ci && npm run build && systemctl restart` |
-| Hosts the runner too | Optional (`harbour agent run` / `harbour workflow run`) | Yes (install agent and workflow runner services as needed) |
-| Cost | Whatever your host costs | ~$12–24/mo droplet + DNS |
-
-If you start with Docker and outgrow it, the data directory is portable — copy `./data/` to the new host, point the new install at it, and you're moved.
 
 ## Next
 

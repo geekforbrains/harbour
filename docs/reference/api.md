@@ -7,9 +7,9 @@ The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
 running server:
 
-- **[GUIDE.md](../../GUIDE.md)** → `GET /api/guide`. Contract for **worker**
+- **[guide.md](../guide.md)** → `GET /api/guide`. Contract for **worker**
   agents (poll for runs).
-- **[ADMIN_GUIDE.md](../../ADMIN_GUIDE.md)** → `GET /api/admin-guide`. Contract
+- **[admin-guide.md](../admin-guide.md)** → `GET /api/admin-guide`. Contract
   for **management** agents (admin-key holders).
 
 For the auth model behind the wrapper names below — identities, roles, scope
@@ -30,7 +30,7 @@ not-found resolves to **403** to avoid leaking existence across tenants.
   resolve the owning org from the resource.
 - **`/next` payload** (`GET /api/agents/:id/next` and `/api/workflows/next`):
   `null` or `{ run, job, docs, data, env, attachments, api }`. The `api` block is
-  pre-resolved full URLs. Full schema in [GUIDE.md](../../GUIDE.md).
+  pre-resolved full URLs. Full schema in [guide.md](../guide.md).
 - **SSE**: `GET /api/runs/:id/output/stream` and
   `GET /api/captain/conversations/:id/stream` emit `event: output` (poll-backed),
   then `event: status` / `event: done` on terminal state.
@@ -43,7 +43,7 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 | POST | `/api/auth/logout` | Clear session cookie |
 | POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 12 chars). Rate-limited: 5 attempts per IP per hour → `429` |
 | GET | `/api/auth/me` | Echo the current principal (resolves the caller itself) |
-| GET | `/api/guide` | Serve [GUIDE.md](../../GUIDE.md) |
+| GET | `/api/guide` | Serve [guide.md](../guide.md) |
 
 There is **no** signup route.
 
@@ -60,7 +60,7 @@ There is **no** signup route.
 | GET / POST | `/api/admin-api-keys` | List / create admin keys |
 | DELETE | `/api/admin-api-keys/:id` | Revoke |
 | GET / PUT | `/api/settings` | Read / bulk-set instance settings |
-| GET | `/api/admin-guide` | Serve [ADMIN_GUIDE.md](../../ADMIN_GUIDE.md) (`withAuthenticatedUser`) |
+| GET | `/api/admin-guide` | Serve [admin-guide.md](../admin-guide.md) (`withAuthenticatedUser`) |
 
 `PUT /api/orgs` (rename) is `withOrgAuth({editor})`.
 

@@ -2,7 +2,7 @@
 
 Harbour is a control plane for AI agents doing ongoing work. The product north
 star — vision, principles, requirements, and scope — is
-[docs/PRD.md](docs/PRD.md). README.md is the front door; [docs/](docs/README.md)
+[docs/prd.md](docs/prd.md). README.md is the front door; [docs/](docs/README.md)
 maps every doc to its role (concepts, guides, and the technical reference).
 
 ## Tech
@@ -22,7 +22,7 @@ The dashboard's visual system is documented in [docs/reference/design-language.m
 - `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
 - `src/lib/auth.ts` — `withOrgAuth`, `withProjectAuth`, `withResourceAuth`, `withAgentOrUser`, `withInstanceAdmin`, `withAgentAuth` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
 - `src/lib/db/admin-api-keys.ts` — admin API key CRUD + authentication
-- `ADMIN_GUIDE.md` — admin agent onboarding guide, served at `/api/admin-guide`
+- `docs/admin-guide.md` — admin agent onboarding guide, served at `/api/admin-guide`
 - `src/lib/db/` — database schema, queries, migrations
 - `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
 - `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
@@ -33,7 +33,7 @@ The dashboard's visual system is documented in [docs/reference/design-language.m
 - `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
 - `bin/` — CLI entry point and agent runner (harbour agents, workflow execution, providers, launchd install)
 - `src/app/api/workflows/next/` — runner endpoint for discovering agentless workflow-only runs
-- `GUIDE.md` — agent-facing API contract, served at `/api/guide`
+- `docs/guide.md` — agent-facing API contract, served at `/api/guide`
 
 ## Conventions
 
@@ -90,14 +90,14 @@ release itself is a single commit touching three files, then a tag.
 
 For a release `vX.Y.Z`:
 
-1. Add a section at the top of `CHANGELOG.md` matching the existing style:
+1. Add a section at the top of `changelog.md` matching the existing style:
    `## vX.Y.Z — YYYY-MM-DD`, followed by one or more `### <Topic>` subheads
    with human-readable bullets (not raw commit subjects).
 2. Bump both `package.json` and `package-lock.json` at once:
    `npm version X.Y.Z --no-git-tag-version`
 3. Commit (this commit should ONLY touch the three files above):
    ```
-   git add CHANGELOG.md package.json package-lock.json
+   git add changelog.md package.json package-lock.json
    git commit -m "chore: release vX.Y.Z"
    ```
 4. Tag and push:

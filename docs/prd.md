@@ -4,7 +4,7 @@
 > users, the principles it holds to, and the requirements it must meet. It does
 > **not** describe *how* the system is built — that lives in
 > [docs/reference](reference/) (architecture, schema, API) and the live wire
-> contracts [GUIDE.md](../GUIDE.md) / [ADMIN_GUIDE.md](../ADMIN_GUIDE.md). When
+> contracts [guide.md](guide.md) / [admin-guide.md](admin-guide.md). When
 > intent is unclear, resolve it here. When this document and the code disagree
 > about *behavior*, the code wins and this document should be corrected.
 
@@ -105,8 +105,8 @@ detail, see [docs/reference](reference/).
 - Dashboard for runs, jobs, agents, docs, databases, secrets, users, and settings.
 
 **APIs**
-- A worker wire contract ([GUIDE.md](../GUIDE.md)) and an admin wire contract
-  ([ADMIN_GUIDE.md](../ADMIN_GUIDE.md)), served live so agents can read them.
+- A worker wire contract ([guide.md](guide.md)) and an admin wire contract
+  ([admin-guide.md](admin-guide.md)), served live so agents can read them.
 
 ## 6. Non-functional requirements
 
@@ -137,7 +137,7 @@ stable labels for each item):
 - Run-claim is atomic; two runners polling one org cannot double-claim a run.
 
 ### Portability
-- macOS / launchd today; Docker supported; Linux / systemd planned.
+- macOS / launchd and Linux / systemd. No shipped container or IaC setup — containerizing is left to the operator.
 
 ## 7. Out of scope (by decision)
 
@@ -166,5 +166,5 @@ create/edit agent dialog).
 
 This PRD is the top of the pyramid. For the **map of every doc and its role**,
 see [docs/README.md](README.md). In short: this PRD owns *why / what*;
-[docs/reference](reference/) owns *how*; [GUIDE.md](../GUIDE.md) and
-[ADMIN_GUIDE.md](../ADMIN_GUIDE.md) are the on-the-wire source of truth.
+[docs/reference](reference/) owns *how*; [guide.md](guide.md) and
+[admin-guide.md](admin-guide.md) are the on-the-wire source of truth.

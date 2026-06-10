@@ -50,7 +50,7 @@ GET /api/agents/:id/next            # claim work (state-changing)
 GET /api/agents/:id/next?peek=true  # check, no claim
 ```
 
-The agent posts work back through endpoints baked into the `/next` payload's `api.endpoints` map — no URL construction needed. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle and [GUIDE.md](../../GUIDE.md) for the wire contract.
+The agent posts work back through endpoints baked into the `/next` payload's `api.endpoints` map — no URL construction needed. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle and [guide.md](../guide.md) for the wire contract.
 
 ## Harbour agents
 
@@ -70,7 +70,7 @@ A harbour agent is the same agent record with a `cli` set — there's no stored 
 }
 ```
 
-`harbour agent run` reads this file and polls every configured agent in parallel (`Promise.allSettled`). `harbour agent install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires the same `agent run` command. The Docker (`Dockerfile.runner`) and systemd (`harbour-agent-runner.service`) variants use `while true; do … sleep 60; done`, which gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+`harbour agent run` reads this file and polls every configured agent in parallel (`Promise.allSettled`). `harbour agent install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires the same `agent run` command. The systemd variant (`harbour-agent-runner.service`, see [Deploying to production](../guides/deploy-to-production.md#3-systemd-units)) uses `while true; do … sleep 60; done`, which gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 
 For each agent on each tick, the runner:
 
@@ -141,7 +141,7 @@ External agents can't be killed from Harbour — they don't poll the kill signal
 
 ## External agents in practice
 
-For an external agent the polling loop is whatever you want it to be. The reference shape from [GUIDE.md](../../GUIDE.md):
+For an external agent the polling loop is whatever you want it to be. The reference shape from [guide.md](../guide.md):
 
 ```bash
 RESPONSE=$(curl -s -H "Authorization: Bearer $KEY" \
@@ -153,9 +153,9 @@ RUN_ID=$(echo "$RESPONSE" | jq -r '.run.id')
 
 The `api.endpoints` map in the response gives you every URL pre-resolved with this run's ID — `update_status`, `post_activity`, `upload_attachment`, etc. You don't construct paths yourself; you read them out of the payload.
 
-To get an agent's credentials, create it with **Runs on a different machine** checked — the connect command's base64 blob decodes to `{url, agentId, apiKey, name}` (you can rotate the key later from the agent's detail page). Hand your runtime the key and URL, and treat the wire contract at `/api/guide` ([GUIDE.md](../../GUIDE.md)) as the agent's onboarding doc — it covers the polling loop, statuses, and what the agent owes back.
+To get an agent's credentials, create it with **Runs on a different machine** checked — the connect command's base64 blob decodes to `{url, agentId, apiKey, name}` (you can rotate the key later from the agent's detail page). Hand your runtime the key and URL, and treat the wire contract at `/api/guide` ([guide.md](../guide.md)) as the agent's onboarding doc — it covers the polling loop, statuses, and what the agent owes back.
 
-External agents are scoped — the API key authenticates a single agent and can only mutate that agent's runs. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`ADMIN_GUIDE.md`](../../ADMIN_GUIDE.md).
+External agents are scoped — the API key authenticates a single agent and can only mutate that agent's runs. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`admin-guide.md`](../admin-guide.md).
 
 ## Remote agents
 

@@ -58,7 +58,7 @@ cd harbour
 npm install
 ```
 
-`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs` and is invoked through `npm run harbour --`. The runner itself only uses Node stdlib (see [`Dockerfile.runner`](../../Dockerfile.runner) — a minimal image with no `npm install` required).
+`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs` and is invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
 
 ### 3. Paste the connect command
 
@@ -106,7 +106,7 @@ npm run harbour -- agent install
 
 This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60`. launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit (see the [DigitalOcean cloud-init template](../../terraform/cloud-init.yml.tftpl) — it's the model: a `bash -c 'while true; do node bin/harbour.mjs agent run || true; sleep 60; done'` service unit), or use cron. The harbour server's [DigitalOcean deploy](deploy-to-production.md#path-b-digitalocean-droplet-via-terraform) does this for the server-side runner.
+> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit — the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units) is the model: a `bash -c 'while true; do node bin/harbour.mjs agent run || true; sleep 60; done'` service — or use cron.
 
 ## What runs on the remote, what runs on harbour
 
@@ -157,24 +157,6 @@ If polls aren't producing runs:
 - **What does the log say?** `tail -f ~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 - **Can the remote actually reach harbour?** `curl -H "Authorization: Bearer <apiKey>" <url>/api/agents/<agentId>/next?peek=true` — if this fails from the remote, no amount of fiddling with the runner will fix it.
 - **Are jobs scheduled?** Check the agent's job list in the dashboard. A configured agent with no jobs polls forever and reports "Nothing to do."
-
-## Trying it locally before pointing at a real remote box
-
-The repo includes a Docker Compose `remote` profile that brings up a second container acting as a separate machine, sharing the harbour server's network namespace:
-
-```bash
-docker compose --profile remote up -d
-```
-
-This brings up `harbour-remote` (defined in [`docker-compose.yml`](../../docker-compose.yml)). The container loops `node bin/harbour.mjs agent run` every 60s and writes its config to `./data-remote/`.
-
-You still have to run `agent connect` inside the container manually after creating the agent in the dashboard:
-
-```bash
-docker compose exec harbour-remote node bin/harbour.mjs agent connect <blob>
-```
-
-> The blob's URL is whatever your browser was using when you clicked Create — most likely `http://localhost:3030`. Inside the `harbour-remote` container, `localhost` is the container itself, not the harbour server. Edit the blob's URL (or paste a new agent created against `http://harbour:3000`, the compose service hostname) before running `connect`. This is a sandbox for kicking the tires on the connect/poll/run loop, not a substitute for a real second machine.
 
 ## Next
 

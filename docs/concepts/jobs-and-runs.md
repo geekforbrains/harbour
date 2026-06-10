@@ -140,7 +140,7 @@ An external agent doesn't poll the kill signal, so there's no process for Harbou
 
 ## What the agent gets
 
-`/next` returns one bundle: the run, the job, referenced docs, database rows (most-recent 100 per linked table), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [GUIDE.md](../../GUIDE.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
+`/next` returns one bundle: the run, the job, referenced docs, database rows (most-recent 100 per linked table), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [guide.md](../guide.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
 
 A few invariants worth knowing:
 
@@ -156,4 +156,4 @@ A few invariants worth knowing:
 - `src/lib/db/schema.ts` — the `runs` CHECK constraint and the `jobs` columns that drive triggers.
 - `src/app/api/runs/[id]/status/route.ts` — status transitions.
 - `src/app/api/runs/[id]/kill/route.ts` and `src/app/api/runs/[id]/retry/route.ts` — terminal-state operations.
-- `GUIDE.md` — the wire contract an agent reads at `/api/guide`.
+- `guide.md` — the wire contract an agent reads at `/api/guide`.

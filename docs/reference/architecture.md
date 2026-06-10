@@ -3,7 +3,7 @@
 A 30-minute orientation for someone digging in. Pointer-rich, not exhaustive —
 for the exact schema see [database-schema.md](database-schema.md), for the route
 map see [api.md](api.md), for on-the-wire payloads see
-[GUIDE.md](../../GUIDE.md) / [ADMIN_GUIDE.md](../../ADMIN_GUIDE.md).
+[guide.md](../guide.md) / [admin-guide.md](../admin-guide.md).
 
 ## Overview
 
@@ -163,7 +163,7 @@ SIGTERM, waits a grace period, then SIGKILL, and saves the CLI session id to
 ## Runner architecture
 
 The runner is a **separate Node CLI**, not the Next.js process. launchd (macOS)
-invokes it every 60s; Docker/systemd variants loop with `sleep 60`.
+invokes it every 60s; the systemd variant loops with `sleep 60`.
 
 ```
 launchd (com.harbour.agent-runner, StartInterval=60)
@@ -202,7 +202,7 @@ tick while outcomes stay clean (`done`/`waiting`/`skipped`), bailing on
 **Env layering.** Before spawning, the runner strips Claude Code nesting guards,
 then layers the job's decrypted env vars onto the process environment so the
 agent's shell can expand `$VAR` natively. (Hardening the rest of this allowlist
-is a [PRD](../PRD.md) §6 requirement — H4.)
+is a [PRD](../prd.md) §6 requirement — H4.)
 
 ## Frontend
 
@@ -242,6 +242,6 @@ Read these in order:
 7. `bin/lib/runner.mjs` + `bin/lib/providers.mjs` — the client side of polling,
    prompt assembly, kill, and per-CLI parsing.
 8. `bin/lib/bootstrap.mjs` — first-run admin creation.
-9. `GUIDE.md` / `ADMIN_GUIDE.md` — wire contracts, live-served on `/api/guide`
+9. `docs/guide.md` / `docs/admin-guide.md` — wire contracts, live-served on `/api/guide`
    and `/api/admin-guide`.
 10. `src/lib/schedule.ts` — interval / weekly parsing and timezone math.

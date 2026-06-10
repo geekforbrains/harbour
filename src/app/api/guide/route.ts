@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 export async function GET() {
-  const guidePath = path.join(process.cwd(), "GUIDE.md");
+  const guidePath = path.join(process.cwd(), "docs", "guide.md");
   try {
     const content = fs.readFileSync(guidePath, "utf-8");
     return new NextResponse(content, {

@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 
 export const GET = withAuthenticatedUser(async () => {
-  const guidePath = path.join(process.cwd(), "ADMIN_GUIDE.md");
+  const guidePath = path.join(process.cwd(), "docs", "admin-guide.md");
   try {
     const content = fs.readFileSync(guidePath, "utf-8");
     return new NextResponse(content, {
