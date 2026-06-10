@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, ChevronRight, Loader2, Check, Wrench } from "lucide-react";
+import { pairToolEvents } from "@/lib/captain/tool-events";
 
 type OutputEvent = {
   id: number;
@@ -127,56 +128,56 @@ function ToolBlock({
   );
 }
 
-// ── Tool call list for finalized messages ───────────────────────────────
+// ── Collapsible tool-call summary ────────────────────────────────────────
 
-export function ToolCallList({ toolEvents }: { toolEvents: OutputEvent[] }) {
-  const [collapsed, setCollapsed] = useState(true);
+// Single tool-call renderer for both finalized messages and live streaming.
+// Collapsed by default: the only thing visible is one summary line — a plain
+// "N tool calls" count, or "Running <tool>..." while a tool is in flight.
+// Clicking it expands the full ToolBlock list.
+export function ToolCalls({
+  toolEvents,
+  streaming = false,
+}: {
+  toolEvents: OutputEvent[];
+  streaming?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
 
-  const toolPairs = useMemo(() => {
-    const pairs: { name: string; input: string | null; output: string | null }[] = [];
-    let i = 0;
-    while (i < toolEvents.length) {
-      const evt = toolEvents[i];
-      if (evt.event_type === "tool_start") {
-        // Find matching tool_end
-        const endIdx = toolEvents.findIndex(
-          (e, j) => j > i && e.event_type === "tool_end"
-        );
-        pairs.push({
-          name: evt.tool_name || "Tool",
-          input: evt.content,
-          output: endIdx >= 0 ? toolEvents[endIdx].content : null,
-        });
-        if (endIdx >= 0) i = endIdx + 1;
-        else i++;
-      } else {
-        i++;
-      }
-    }
-    return pairs;
-  }, [toolEvents]);
+  const calls = useMemo(
+    () => pairToolEvents(toolEvents, streaming),
+    [toolEvents, streaming]
+  );
 
-  if (toolPairs.length === 0) return null;
+  if (calls.length === 0) return null;
+
+  const activeCall = [...calls].reverse().find((c) => c.active);
 
   return (
     <div className="mt-3">
       <button
-        onClick={() => setCollapsed(!collapsed)}
+        onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-1.5"
       >
-        <Wrench className="h-3 w-3" />
-        <span>{toolPairs.length} tool call{toolPairs.length !== 1 ? "s" : ""}</span>
-        {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        {activeCall ? (
+          <>
+            <Loader2 className="h-3 w-3 text-amber-500 animate-spin shrink-0" />
+            <span>Running {activeCall.name}...</span>
+          </>
+        ) : (
+          <Wrench className="h-3 w-3" />
+        )}
+        <span>{calls.length} tool call{calls.length !== 1 ? "s" : ""}</span>
+        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>
-      {!collapsed && (
+      {expanded && (
         <div className="space-y-1">
-          {toolPairs.map((pair, idx) => (
+          {calls.map((call) => (
             <ToolBlock
-              key={idx}
-              name={pair.name}
-              input={pair.input}
-              output={pair.output}
-              active={false}
+              key={call.id}
+              name={call.name}
+              input={call.input}
+              output={call.output}
+              active={call.active}
             />
           ))}
         </div>
@@ -194,42 +195,14 @@ export function StreamingOutput({
   events: OutputEvent[];
   streaming: boolean;
 }) {
-  const { textContent, toolBlocks } = useMemo(() => {
-    let text = "";
-    const tools: {
-      id: number;
-      name: string;
-      input: string | null;
-      output: string | null;
-      active: boolean;
-    }[] = [];
-
-    let i = 0;
-    while (i < events.length) {
-      const evt = events[i];
-      if (evt.event_type === "text_delta") {
-        text += evt.content || "";
-      } else if (evt.event_type === "tool_start") {
-        // Find matching tool_end
-        const endIdx = events.findIndex(
-          (e, j) => j > i && e.event_type === "tool_end"
-        );
-        const hasEnd = endIdx >= 0;
-        tools.push({
-          id: evt.id,
-          name: evt.tool_name || "Tool",
-          input: evt.content,
-          output: hasEnd ? events[endIdx].content : null,
-          active: !hasEnd && streaming,
-        });
-        if (hasEnd) i = endIdx;
-      }
-      // Skip thinking, tool_end (handled above), info, result, error handled below
-      i++;
-    }
-
-    return { textContent: text, toolBlocks: tools };
-  }, [events, streaming]);
+  const textContent = useMemo(
+    () =>
+      events
+        .filter((e) => e.event_type === "text_delta")
+        .map((e) => e.content || "")
+        .join(""),
+    [events]
+  );
 
   const errorEvents = events.filter((e) => e.event_type === "error");
 
@@ -251,27 +224,8 @@ export function StreamingOutput({
         </div>
       ))}
 
-      {/* Tool blocks pushed to bottom */}
-      {toolBlocks.length > 0 && (
-        <div className="mt-3 space-y-1">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
-            <Wrench className="h-3 w-3" />
-            <span>
-              {toolBlocks.filter((t) => !t.active).length}/{toolBlocks.length} tool call
-              {toolBlocks.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-          {toolBlocks.map((tool) => (
-            <ToolBlock
-              key={tool.id}
-              name={tool.name}
-              input={tool.input}
-              output={tool.output}
-              active={tool.active}
-            />
-          ))}
-        </div>
-      )}
+      {/* Tool calls collapsed behind a single summary line at the bottom */}
+      <ToolCalls toolEvents={events} streaming={streaming} />
     </div>
   );
 }

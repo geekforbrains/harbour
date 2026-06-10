@@ -6,7 +6,7 @@ import { apiFetch, scoped } from "@/lib/api/client";
 import { useScope } from "@/lib/hooks/use-project-filter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { StreamingOutput, ToolCallList } from "@/components/app/captain-message";
+import { StreamingOutput, ToolCalls } from "@/components/app/captain-message";
 import { ScopePrompt } from "@/components/app/scope-prompt";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
@@ -322,7 +322,7 @@ function ChatView({
                       <div className="prose prose-sm dark:prose-invert max-w-none">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                       </div>
-                      <ToolCallList toolEvents={msg.toolEvents} />
+                      <ToolCalls toolEvents={msg.toolEvents} />
                     </div>
                   )}
                 </div>
