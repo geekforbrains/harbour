@@ -4,16 +4,17 @@ This document covers everything an admin agent needs to manage a Harbour instanc
 
 ## Overview
 
-You have full admin access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage agents, jobs, runs, docs, databases, env vars, projects, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
+You have admin access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage orgs, projects, agents, jobs, runs, docs, databases, env vars, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
 
 Key concepts:
-- **Agents** — workers that poll for and execute runs. External agents use API keys; harbour agents use built-in CLI tools.
-- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun commands. Workflow jobs run shell commands with no agent or LLM.
-- **Runs** — a single execution of a job (or a one-off task). Agents claim runs and post activity updates.
+- **Orgs** — top-level tenants. Every project belongs to an org; resources never cross org lines.
+- **Projects** — containers inside an org. Every agent and job lives in exactly one project. Docs, databases, and env vars are either project-level or org-level (shared across the org's projects).
+- **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
+- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun commands. Workflow jobs run shell commands with no agent or LLM.
+- **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into runs automatically.
 - **Databases** — SQLite tables agents create and manage, injected into runs.
 - **Env Vars** — encrypted key-value pairs (API keys, tokens) decrypted at runtime.
-- **Projects** — optional groupings to organize agents, jobs, docs, env vars, and databases.
 
 ## Authentication
 
@@ -23,38 +24,84 @@ All API requests require your admin key as a Bearer token:
 Authorization: Bearer hbr_adm_<your_key>
 ```
 
-This key gives you full user-level access. All actions are attributed to the user who created the key.
+The key acts as the user who created it — all actions are attributed to that user, and your access mirrors theirs. An instance admin reaches every org; an org member reaches only their orgs, at their role (`editor` or `viewer`). Endpoints marked **instance admin** below return 403 for everyone else.
+
+## Scope: Orgs and Projects
+
+List and create endpoints are scoped by query param — `?orgId=<id>` for org-level resources (runs, docs, databases, env vars, projects) and `?projectId=<id>` for project-level ones (agents, jobs). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
+
+Discover your scope first:
+
+```
+GET /api/auth/me    → { "type": "user", "user": {...}, "orgs": [...] }
+GET /api/projects?orgId=<id>
+```
+
+### Create an Org (instance admin)
+```
+POST /api/orgs
+Content-Type: application/json
+
+{ "name": "Acme", "timezone": "America/New_York" }
+```
+`timezone` is optional and stored in the org's settings.
+
+### Update an Org
+```
+PUT /api/orgs?orgId=<id>    { "name": "...", "settings": { "timezone": "..." } }
+```
+Settings are merged with the existing values, not replaced.
+
+### List / Create Projects
+```
+GET  /api/projects?orgId=<id>
+POST /api/projects?orgId=<id>    { "name": "Marketing" }
+```
+
+### Get / Update / Archive a Project
+```
+GET    /api/projects/:id
+PUT    /api/projects/:id    { "name": "New Name" }
+DELETE /api/projects/:id
+```
+
+DELETE archives the project (soft delete) — its agents, jobs, and resources are kept but hidden.
 
 ## Agents
 
 ### List Agents
 ```
-GET /api/agents
 GET /api/agents?projectId=<id>
 ```
 
 ### Create an Agent
 ```
-POST /api/agents
+POST /api/agents?projectId=<id>
 Content-Type: application/json
 
 {
   "name": "Social Media Bot",
   "description": "Posts content and monitors engagement",
-  "type": "external"
+  "cli": "claude"
 }
 ```
 
-Type is `external` (default) or `harbour` (requires `cli`, `model`, `thinking` fields). Harbour agents also accept an optional `eager` boolean — when true, the local runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
+`name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Optional fields:
+- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted)
+- `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
+- `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.
+- `color` — identity hue (auto-assigned if omitted)
 
-Response includes `apiKey` — save it, shown only once. Give this key and the agent's invite text to the worker agent.
+Response includes `apiKey` — save it, shown only once. Any HTTP client holding this key can act as the agent; the worker contract is served at `GET /api/guide`.
 
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "New Name", "description": "...", "eager": true }
+PUT    /api/agents/:id    { "name": "...", "description": "...", "model": "...", "thinking": "...", "eager": true }
 DELETE /api/agents/:id
 ```
+
+Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically.
 
 ### Rotate Agent API Key
 ```
@@ -71,7 +118,6 @@ GET /api/agents/:id/jobs
 
 ### List Jobs
 ```
-GET /api/jobs
 GET /api/jobs?projectId=<id>
 ```
 
@@ -89,11 +135,11 @@ Content-Type: application/json
 
 `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"`.
 
-Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
 ### Create a Workflow (No Agent)
 ```
-POST /api/jobs
+POST /api/jobs?projectId=<id>
 Content-Type: application/json
 
 {
@@ -104,7 +150,7 @@ Content-Type: application/json
 }
 ```
 
-Workflows don't belong to an agent. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail).
+Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
 
 ### Schedule Format
 
@@ -138,7 +184,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand` (agent jobs), `command` (workflows), `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```
@@ -147,7 +193,7 @@ Content-Type: application/json
 
 { "instructions": "Optional extra instructions for this run" }
 ```
-Creates and queues a run immediately, regardless of schedule. Body is optional. Returns `{ "jobId": "...", "runId": "..." }` with status 201.
+Creates and queues a run immediately, regardless of schedule. Body is optional. Returns `{ "jobId": "...", "runId": "..." }` with status 201. This is also the way to run something ad hoc — there is no standalone "create run" endpoint; every run comes from a job.
 
 ### Link Resources to a Job
 ```
@@ -159,31 +205,22 @@ DELETE /api/jobs/:id/env-vars/:envVarId
 DELETE /api/jobs/:id/data/:dataId
 ```
 
+### List a Job's Runs
+```
+GET /api/jobs/:id/runs
+```
+
 ## Runs
 
 ### List Runs
 ```
-GET /api/runs
-GET /api/runs?filter=waiting
-GET /api/runs?filter=recent
-GET /api/runs?projectId=<id>
+GET /api/runs?orgId=<id>
+GET /api/runs?orgId=<id>&filter=waiting
+GET /api/runs?orgId=<id>&filter=recent
+GET /api/runs?orgId=<id>&projectId=<id>
 ```
 
-Default returns all active runs grouped by status. `filter=waiting` returns runs needing human input. `filter=recent` returns recently completed runs.
-
-### Create a One-Off Run
-```
-POST /api/runs
-Content-Type: application/json
-
-{
-  "agentId": "uuid",
-  "name": "Quick analysis",
-  "instructions": "Analyze the latest metrics and report back",
-  "docIds": ["uuid"],
-  "envVarIds": ["uuid"]
-}
-```
+Default returns all active runs grouped by status. `filter=waiting` returns runs needing human input. `filter=recent` returns recently completed runs. `projectId` narrows any of these to one project.
 
 ### Get a Run
 ```
@@ -218,7 +255,7 @@ Only works for runs whose status is `failed`, `skipped`, or `killed` — other s
 ```
 POST /api/runs/:id/kill
 ```
-Only works for runs in `running` status handled by a runner — `harbour`-type agent runs and workflow runs. External-agent runs and non-running statuses return 400/409. The runner polls for the kill flag and stops its child process; commenting on a killed agent run resumes the CLI session where it left off, while a killed workflow run is re-run via retry.
+Only works for runs in `running` status handled by a runner — harbour-run agent runs and workflow runs. Runs driven by an external HTTP client (no runner polling the kill flag) and non-running statuses return 400/409. The runner polls for the kill flag and stops its child process; commenting on a killed agent run resumes the CLI session where it left off, while a killed workflow run is re-run via retry.
 
 ### Delete a Run
 ```
@@ -259,8 +296,8 @@ Per-file size cap is set by the server's `HARBOUR_MAX_UPLOAD_MB` (default 500MB)
 
 ### List Docs
 ```
-GET /api/docs
-GET /api/docs?projectId=<id>
+GET /api/docs?orgId=<id>
+GET /api/docs?orgId=<id>&projectId=<id>
 ```
 
 ### Create a Doc
@@ -268,8 +305,10 @@ GET /api/docs?projectId=<id>
 POST /api/docs
 Content-Type: application/json
 
-{ "title": "Brand Guidelines", "content": "## Voice\n..." }
+{ "title": "Brand Guidelines", "content": "## Voice\n...", "projectId": "uuid" }
 ```
+
+`projectId` is optional — with it the doc is project-level; without it the doc is org-level, shared across the org's projects (org scope comes from `?orgId=<id>` when no project is given).
 
 ### Get / Update / Delete a Doc
 ```
@@ -282,14 +321,14 @@ DELETE /api/docs/:id
 ```
 POST /api/docs/:id/pin
 ```
-Toggles pinned status. Pinned docs are auto-attached to all new jobs and one-off runs.
+Toggles pinned status. Pinned docs are auto-attached to new jobs created in their scope — an org-level pinned doc to every new job in the org, a project-level one to new jobs in that project.
 
 ## Databases
 
 ### List Databases
 ```
-GET /api/databases
-GET /api/databases?projectId=<id>
+GET /api/databases?orgId=<id>
+GET /api/databases?orgId=<id>&projectId=<id>
 ```
 
 ### Create a Database
@@ -306,7 +345,7 @@ Content-Type: application/json
 }
 ```
 
-Column types: `TEXT`, `INTEGER`, `REAL`. Every table gets an auto-incrementing `_id` column.
+Column types: `TEXT`, `INTEGER`, `REAL`. Every table gets an auto-incrementing `_id` column. `projectId` is optional (body or query) — without it the database is org-level. If a database with that name already exists in scope, the existing one is returned instead of creating a duplicate.
 
 ### Get / Delete a Database
 ```
@@ -348,8 +387,8 @@ DELETE /api/databases/:id/rows/:rowId
 
 ### List Env Vars
 ```
-GET /api/env-vars
-GET /api/env-vars?projectId=<id>
+GET /api/env-vars?orgId=<id>
+GET /api/env-vars?orgId=<id>&projectId=<id>
 ```
 
 ### Create an Env Var
@@ -357,8 +396,10 @@ GET /api/env-vars?projectId=<id>
 POST /api/env-vars
 Content-Type: application/json
 
-{ "name": "GITHUB_TOKEN", "value": "ghp_..." }
+{ "name": "GITHUB_TOKEN", "value": "ghp_...", "projectId": "uuid" }
 ```
+
+`projectId` is optional — without it the env var is org-level (org scope from `?orgId=<id>`).
 
 ### Get / Update / Delete an Env Var
 ```
@@ -373,67 +414,75 @@ DELETE /api/env-vars/:id
 ```
 GET /api/env-vars/:id/value
 ```
-Returns `{ "value": "..." }`. Requires user-level auth — agent API keys are rejected with 403.
+Returns `{ "value": "..." }`. Requires **editor** role on the owning org — viewers and agent API keys are rejected with 403.
 
 ### Pin/Unpin an Env Var
 ```
 POST /api/env-vars/:id/pin
 ```
-Toggles pinned status. Pinned env vars are auto-attached to all new jobs and one-off runs.
+Toggles pinned status. Pinned env vars are auto-attached to new jobs created in their scope, same as pinned docs.
 
-## Projects
-
-Projects are optional groupings. Entities live at the top level and can belong to multiple projects.
-
-### List / Create Projects
-```
-GET  /api/projects
-POST /api/projects    { "name": "Marketing" }
-```
-
-### Get / Update / Delete a Project
-```
-GET    /api/projects/:id
-PUT    /api/projects/:id    { "name": "New Name" }
-DELETE /api/projects/:id
-```
-
-Deleting a project only removes the grouping — nothing else is affected.
-
-### Link / Unlink Entities
-```
-PATCH /api/projects/:id
-Content-Type: application/json
-
-{ "action": "link", "type": "agent", "targetId": "uuid" }
-{ "action": "unlink", "type": "job", "targetId": "uuid" }
-```
-
-Valid types: `agent`, `job`, `doc`, `env-var`, `database`.
-
-Adding a job to a project auto-links its agent, docs, env vars, and databases.
-
-## Settings
+## Settings (instance admin)
 
 ### Get All Settings
 ```
 GET /api/settings
 ```
+Sensitive values come back masked.
 
 ### Update Settings
 ```
 PUT /api/settings
 Content-Type: application/json
 
-{ "timezone": "America/New_York", "signup_enabled": "false" }
+{ "timezone": "America/New_York", "recent_runs_limit": "20" }
 ```
+
+Values are strings. `timezone` is the default schedule timezone; `recent_runs_limit` caps the dashboard's recent-runs list. Per-org timezone is set via `PUT /api/orgs?orgId=<id>`.
 
 ### List Timezones
 ```
 GET /api/settings/timezones
 ```
 
-## Admin API Keys
+## Users (instance admin)
+
+### List Users
+```
+GET /api/users
+```
+Returns all users with their org memberships and a `pending` flag (true until the user sets a password).
+
+### Create a User
+```
+POST /api/users
+Content-Type: application/json
+
+{ "email": "ana@example.com", "displayName": "Ana", "isInstanceAdmin": false }
+```
+Users are created without a password — mint a set-password link next.
+
+### Set-Password Link
+```
+POST /api/users/:id/set-password-link
+```
+Returns `{ "token": "...", "url": "...", "expiresAt": ... }` — a single-use onboarding/reset link, shown only once. Hand it to the user out of band.
+
+### Update / Delete a User
+```
+PUT    /api/users/:id    { "displayName": "...", "isInstanceAdmin": true }
+DELETE /api/users/:id
+```
+
+### Org Members
+```
+GET    /api/orgs/:id/members
+POST   /api/orgs/:id/members    { "userId": "uuid", "role": "editor" }
+DELETE /api/orgs/:id/members/:userId
+```
+POST also changes an existing member's role (`editor` or `viewer`). Instance admins already span every org and cannot hold explicit memberships.
+
+## Admin API Keys (instance admin)
 
 You can manage other admin keys (create keys for other agents, revoke access).
 
@@ -460,29 +509,27 @@ DELETE /api/admin-api-keys/:id
 ## Common Workflows
 
 ### Set up a new agent with a recurring job
-1. `POST /api/agents` — create the agent, save the API key
-2. `POST /api/agents/:id/jobs` — create a job with schedule and instructions
-3. `POST /api/docs` — create any docs the agent needs
-4. `POST /api/jobs/:id/docs` — link docs to the job
-5. `POST /api/env-vars` — create env vars (API keys, tokens)
-6. `POST /api/jobs/:id/env-vars` — link env vars to the job
-7. Give the worker agent its API key and the Harbour URL
+1. `GET /api/auth/me` — find your org; `GET /api/projects?orgId=<id>` — pick a project (or `POST /api/projects?orgId=<id>` to create one)
+2. `POST /api/agents?projectId=<id>` — create the agent (name + cli), save the API key
+3. `POST /api/agents/:id/jobs` — create a job with schedule and instructions
+4. `POST /api/docs` — create any docs the agent needs
+5. `POST /api/jobs/:id/docs` — link docs to the job
+6. `POST /api/env-vars` — create env vars (API keys, tokens)
+7. `POST /api/jobs/:id/env-vars` — link env vars to the job
+8. Give the worker agent its API key and the Harbour URL
 
 ### Set up a workflow (no agent)
-1. `POST /api/jobs` — create the workflow with `command` and schedule
-2. Place the script in `~/.harbour/workflows/` on the runner host
-3. Optionally link docs/env vars for context (passed via stdin JSON)
+1. `POST /api/jobs?projectId=<id>` — create the workflow with `command` and schedule
+2. `POST /api/workflow-runners?orgId=<id>` — mint runner credentials; run the returned `workflow connect` command on the runner host
+3. Place the script in `~/.harbour/workflows/` on the runner host
+4. Optionally link docs/env vars for context (passed via stdin JSON)
 
 ### Respond to a waiting run
-1. `GET /api/runs?filter=waiting` — find runs needing input
+1. `GET /api/runs?orgId=<id>&filter=waiting` — find runs needing input
 2. `GET /api/runs/:id` — read the activity log to understand what the agent needs
 3. `POST /api/runs/:id/activity` — post your response (auto-transitions to `pending`)
 
-### Organize work into a project
-1. `POST /api/projects` — create the project
-2. `PATCH /api/projects/:id` — link agents, jobs, docs, env vars, databases
-
 ### Check system status
-1. `GET /api/agents` — see all agents and their poll status
-2. `GET /api/runs` — see active, waiting, and recent runs
-3. `GET /api/runs?filter=waiting` — see what needs human attention
+1. `GET /api/agents?projectId=<id>` — see a project's agents and their poll status
+2. `GET /api/runs?orgId=<id>` — see active, waiting, and recent runs
+3. `GET /api/runs?orgId=<id>&filter=waiting` — see what needs human attention

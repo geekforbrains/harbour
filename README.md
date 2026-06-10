@@ -74,7 +74,7 @@ Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https
 npm run harbour -- agent install   # polls every 60s; logs at ~/.harbour/runner.log
 ```
 
-`agent list` / `agent run` / `agent uninstall` manage it. For an **external** agent, create one to get an API key and paste the invite text into your agent's system prompt — any HTTP poller works.
+`agent list` / `agent run` / `agent uninstall` manage it. For an **external** agent — any HTTP poller you write yourself — create the agent with "Runs on a different machine" checked: the connect command's blob carries the API key, and the wire contract at `/api/guide` is the onboarding doc.
 
 > More: [agents](docs/concepts/agents.md) (eager polling, per-agent Claude Code permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
 
@@ -92,7 +92,7 @@ An **admin API key** lets a separate management agent operate Harbour itself —
 
 Start with the **[docs map](docs/README.md)**, which routes you to the right page. The **[PRD](docs/PRD.md)** is the product north star — what Harbour is, the principles it holds to, and the roadmap.
 
-- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
 - **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
 - **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API](docs/reference/api.md), [design language](docs/reference/design-language.md)
 

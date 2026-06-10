@@ -23,7 +23,13 @@ Harbour is running at http://localhost:3030
 Data is persisted in ./data (DB, uploads, encryption key)
 ```
 
-Visit [http://localhost:3030](http://localhost:3030) and sign up. The first user to register is just a normal user — Harbour has no separate "admin" role for the dashboard.
+There's no web signup — create the instance admin from the shell (one-time, interactive, runs inside the container):
+
+```bash
+docker compose exec harbour node bin/harbour.mjs setup
+```
+
+Then visit [http://localhost:3030](http://localhost:3030), log in, and create your first org and project from the dashboard — every agent and job lives inside a project.
 
 > All state lives in `./data` next to the repo. Back that directory up and you have a snapshot of everything (DB, uploads, encryption key, runner config). `make clean` deletes it; don't run that on a real install.
 
@@ -46,10 +52,11 @@ git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
+npm run harbour -- setup   # one-time: create the instance admin (interactive)
 npm start
 ```
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000) and sign up.
+`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
 
 > Plain `npm start` uses port 3000; Docker uses 3030. They're not interchangeable URLs — make sure your bookmarks match the path you took.
 
@@ -59,7 +66,7 @@ For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 —
 
 ## First agent and first job
 
-Whichever path you took, the dashboard is now up. The setup below uses the **External** agent flow because it's path-agnostic — you can verify it with curl from your terminal. (Path C below swaps in a built-in CLI runner.)
+Whichever path you took, the dashboard is now up and you have a project. Every agent picks a CLI tool (Claude Code, Codex, or Gemini) at creation, but the wire contract is plain HTTP — so this walkthrough drives the loop with curl from your terminal, exactly the way any external runtime would. (Path C below lets the built-in runner do this for you.)
 
 > Replace `http://localhost:3030` with `http://localhost:3000` if you took Path B. The rest of the commands are identical.
 
@@ -68,24 +75,25 @@ Whichever path you took, the dashboard is now up. The setup below uses the **Ext
 In the dashboard:
 
 1. **Agents → New Agent** in the top right.
-2. Pick **External** ("Bring your own agent").
+2. Pick a CLI tool (any of them — for this curl walkthrough it won't actually be invoked).
 3. Name it — `Researcher` is fine.
-4. **Create**.
+4. Check **Runs on a different machine** — this stops the local runner from claiming the agent's work and hands you the credentials instead.
+5. **Create**.
 
-The dialog flips to a confirmation panel showing an API key that looks like:
+The dialog flips to a confirmation panel showing a connect command ending in a base64 blob. That blob is the credential bundle — decode it to get your API key and agent id:
 
+```bash
+echo '<blob>' | base64 -d
+# {"url":"http://localhost:3030","agentId":"...","apiKey":"hbr_...","name":"Researcher"}
 ```
-hbr_a0be210a2478ae2c38b8f2535747fea0...
-```
 
-Copy it now. The full key is shown once and never again. (You can rotate it later from the agent's detail page if you lose it.)
+Copy the `apiKey` now. The full key is shown once and never again. (You can rotate it later from the agent's detail page if you lose it.)
 
 ### 2. Create a job
 
 On the agent's detail page, click **New Job**. Fill in:
 
 - **Name** — `Daily check`
-- **Trigger** — Schedule (the default)
 - **Schedule** — pick `Every 5 minutes` from the picker
 - **Instructions** — `Say hello.`
 - **Create**
@@ -217,7 +225,7 @@ Researcher     claude   opus     —          http://localhost:3000
 npm run harbour -- agent install
 ```
 
-This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` so launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log`.
+This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` so launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log` (stdout) and `~/.harbour/runner.err.log` (stderr).
 
 > **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, write your own systemd unit or schedule `npm run harbour -- agent run` from cron.
 

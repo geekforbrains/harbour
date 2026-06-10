@@ -16,12 +16,11 @@ The dashboard's visual system is documented in [docs/reference/design-language.m
 ## Key paths
 
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
-- `src/app/api/` — API routes (agent-facing + dashboard), all use `withAuth`/`withUserAuth` wrappers
-- `src/lib/db/projects.ts` — project CRUD + linking/unlinking (auto-links job dependencies)
+- `src/app/api/` — API routes (agent-facing + dashboard), all use the auth wrappers from `src/lib/auth.ts`
+- `src/lib/db/projects.ts` — project CRUD (create, rename, archive/unarchive, delete)
 - `src/components/app/project-switcher.tsx` — sidebar/mobile project dropdown with create dialog
-- `src/components/app/project-link-dialog.tsx` — "Add Existing" dialog for linking items to projects
 - `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
-- `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
+- `src/lib/auth.ts` — `withOrgAuth`, `withProjectAuth`, `withResourceAuth`, `withAgentOrUser`, `withInstanceAdmin`, `withAgentAuth` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
 - `src/lib/db/admin-api-keys.ts` — admin API key CRUD + authentication
 - `ADMIN_GUIDE.md` — admin agent onboarding guide, served at `/api/admin-guide`
 - `src/lib/db/` — database schema, queries, migrations
@@ -29,7 +28,7 @@ The dashboard's visual system is documented in [docs/reference/design-language.m
 - `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
 - `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
 - `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
-- `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component, dynamic type toggle for agent/workflow)
+- `src/components/app/create-dialog.tsx` — New Job dialog (agent job or workflow job; v2 removed one-off "New Run" — ad-hoc runs come from triggering a job)
 - `src/components/app/trigger-dialog.tsx` — shared trigger confirmation modal with optional extra instructions
 - `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
 - `bin/` — CLI entry point and agent runner (harbour agents, workflow execution, providers, launchd install)
@@ -40,18 +39,18 @@ The dashboard's visual system is documented in [docs/reference/design-language.m
 
 - Jobs are static configuration (what to do, when, which docs/databases/env vars). Runs are the dynamic unit of work.
 - Jobs are either agent jobs (belong to an agent), workflow-only jobs (no agent, shell command only), or combined (workflow gates the agent). Workflow-only jobs have nullable `agent_id`.
-- Docs and env vars are top-level, linked to jobs. Injected into runs automatically via `/next`.
-- Pinned docs and env vars are auto-attached to all new jobs and one-off runs.
+- Docs, databases, and env vars are org- or project-level, linked to jobs. Injected into runs automatically via `/next`.
+- Pinned docs and env vars are auto-attached to new jobs created in their scope.
 - Agents poll for work via `/api/agents/:id/next`. Agentless workflow jobs are discovered via `/api/workflows/next`. Harbour never calls out to agents.
-- Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`.
-- Failed/skipped runs can be retried (go back to `pending`).
-- The database is a single SQLite file (default `./harbour.db`).
+- Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`/`killed`.
+- Failed/skipped/killed runs can be retried (agent runs go back to `pending`; workflow runs requeue as `scheduled`).
+- The database is a single SQLite file (default `~/.harbour/harbour.db`, override via `HARBOUR_DB_PATH`).
 - Env vars are encrypted with AES-256-GCM. Key at `~/.harbour/encryption.key` (auto-generated on first run).
 - System timezone (configured in Settings) is used for all schedule calculations.
 - Model and thinking/effort can be set per agent (default) and overridden per job.
-- API routes use `withAuth(handler)` or `withUserAuth(handler)` — never inline auth checks. Agent-facing mutation routes use `requireAgentOwnership()` to enforce scope.
-- Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
-- Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
+- API routes use the auth wrappers from `src/lib/auth.ts` (`withOrgAuth`, `withProjectAuth`, `withResourceAuth`, `withAgentOrUser`, `withInstanceAdmin`) — never inline auth checks. Agent-facing routes scope via `requireAgentProject()`/`requireAgentSelf()`.
+- Job and run creation functions (`createJob`, `createWorkflow`, `getAgentNextRun`) are wrapped in transactions.
+- Multi-tenancy: orgs → projects. Agents and jobs belong to exactly one project (`project_id`); docs, databases, and env vars are project-level or org-level (nullable `project_id`). Resources never cross org lines. Project-scoped list routes require `?projectId=`, org-scoped ones `?orgId=` (or the `harbour_org` cookie).
 
 ## Dev server
 

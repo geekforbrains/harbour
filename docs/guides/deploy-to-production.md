@@ -18,7 +18,13 @@ make run
 
 `make run` is just `docker compose up -d --build` plus a friendly status message — see [`Makefile`](../../Makefile). On first run it builds the image (a few minutes) and starts the container.
 
-Visit `http://<host>:3030`. Sign up — the first account is whoever signs up first. Then go to **Settings** and turn off `signup_enabled` so nobody else can register against your install.
+Create the instance admin (one-time, interactive — runs inside the container):
+
+```bash
+docker compose exec harbour node bin/harbour.mjs setup
+```
+
+Then visit `http://<host>:3030` and log in. There's no web signup — further accounts are created from the dashboard (Settings → Users) via set-password links.
 
 ### 2. Operating it
 
@@ -124,7 +130,7 @@ Sensible defaults:
 - `basic_auth_user = "team"` — the Basic Auth username.
 - `region = "sfo3"` — droplet region.
 - `size = "s-2vcpu-4gb"` — about $24/mo. `s-1vcpu-2gb` (~$12/mo) works for light use.
-- `harbour_ref = "main"` — the git ref to check out after cloning. Pin to a tag for production (e.g. `"v1.14.0"`).
+- `harbour_ref = "main"` — the git ref to check out after cloning. Pin to a tag for production (e.g. `"v2.0.0-beta.1"`).
 
 Optionally lock SSH down to your IP:
 
@@ -154,13 +160,19 @@ ssh root@<droplet_ip> 'tail -f /var/log/cloud-init-output.log'
 
 Look for the line `HARBOUR READY -- https://<your-domain>`. Typical time: 3–6 minutes (longer if cert issuance takes a few retries).
 
-### 6. Sign up the first user
+### 6. Create the admin and log in
 
-Visit `https://<your-domain>`. The browser will prompt for HTTP Basic Auth — use the user/password from `terraform.tfvars`.
+There's no web signup — create the instance admin over SSH (one-time, interactive). Run it as the `harbour` user so the CLI writes to the same `/home/harbour/.harbour` state the service uses:
 
-Past Basic Auth, you land on harbour's signup screen. Create your account.
+```bash
+ssh root@<droplet_ip>
+su - harbour
+cd /opt/harbour
+node bin/harbour.mjs setup
+exit
+```
 
-> **Disable signup right after.** Settings → Signup → off. The Basic Auth gate is shared across the team; harbour accounts are per-person. Until you turn signup off, anyone past the gate can mint another account.
+Visit `https://<your-domain>`. The browser will prompt for HTTP Basic Auth — use the user/password from `terraform.tfvars`. Past Basic Auth, log in with the admin account you just created. The Basic Auth gate is shared across the team; harbour accounts are per-person — mint them from the dashboard (Settings → Users) via set-password links.
 
 ### 7. Auth the AI CLIs
 

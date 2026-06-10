@@ -80,7 +80,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 1. Any stale `running` run past its job's timeout is automatically failed first
 2. If the agent has a run in `running` status, returns `null` (agent is busy)
 3. Any `pending` run (human responded, ready to resume) — resume it
-4. Any `scheduled` run ready to start (one-off runs from dashboard) — claim it
+4. Any `scheduled` run ready to start (triggered from the dashboard or `POST /api/jobs/:id/trigger`) — claim it
 5. Any recurring job past its scheduled time without an active run — create a new run
 6. Nothing to do — returns `null`
 
@@ -99,6 +99,8 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "name": "Morning Tweet",
     "instructions": "Before doing anything else, set a short title ...\n\n---\n\nWrite an engaging tweet about...",
     "prerun": null,
+    "postrun": null,
+    "postrun_gates": false,
     "command": null,
     "workflow": null,
     "model": null,
@@ -106,6 +108,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "title_format": null,
     "timeout_minutes": 30
   },
+  "agent": { "cli": "claude", "model": null, "thinking": null, "eager": false },
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
@@ -169,7 +172,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gate commands — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
@@ -186,7 +189,7 @@ Check if work is available without claiming anything. Useful for cron guards. Re
 - `{"available": false, "reason": "busy"}` — agent already has a `running` run
 - `{"available": false, "reason": "nothing_to_do"}` — no work
 - `{"available": true, "type": "pending_resume", "run_id": "...", "job_name": "..."}` — a `pending` run is ready to resume
-- `{"available": true, "type": "scheduled_run", "run_id": "...", "job_name": "..."}` — a one-off scheduled run is due
+- `{"available": true, "type": "scheduled_run", "run_id": "...", "job_name": "..."}` — a triggered or requeued `scheduled` run is due
 - `{"available": true, "type": "scheduled", "job_id": "...", "job_name": "..."}` — a recurring job is due (run will be created on the next non-peek call)
 
 ## Run Lifecycle
@@ -213,14 +216,16 @@ Content-Type: application/json
 { "status": "waiting" }
 ```
 
-Valid statuses (the API accepts any of these in the body):
-- `running` — agent is actively working
-- `waiting` — agent needs human input (surfaces on dashboard)
-- `pending` — human has responded, queued for agent pickup (also set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run)
+Statuses you set (these are the `status_options` in the `/next` payload):
 - `done` — completed successfully
 - `failed` — something broke (or timed out)
-- `skipped` — workflow determined nothing to do (exit code 77)
-- `killed` — set by the harbour-agent runner when a kill request was honored; not used by external agents
+- `waiting` — agent needs human input (surfaces on dashboard)
+
+Statuses you'll see but shouldn't set yourself (the API accepts them, but they're managed by Harbour or the runner):
+- `running` — set when a run is claimed via `/next`
+- `pending` — set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run; queued for agent pickup
+- `skipped` — a workflow or prerun gate determined there was nothing to do (exit code 77)
+- `killed` — set by the harbour-agent runner when a kill request was honored
 
 `scheduled` is a server-managed status (assigned when a run is created from the dashboard or via `POST /api/jobs/:id/trigger`) and cannot be set by an agent.
 
@@ -392,7 +397,7 @@ Content-Type: application/json
 
 ## Docs
 
-Docs are top-level resources linked to jobs. When a job fires, all its linked docs are included in the `/next` payload automatically. Pinned docs are auto-attached to all new jobs and one-off runs. Agents can also create and update docs:
+Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the `/next` payload automatically. Pinned docs are auto-attached to new jobs created in their scope. Agents can also create and update docs:
 
 ### Create a Doc
 
@@ -409,10 +414,10 @@ Content-Type: application/json
 PUT /api/docs/:id
 Content-Type: application/json
 
-{ "content": "Updated content..." }
+{ "title": "New Title", "content": "Updated content..." }
 ```
 
-Doc revisions are preserved automatically.
+Both fields are optional — send either or both. Doc revisions are preserved automatically.
 
 ## Reference Runner
 

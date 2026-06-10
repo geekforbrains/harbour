@@ -1,7 +1,7 @@
 # API
 
 The codebase-side route map: every route file, its HTTP method, the auth wrapper
-(and minimum role), and a one-liner. **67 route files.**
+(and minimum role), and a one-liner. **77 route files.**
 
 The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
@@ -70,7 +70,7 @@ There is **no** signup route.
 |---|---|---|---|
 | GET / POST | `/api/projects` | `withOrgAuth` (viewer / editor) | List / create projects in the org |
 | GET | `/api/projects/:id` | `withResourceAuth` project (viewer) | Fetch |
-| PUT / DELETE | `/api/projects/:id` | `withResourceAuth` project (editor) | Rename / delete |
+| PUT / DELETE | `/api/projects/:id` | `withResourceAuth` project (editor) | Rename / archive (soft delete) |
 
 ## Agents
 
@@ -82,6 +82,7 @@ There is **no** signup route.
 | POST | `/api/agents/:id/rotate-key` | `withResourceAuth` agent (editor) | New API key |
 | GET / POST | `/api/agents/:id/jobs` | `withResourceAuth` agent (viewer / editor) | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withResourceAuth` agent (viewer) | Run history |
+| POST | `/api/agents/:id/data` | `withAgentOrUser` (editor) | Convenience: create a database, optionally link to a job + seed rows |
 | GET | `/api/agents/:id/next` | `withAgentAuth` + `requireAgentSelf` | **Poll** for work (`?peek=true`) |
 
 ## Jobs
@@ -91,9 +92,12 @@ There is **no** signup route.
 | GET / POST | `/api/jobs` | `withProjectAuth` (viewer / editor) | List jobs / create a **workflow** job |
 | GET | `/api/jobs/:id` | `withResourceAuth` job (viewer) | Fetch |
 | PUT / DELETE | `/api/jobs/:id` | `withResourceAuth` job (editor) | Update / delete |
+| GET | `/api/jobs/:id/runs` | `withResourceAuth` job (viewer) | List the job's runs |
 | POST | `/api/jobs/:id/trigger` | `withAgentOrUser` (editor) | Create an immediate run (optional extra instructions) |
 | POST / DELETE | `/api/jobs/:id/docs[/:docId]` | `withResourceAuth` job (editor) | Link / unlink a doc |
 | POST / DELETE | `/api/jobs/:id/env-vars[/:envVarId]` | `withResourceAuth` job (editor) | Link / unlink a secret |
+| POST | `/api/jobs/:id/data` | `withAgentOrUser` (editor) | Link a database |
+| DELETE | `/api/jobs/:id/data/:dataId` | `withResourceAuth` job (editor) | Unlink a database |
 
 ## Runs
 

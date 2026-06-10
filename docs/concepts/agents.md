@@ -153,7 +153,7 @@ RUN_ID=$(echo "$RESPONSE" | jq -r '.run.id')
 
 The `api.endpoints` map in the response gives you every URL pre-resolved with this run's ID — `update_status`, `post_activity`, `upload_attachment`, etc. You don't construct paths yourself; you read them out of the payload.
 
-The dashboard shows an "Invite text" you can paste straight into your agent's system prompt. It includes the API key, the `HARBOUR_URL`, the polling endpoint, and the contract for what the agent owes back ("set a final status, post activity, full spec at `/api/guide`"). Treat that text as the agent's onboarding doc.
+To get an agent's credentials, create it with **Runs on a different machine** checked — the connect command's base64 blob decodes to `{url, agentId, apiKey, name}` (you can rotate the key later from the agent's detail page). Hand your runtime the key and URL, and treat the wire contract at `/api/guide` ([GUIDE.md](../../GUIDE.md)) as the agent's onboarding doc — it covers the polling loop, statuses, and what the agent owes back.
 
 External agents are scoped — the API key authenticates a single agent and can only mutate that agent's runs. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`ADMIN_GUIDE.md`](../../ADMIN_GUIDE.md).
 
