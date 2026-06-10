@@ -114,7 +114,12 @@ export function updateRunStatus(id: string, status: string) {
   // When a run transitions out of 'running' (to any status), clear any pending
   // kill request so it can't linger and affect a subsequent run.
   const clearKill = status !== "running" ? ", kill_requested_at = NULL" : "";
-  db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill} WHERE id = ?`).run(status, id);
+  // Entering 'running' (e.g. pending -> running via the status route) starts a
+  // fresh running attempt, so stamp claimed_at — the timeout hard cap measures
+  // from here. Self-transitions (running -> running) already returned above as
+  // no-ops, so this never resets the clock on a re-reported status.
+  const enterRunning = status === "running" ? ", claimed_at = unixepoch()" : "";
+  db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`).run(status, id);
 
   // Advance the job's next_run_at when a run completes.
   // 'killed' is terminal for this run but does NOT advance the job's schedule —
@@ -430,11 +435,17 @@ export function listRunOutput(runId: string, afterId = 0) {
 function failStaleRuns(agentId: string) {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
+  // Hard cap on wallclock-in-running, keyed on claimed_at (when the current
+  // running attempt began), NOT updated_at — streaming output refreshes
+  // updated_at, which would turn this into a sliding inactivity window that
+  // never fires for a chatty-but-stuck run. claimed_at is reset on every entry
+  // into 'running' (see createRun, the poll claims, and updateRunStatus), so
+  // this is a true ceiling: a run cannot stay 'running' past timeout_minutes.
   const stale = db.prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
     WHERE r.agent_id = ? AND r.status = 'running'
-    AND r.updated_at + (j.timeout_minutes * 60) < ?
+    AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `).all(agentId, now) as { id: string; timeout_minutes: number }[];
 
   for (const run of stale) {
@@ -476,7 +487,11 @@ export function getAgentNextRun(agentId: string) {
       // Guard the claim: only flip it if it is still 'pending'. If a concurrent
       // runner already claimed it, changes === 0 — back off this poll rather
       // than double-claim a run another runner is now executing.
-      const claimed = db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ? AND status = 'pending'`).run(pendingRun.id);
+      // Reset claimed_at: this resume starts a fresh running attempt, and the
+      // timeout hard cap (failStaleRuns) measures from here — without the reset
+      // a run that sat in 'pending' (human wait, retry) would be capped on the
+      // very next poll. See failStaleRuns for the claimed_at contract.
+      const claimed = db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'pending'`).run(pendingRun.id);
       if (claimed.changes !== 1) return null;
       return pendingRun.id as string;
     }
@@ -533,12 +548,13 @@ export function getNextWorkflowRun(orgId: string) {
 
   // Fail stale workflow runs (scoped to this org)
   const now = Math.floor(Date.now() / 1000);
+  // Hard cap keyed on claimed_at, not updated_at — see failStaleRuns for why.
   const stale = db.prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
       WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND p.org_id = ?
-    AND r.updated_at + (j.timeout_minutes * 60) < ?
+    AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `).all(orgId, now) as { id: string; timeout_minutes: number }[];
   for (const run of stale) {
     db.prepare(`UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(run.id);

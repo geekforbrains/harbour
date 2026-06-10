@@ -457,13 +457,22 @@ export function ensureWorkingDir(agentName) {
 
 /**
  * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
- * Returns { code, stdout, stderr, aborted } when the process exits.
+ * Returns { code, stdout, stderr, aborted, timedOut } when the process exits.
+ *
+ * Liveness is governed by a single INACTIVITY timer (issue #15): it is armed at
+ * spawn and reset on every chunk of output. If the process produces nothing for
+ * `inactivityTimeoutMs` (default 3 min) it is SIGTERM'd, then SIGKILL'd after
+ * `killGraceMs`, and `timedOut` is set. This catches both startup hangs (auth
+ * prompts, login waits) and mid-run stalls (a blocked API call that never
+ * returns), while a productive agent streaming JSON resets the timer
+ * continuously and is never killed at an arbitrary wallclock cap. The job's
+ * `timeout_minutes` is enforced separately, server-side, as a hard ceiling.
  *
  * Pass `signal` (an AbortSignal) to request a graceful kill: SIGTERM is sent
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
+export function runCliTool(binary, args, cwd, { inactivityTimeoutMs = 3 * 60 * 1000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards, then layer
     // run-scoped env vars (decrypted Harbour env vars for this job) on top.
@@ -488,7 +497,6 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env,
-      timeout: timeoutMs,
     });
 
     // Close stdin immediately — CLI tools should not wait for interactive input
@@ -497,8 +505,8 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     let stdout = "";
     let stderr = "";
     let lineBuffer = "";
-    let gotOutput = false;
     let aborted = false;
+    let timedOut = false;
     let killFollowupTimer = null;
     let closeFired = false;
     let postExitTimer = null;
@@ -509,15 +517,22 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     // destroy them so the wrapper can resolve.
     const POST_EXIT_GRACE_MS = 2000;
 
-    // Kill the process if no stdout arrives within the startup window.
-    // Catches auth prompts, interactive login hangs, etc.
-    const startupTimer = setTimeout(() => {
-      if (!gotOutput) {
-        child.kill("SIGTERM");
-        // Give it a moment to exit, then force kill
-        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
-      }
-    }, startupTimeoutMs);
+    // Single inactivity timer (issue #15): armed at spawn, reset on every chunk
+    // of output. Replaces the old 30s startup timer + fixed wallclock spawn
+    // timeout. If the process is silent for inactivityTimeoutMs we SIGTERM it,
+    // then SIGKILL after killGraceMs in case it traps the signal. Silence at
+    // startup (auth prompt / login hang) and silence mid-run (a stalled API
+    // call) are the same failure mode — no output — so one timer covers both.
+    let inactivityTimer = null;
+    function armInactivity() {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        timedOut = true;
+        try { child.kill("SIGTERM"); } catch {}
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, killGraceMs);
+      }, inactivityTimeoutMs);
+    }
+    armInactivity();
 
     // Abort handler: SIGTERM → killGraceMs grace → SIGKILL
     function handleAbort() {
@@ -534,10 +549,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     }
 
     child.stdout.on("data", (data) => {
-      if (!gotOutput) {
-        gotOutput = true;
-        clearTimeout(startupTimer);
-      }
+      armInactivity(); // any output proves the process is alive — reset the clock
       const chunk = data.toString();
       stdout += chunk;
 
@@ -553,10 +565,10 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       }
     });
 
-    child.stderr.on("data", (data) => { stderr += data.toString(); });
+    child.stderr.on("data", (data) => { armInactivity(); stderr += data.toString(); });
 
     child.on("error", (err) => {
-      clearTimeout(startupTimer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
       if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
@@ -571,7 +583,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     });
     child.on("close", (code) => {
       closeFired = true;
-      clearTimeout(startupTimer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
       if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
@@ -579,7 +591,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       if (onLine && lineBuffer.trim()) {
         onLine(lineBuffer.trim());
       }
-      resolve({ code, stdout, stderr, aborted });
+      resolve({ code, stdout, stderr, aborted, timedOut });
     });
   });
 }

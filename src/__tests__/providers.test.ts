@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getProvider } from "../../bin/lib/providers.mjs";
+import { getProvider, runCliTool } from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
 // They guard against silent flag drift in the upstream CLIs (issue #24 was
@@ -115,4 +115,49 @@ describe("gemini provider (issue #24)", () => {
     const rIdx = cmd.args.indexOf("--resume");
     expect(cmd.args[rIdx + 1]).toBe("session-uuid");
   });
+});
+
+// ---------------------------------------------------------------------------
+// runCliTool inactivity timer (issue #15)
+//
+// A single inactivity timer replaces the old 30s startup timer + fixed
+// wallclock spawn timeout. It resets on every chunk of output, so a streaming
+// agent never gets killed at an arbitrary cap; a silent process (startup hang
+// or mid-run stall) is SIGTERM'd after the window. The resolved object carries
+// `timedOut` so the runner can report the cause precisely.
+// ---------------------------------------------------------------------------
+describe("runCliTool inactivity timer (issue #15)", () => {
+  const NODE = process.execPath;
+
+  it("kills a process that produces output then goes silent past the window", async () => {
+    const script = `process.stdout.write("hello\\n"); setInterval(() => {}, 1000);`;
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+    });
+    expect(res.timedOut).toBe(true);
+  }, 8000);
+
+  it("kills a process that never produces any output (startup hang)", async () => {
+    const script = `setInterval(() => {}, 1000);`;
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+    });
+    expect(res.timedOut).toBe(true);
+  }, 8000);
+
+  it("does NOT kill a process that keeps streaming within the window", async () => {
+    // Emit a line every 50ms (< 300ms window) for ~450ms, then exit cleanly.
+    const script = `let n = 0; const t = setInterval(() => { process.stdout.write("tick " + (n++) + "\\n"); if (n >= 9) { clearInterval(t); process.exit(0); } }, 50);`;
+    const lines: string[] = [];
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+      onLine: (l: string) => lines.push(l),
+    });
+    expect(res.timedOut).toBe(false);
+    expect(res.code).toBe(0);
+    expect(lines.length).toBeGreaterThanOrEqual(9);
+  }, 8000);
 });

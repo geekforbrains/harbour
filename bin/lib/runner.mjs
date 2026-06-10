@@ -27,6 +27,15 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 // ~750ms; this catches long silent stretches.
 const KILL_POLL_INTERVAL_MS = 10_000;
 
+// Inactivity window for the agent CLI (issue #15): if the CLI produces no
+// output for this long, runCliTool SIGTERMs it. This is the ONLY runner-side
+// liveness limit — it catches startup hangs and mid-run stalls. The job's
+// `timeout_minutes` is a separate, server-side hard ceiling (failStaleRuns),
+// not enforced here, so a productive long run is never killed at a wallclock
+// cap as long as it keeps streaming. Override via HARBOUR_CLI_INACTIVITY_MS
+// (used for tests and for tuning chatty/quiet models).
+const CLI_INACTIVITY_TIMEOUT_MS = Number(process.env.HARBOUR_CLI_INACTIVITY_MS) || 3 * 60 * 1000;
+
 // Strip the leading HTTP verb the /next payload prefixes each endpoint with
 // ("PUT https://…" → "https://…").
 function stripVerb(endpoint) {
@@ -568,7 +577,7 @@ export function postrunKillStatus(/* { outcome } */) {
  * Throws if runCliTool itself throws (spawn/exec failure) — the caller maps
  * that to a hard failure.
  */
-async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessionId, timeoutMs, extraEnv, sessionAlreadyReported }) {
+async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessionId, extraEnv, sessionAlreadyReported }) {
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
   let flushTimer = null;
@@ -654,7 +663,7 @@ async function runCliTurn({ cmd, provider, url, apiKey, runId, agentName, sessio
   let result;
   try {
     result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
-      timeoutMs,
+      inactivityTimeoutMs: CLI_INACTIVITY_TIMEOUT_MS,
       onLine,
       signal: killController.signal,
       extraEnv: extraEnv || {},
@@ -787,8 +796,12 @@ async function processNextRun(runner) {
         // Error — any non-zero except 77
         console.error(`  [${agentName}] Prerun exited ${wfResult.code} — failed`);
         const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Prerun exited with code ${wfResult.code}`;
+        // Two independent best-effort calls (issue #15): a failed activity POST
+        // must not skip the status PUT, or the run dangles in 'running'.
         try {
           await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+        } catch { /* best effort */ }
+        try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
         } catch { /* best effort */ }
         return { outcome: "failed", eager };
@@ -800,6 +813,8 @@ async function processNextRun(runner) {
       console.error(`  [${agentName}] Prerun command failed: ${err.message}`);
       try {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Prerun error: ${err.message}` });
+      } catch { /* best effort */ }
+      try {
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
       return { outcome: "failed", eager };
@@ -814,8 +829,6 @@ async function processNextRun(runner) {
 
   // model/thinking were already resolved (job override > agent default) above.
   const cmd = provider.buildCommand(prompt, agentModel, workingDir, sessionId, isNewSession, agentThinking);
-  const timeoutMinutes = payload.job?.timeout_minutes || 30;
-  const timeoutMs = timeoutMinutes * 60 * 1000;
 
   // ---- Single exit path -----------------------------------------------------
   // Every terminal return below funnels through finish(): it does the session
@@ -854,15 +867,19 @@ async function processNextRun(runner) {
   try {
     turn = await runCliTurn({
       cmd, provider, url, apiKey, runId, agentName,
-      sessionId, timeoutMs, extraEnv: payload.env || {},
+      sessionId, extraEnv: payload.env || {},
       sessionAlreadyReported: !!sessionId,
     });
   } catch (err) {
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
+    // Independent best-effort calls (issue #15): the status PUT must fire even
+    // if the activity POST throws, else the run is stuck 'running'.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Runner error: CLI tool "${cli}" failed to execute: ${err.message}`,
       });
+    } catch { /* best effort */ }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
     // The CLI never spawned — the agent turn did not execute, so postrun (which
@@ -887,13 +904,19 @@ async function processNextRun(runner) {
     if (!workSessionId) {
       console.warn(`  [${agentName}] No session ID captured before kill — resume will start fresh`);
     }
+    // Split (issue #15): a failed activity POST must not skip the status PUT
+    // that records the kill — otherwise the run stays 'running'.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
       });
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to post kill activity: ${err.message}`);
+    }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
     } catch (err) {
-      console.error(`  [${agentName}] Failed to finalize kill: ${err.message}`);
+      console.error(`  [${agentName}] Failed to finalize kill status: ${err.message}`);
     }
     console.log(`  [${agentName}] Run ${runId} killed.`);
     // The agent turn ran, so informational postrun fires (cleanup on kill);
@@ -908,10 +931,13 @@ async function processNextRun(runner) {
     console.error(`  [${agentName}] CLI exited with code ${result.code}`);
 
     let reason;
-    if (result.code === 143) {
-      reason = `Process was killed (SIGTERM) — likely hit the ${timeoutMinutes}-minute timeout before the CLI exited cleanly.`;
+    if (result.timedOut) {
+      const mins = Math.round(CLI_INACTIVITY_TIMEOUT_MS / 60000);
+      reason = `Process killed after ${mins} minute(s) with no output — the CLI stalled (startup hang, or a blocked call that never returned).`;
+    } else if (result.code === 143) {
+      reason = `Process was killed (SIGTERM) before the CLI exited cleanly.`;
     } else if (result.code === 137) {
-      reason = `Process was force-killed (SIGKILL) — out of memory or hard timeout.`;
+      reason = `Process was force-killed (SIGKILL) — out of memory, or it ignored SIGTERM.`;
     } else {
       reason = `CLI exited with code ${result.code}.`;
     }
@@ -936,8 +962,11 @@ async function processNextRun(runner) {
     if (sanitizedOutput) errorContent += `\n\nOutput:\n${sanitizedOutput}`;
     if (errorContent.length > 4000) errorContent = errorContent.slice(-4000);
 
+    // Independent best-effort calls (issue #15) — see the CLI-spawn path above.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errorContent });
+    } catch { /* best effort */ }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
 
@@ -971,7 +1000,7 @@ async function processNextRun(runner) {
   const finalized = await runFinalizeLoop({
     provider, url, apiKey, runId, agentName,
     sessionId: workSessionId, model: agentModel, thinking: agentThinking,
-    workingDir, timeoutMs, extraEnv: payload.env || {},
+    workingDir, extraEnv: payload.env || {},
     activityContext: truncatedOutput, api: payload.api,
   });
 
@@ -991,7 +1020,7 @@ async function processNextRun(runner) {
  * separate finalize_model field yet). The invocation is structured so an
  * override could be slotted in trivially (swap `model` here).
  */
-async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessionId, model, thinking, workingDir, timeoutMs, extraEnv, activityContext, api }) {
+async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessionId, model, thinking, workingDir, extraEnv, activityContext, api }) {
   // `api` is required to build the status-endpoint curl. Without it we can't
   // tell the agent how to set status — fail with the backstop note.
   if (!api) {
@@ -1015,7 +1044,7 @@ async function runFinalizeLoop({ provider, url, apiKey, runId, agentName, sessio
     try {
       const turn = await runCliTurn({
         cmd, provider, url, apiKey, runId, agentName,
-        sessionId: turnSessionId, timeoutMs, extraEnv,
+        sessionId: turnSessionId, extraEnv,
         sessionAlreadyReported: true,
       });
       if (turn.sessionId) turnSessionId = turn.sessionId;
@@ -1121,8 +1150,10 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Kill requested during postrun, but the run had already finished (${outcome}) — postrun cleanup was stopped; the run's status is unchanged.`,
       });
-      if (status) await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
     } catch { /* best effort */ }
+    if (status) {
+      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status }); } catch { /* best effort */ }
+    }
     console.log(`  [${agentName}] Postrun kill landed after completion — keeping status ${outcome}`);
     return status || outcome;
   }
@@ -1137,6 +1168,8 @@ export async function runPostrun({ job, outcome, agentRan, url, apiKey, runId, a
     const reason = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Postrun gate exited with code ${wfResult.code}`;
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Postrun gate failed (exit ${wfResult.code}):\n${reason}` });
+    } catch { /* best effort */ }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: override });
     } catch { /* best effort */ }
     console.log(`  [${agentName}] Postrun gate override: ${outcome} -> ${override}`);
@@ -1159,6 +1192,8 @@ async function failFinalize({ url, apiKey, runId, agentName }) {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
       content: "Run marked as failed: agent did not set a final status after the finalize turn.",
     });
+  } catch { /* best effort */ }
+  try {
     await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
   } catch { /* best effort */ }
 }
@@ -1291,6 +1326,8 @@ export async function processNextWorkflow(runner, opts = {}) {
       const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
       try {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+      } catch { /* best effort */ }
+      try {
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
       return { outcome: "failed" };
@@ -1309,6 +1346,8 @@ export async function processNextWorkflow(runner, opts = {}) {
     console.error(`  [${name}] Workflow command failed: ${err.message}`);
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
+    } catch { /* best effort */ }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
     return { outcome: "failed" };

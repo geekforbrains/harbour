@@ -147,10 +147,12 @@ describe("workflow stale-run reaping", () => {
   function staleRunningRun() {
     const { org, wf } = workflowJob();
     const run = createRun(wf.id, null)!; // status 'running'
-    // Backdate updated_at well past the job's 30-min timeout.
+    // Backdate claimed_at well past the job's 30-min hard cap. updated_at stays
+    // recent on purpose: the reaper is a claimed_at ceiling (issue #15), not an
+    // inactivity check, so a chatty-but-overrunning run is still reaped.
     getDb()
-      .prepare(`UPDATE runs SET updated_at = ? WHERE id = ?`)
-      .run(Math.floor(Date.now() / 1000) - 4000, run.id);
+      .prepare(`UPDATE runs SET claimed_at = ?, updated_at = ? WHERE id = ?`)
+      .run(Math.floor(Date.now() / 1000) - 4000, Math.floor(Date.now() / 1000), run.id);
     return { org, wf, run };
   }
 
