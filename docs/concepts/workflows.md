@@ -39,7 +39,7 @@ Workflow runner credentials live in `workflow_runners`. They are org-scoped, ena
 
 ## Creating Workflows
 
-From the dashboard, create a new job and choose `Workflow`.
+From the dashboard, open the **Workflows** page and create a new workflow.
 
 From the API:
 

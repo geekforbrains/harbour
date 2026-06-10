@@ -31,28 +31,45 @@ type Job = {
   pending_runs: number;
   last_run_at: number | null;
   prerun_command: string | null;
-  workflow_command: string | null;
 };
-
-const isWorkflow = (j: Job) => j.kind === "workflow";
 
 export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const activeProjectId = useActiveProjectId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
-  const jobs = jobsData as Job[];
+  // Workflows (kind === "workflow") have their own page at /workflows.
+  const jobs = (jobsData as Job[]).filter((j) => j.kind !== "workflow");
 
-  function renderJobSection(title: string, sectionJobs: Job[]) {
-    if (sectionJobs.length === 0) return null;
-    return (
-      <div className="space-y-2">
-        <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+  if (loading) return <PageLoading />;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Jobs"
+        subtitle="Recurring work across all agents."
+        actions={
+          <div className="flex gap-2">
+            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+                project_id reparent route exists; new jobs land in the active project. */}
+            <Button onClick={() => setShowCreate(true)} size="sm">
+              <Plus className="h-4 w-4 mr-1.5" /> New Job
+            </Button>
+          </div>
+        }
+      />
+
+      <ListState
+        scope={activeProjectId}
+        scopeNeed="project"
+        scopeEntity="jobs"
+        isEmpty={jobs.length === 0}
+        emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
+        emptyMessage="No jobs yet. Create one to get started."
+      >
         <div className="grid gap-2">
-          {sectionJobs.map((job) => {
-            const agentTint = !isWorkflow(job)
-              ? resolveAgentColor(job.agent_color, job.agent_name)
-              : null;
+          {jobs.map((job) => {
+            const agentTint = resolveAgentColor(job.agent_color, job.agent_name);
             const boxTint = job.active ? agentTint : null;
             return (
               <RowLink key={job.id} href={`/jobs/${job.id}`}>
@@ -96,7 +113,7 @@ export default function JobsPage() {
                     <span className="flex items-center gap-1">
                       <Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}
                     </span>
-                    {job.prerun_command && !isWorkflow(job) && (
+                    {job.prerun_command && (
                       <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>
                     )}
                     {(job.total_runs > 0 || job.skipped_runs > 0) && (
@@ -137,47 +154,9 @@ export default function JobsPage() {
             );
           })}
         </div>
-      </div>
-    );
-  }
-
-  if (loading) return <PageLoading />;
-
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Jobs"
-        subtitle="Recurring work across all agents."
-        actions={
-          <div className="flex gap-2">
-            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
-                project_id reparent route exists; new jobs land in the active project. */}
-            <Button onClick={() => setShowCreate(true)} size="sm">
-              <Plus className="h-4 w-4 mr-1.5" /> New Job
-            </Button>
-          </div>
-        }
-      />
-
-      <ListState
-        scope={activeProjectId}
-        scopeNeed="project"
-        scopeEntity="jobs"
-        isEmpty={jobs.length === 0}
-        emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No jobs yet. Create one to get started."
-      >
-        {renderJobSection(
-          "Agent Jobs",
-          jobs.filter((j) => !isWorkflow(j)),
-        )}
-        {renderJobSection(
-          "Workflows",
-          jobs.filter((j) => isWorkflow(j)),
-        )}
       </ListState>
 
-      <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />
+      <CreateDialog open={showCreate} onOpenChange={setShowCreate} kind="agent" />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Settings,
   Users,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,6 +25,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Secrets", icon: KeyRound },

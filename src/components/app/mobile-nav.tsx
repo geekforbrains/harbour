@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Settings,
   Users,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -44,6 +45,7 @@ export function MobileBottomNav() {
   ];
 
   const moreLinks = [
+    { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Secrets", icon: KeyRound },

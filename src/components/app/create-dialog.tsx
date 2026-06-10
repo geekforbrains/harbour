@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, FileText, KeyRound, Pin, Plus, Terminal, X } from "lucide-react";
+import { FileText, KeyRound, Pin, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { parseSchedule, SchedulePicker, serializeSchedule } from "@/components/app/schedule-picker";
@@ -146,19 +146,19 @@ export function SelectedItems({
 }
 
 /**
- * New Job dialog. v2 removed one-off "New Run" creation — ad-hoc runs now come
- * from triggering a scheduled job (see TriggerDialog / RunRow). This dialog
- * creates either an agent job (POST /api/agents/:id/jobs) or a workflow
- * job (POST /api/jobs).
+ * New Job / New Workflow dialog. v2 removed one-off "New Run" creation —
+ * ad-hoc runs now come from triggering a scheduled job (see TriggerDialog /
+ * RunRow). The `kind` prop fixes what gets created: an agent job
+ * (POST /api/agents/:id/jobs) or a workflow job (POST /api/jobs).
  */
 export function CreateDialog({
   open,
   onOpenChange,
+  kind = "agent",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Retained for call-site compatibility; the dialog only creates jobs now. */
-  defaultTab?: "run" | "job";
+  kind?: "agent" | "workflow";
 }) {
   const createAgentJob = useCreateAgentJob();
   const createWorkflowJob = useCreateWorkflowJob();
@@ -189,7 +189,6 @@ export function CreateDialog({
   const [command, setCommand] = useState("");
   const [postrunCommand, setPostrunCommand] = useState("");
   const [postrunGates, setPostrunGates] = useState(false);
-  const [kind, setKind] = useState<"agent" | "workflow">("agent");
   const [titleFormat, setTitleFormat] = useState("");
 
   // Default the agent select to the first agent once the list loads.
@@ -220,7 +219,6 @@ export function CreateDialog({
     setCommand("");
     setPostrunCommand("");
     setPostrunGates(false);
-    setKind("agent");
     setTitleFormat("");
   }
 
@@ -276,7 +274,6 @@ export function CreateDialog({
     setAgentId(id);
     setModel("");
     setThinking("");
-    setKind("agent");
     setCommand("");
   }
 
@@ -340,7 +337,7 @@ export function CreateDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>New Job</DialogTitle>
+            <DialogTitle>{kind === "workflow" ? "New Workflow" : "New Job"}</DialogTitle>
           </DialogHeader>
 
           <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
@@ -363,28 +360,6 @@ export function CreateDialog({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Brief description"
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setKind("agent")}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${kind === "agent" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                >
-                  <Bot className="h-3.5 w-3.5" />
-                  Agent Job
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setKind("workflow")}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${kind === "workflow" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                >
-                  <Terminal className="h-3.5 w-3.5" />
-                  Workflow
-                </button>
-              </div>
             </div>
 
             <div className="space-y-2">
@@ -490,7 +465,11 @@ export function CreateDialog({
                 Cancel
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? "Creating..." : "Create Job"}
+                {submitting
+                  ? "Creating..."
+                  : kind === "workflow"
+                    ? "Create Workflow"
+                    : "Create Job"}
               </Button>
             </DialogFooter>
           </form>

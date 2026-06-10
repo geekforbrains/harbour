@@ -238,7 +238,9 @@ export default function JobDetailPage() {
       alert("Failed to delete job");
       return;
     }
-    router.push(job?.agent_id ? `/agents/${job.agent_id}` : "/jobs");
+    router.push(
+      job?.kind === "workflow" ? "/workflows" : job?.agent_id ? `/agents/${job.agent_id}` : "/jobs",
+    );
   }
 
   if (loading) return <PageLoading />;
@@ -249,7 +251,10 @@ export default function JobDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink href="/jobs" label="Jobs" />
+      <BackLink
+        href={isWorkflow ? "/workflows" : "/jobs"}
+        label={isWorkflow ? "Workflows" : "Jobs"}
+      />
 
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -615,7 +620,7 @@ export default function JobDetailPage() {
       <Dialog open={showEdit} onOpenChange={setShowEdit}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
-            <DialogTitle>Edit Job</DialogTitle>
+            <DialogTitle>{isWorkflow ? "Edit Workflow" : "Edit Job"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleUpdate} className="space-y-4">
             <div className="space-y-2">

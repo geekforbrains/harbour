@@ -28,6 +28,11 @@ test("jobs page renders", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1, name: "Jobs" })).toBeVisible();
 });
 
+test("workflows page renders", async ({ page }) => {
+  await page.goto("/workflows");
+  await expect(page.getByRole("heading", { level: 1, name: "Workflows" })).toBeVisible();
+});
+
 test("runs page renders", async ({ page }) => {
   await page.goto("/runs");
   await expect(page.getByRole("heading", { level: 1, name: "All Runs" })).toBeVisible();

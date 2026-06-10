@@ -662,6 +662,7 @@ export default function RunDetailPage() {
   // flag for each); an agent run whose agent was deleted has no runner to stop.
   const canKill = run.status === "running" && (!!run.agent_id || isWorkflow);
   const manageableStatuses = isWorkflow ? WORKFLOW_MANAGEABLE_STATUSES : MANAGEABLE_STATUSES;
+  const jobHref = isWorkflow ? `/workflows/${run.job_id}` : `/jobs/${run.job_id}`;
 
   return (
     <div className="space-y-6">
@@ -678,7 +679,7 @@ export default function RunDetailPage() {
             </span>
           </div>
           <Link
-            href={`/jobs/${run.job_id}`}
+            href={jobHref}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate"
           >
             {run.job_name}
@@ -707,9 +708,9 @@ export default function RunDetailPage() {
               </Button>
             )}
             {run.job_id && (
-              <Link href={`/jobs/${run.job_id}`}>
+              <Link href={jobHref}>
                 <Button variant="outline" size="sm">
-                  View Job
+                  {isWorkflow ? "View Workflow" : "View Job"}
                 </Button>
               </Link>
             )}
