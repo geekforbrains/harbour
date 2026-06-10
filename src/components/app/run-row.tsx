@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { TriggerDialog } from "@/components/app/trigger-dialog";
-import { agentColor } from "@/lib/agent-color";
+import { resolveAgentColor } from "@/lib/agent-color";
 
 export type RunRowData = {
   id: string;
@@ -19,6 +19,7 @@ export type RunRowData = {
   title?: string | null;
   job_active?: number;
   agent_name?: string | null;
+  agent_color?: string | null;
   job_prerun_command?: string | null;
   job_workflow_command?: string | null;
   created_at: number;
@@ -62,7 +63,7 @@ export function RunRow({ run, showActions = true }: Props) {
               <>
                 <span
                   className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-                  style={{ backgroundColor: agentColor(run.agent_name) }}
+                  style={{ backgroundColor: resolveAgentColor(run.agent_color, run.agent_name) }}
                 />
                 {run.job_prerun_command && <Terminal className="h-3 w-3" />}
                 <span className="font-mono">{run.agent_name}</span>

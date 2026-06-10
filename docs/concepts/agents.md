@@ -26,7 +26,7 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 |---|---|
 | `name` | Human label, also used to slugify the harbour workspace dir |
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
-| `color` | identity hue on the agent's icon (round-robin default, user-selectable) |
+| `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | drain the queue back-to-back instead of waiting 60s between runs |
 | `cli` | `claude`, `codex`, or `gemini` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |

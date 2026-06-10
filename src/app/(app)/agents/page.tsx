@@ -8,12 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Bot, Plus, Briefcase, Copy, Check, Loader2, CheckCircle, XCircle } from "lucide-react";
-import { agentColor } from "@/lib/agent-color";
+import { resolveAgentColor } from "@/lib/agent-color";
 import { timeAgo } from "@/lib/time";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { ListState } from "@/components/app/list-state";
 import { RowLink } from "@/components/app/row-link";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { AgentColorPicker } from "@/components/app/agent-color-picker";
 
 type Agent = {
   id: string;
@@ -21,6 +22,7 @@ type Agent = {
   description: string | null;
   cli: string | null;
   model: string | null;
+  color: string | null;
   job_count: number;
   waiting_count: number;
   pending_count: number;
@@ -50,6 +52,7 @@ export default function AgentsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [color, setColor] = useState("");
   const [creating, setCreating] = useState(false);
   const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; remote: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -91,6 +94,7 @@ export default function AgentsPage() {
     setCreating(true);
 
     const body: Record<string, string | boolean> = { name, description, cli: selectedCli };
+    if (color) body.color = color;
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
     if (eagerAgent) body.eager = true;
@@ -106,6 +110,7 @@ export default function AgentsPage() {
       });
       setName("");
       setDescription("");
+      setColor("");
       // Agents are created directly in the active project by useCreateAgent
       // (scoped POST); v2 has no separate project-link step.
     } catch {
@@ -124,6 +129,7 @@ export default function AgentsPage() {
     setShowCreate(false);
     setNewAgent(null);
     setCopied(false);
+    setColor("");
     setSelectedCli(null);
     setSelectedModel("");
     setSelectedThinking("");
@@ -205,7 +211,7 @@ export default function AgentsPage() {
               ) : (
                 <div
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                  style={{ backgroundColor: `${agentColor(agent.name)}1f`, color: agentColor(agent.name) }}
+                  style={{ backgroundColor: `${resolveAgentColor(agent.color, agent.name)}1f`, color: resolveAgentColor(agent.color, agent.name) }}
                 >
                   <Bot className="h-4 w-4" />
                 </div>
@@ -323,6 +329,7 @@ export default function AgentsPage() {
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
+              <AgentColorPicker value={color} onChange={setColor} previewName={name} />
               {CLI_CONFIG[selectedCli] && (
                 <ModelThinkingSelect
                   cli={selectedCli}

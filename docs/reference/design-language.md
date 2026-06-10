@@ -51,10 +51,10 @@ Tailwind's JIT scanner sees them — never build status classes dynamically.
 
 ### 2. Agent identity — a subtle secondary signal
 
-[`src/lib/agent-color.ts`](../../src/lib/agent-color.ts) maps an agent to one of
-an 8-hue, perceptually-spread palette. The point is telling agents apart from
-**each other** when many stack up in one list (per-project agents). It is used
-only as:
+[`src/lib/agent-color.ts`](../../src/lib/agent-color.ts) gives each agent a
+color from a 16-hue, perceptually-spread palette (`AGENT_COLORS`). The point is
+telling agents apart from **each other** when many stack up in one list
+(per-project agents). It is used only as:
 
 - a small dot beside the agent's name (run rows, metadata lines), or
 - a tinted avatar (Agents list).
@@ -63,11 +63,12 @@ Never a filled row or card. **Status overrides identity** when attention is
 needed: a waiting/pending agent avatar shows the status color, not its identity
 color.
 
-Today the color is name-hashed (full 32-bit reduction — a power-of-two modulo
-clusters short names). With a fixed palette, hashing cannot guarantee zero
-collisions between distinct agents; in v2 the color becomes a stored,
-round-robin-assigned, editable column on the agent, with the hash as the
-fallback.
+The color is a stored, user-chosen column on the agent — picked via the shared
+`AgentColorPicker` component in the create and settings dialogs. Agents without
+a stored color fall back to a name hash (full 32-bit reduction — a power-of-two
+modulo clusters short names) over the first 8 hues, which are biased away from
+the loaded status hues. Display sites resolve via `resolveAgentColor(stored,
+name)` — never read the hash directly when the stored column is available.
 
 ## What does NOT get color
 

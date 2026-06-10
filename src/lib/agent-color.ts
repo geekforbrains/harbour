@@ -11,13 +11,15 @@
  * is never mistaken for a status.
  */
 
-// Eight hues stepped around the wheel so neighbours stay perceptually
-// distinct even at dot size — orange → lime → teal → sky → indigo → purple →
-// fuchsia → pink. The priority is telling agents apart from *each other*;
-// the dot's position (in the metadata line, never the boxed status slot)
-// keeps it from being read as a status. Biased away from red / amber /
-// emerald, the most "loaded" status hues. Tuned for light and dark surfaces.
-const AGENT_COLORS = [
+// Sixteen hues stepped around the wheel so neighbours stay perceptually
+// distinct even at dot size. The first eight (orange → lime → teal → sky →
+// indigo → purple → fuchsia → pink) are the original auto-assign palette and
+// MUST keep their order — the name hash maps over them, so reordering would
+// shift every unstored agent's color. The second eight fill the gaps for
+// explicit user choice. The dot's position (in the metadata line, never the
+// boxed status slot) keeps it from being read as a status. Tuned for light
+// and dark surfaces.
+export const AGENT_COLORS = [
   "#f97316", // orange
   "#84cc16", // lime
   "#14b8a6", // teal
@@ -26,7 +28,20 @@ const AGENT_COLORS = [
   "#a855f7", // purple
   "#d946ef", // fuchsia
   "#ec4899", // pink
+  "#ef4444", // red
+  "#f59e0b", // amber
+  "#eab308", // yellow
+  "#22c55e", // green
+  "#10b981", // emerald
+  "#06b6d4", // cyan
+  "#3b82f6", // blue
+  "#8b5cf6", // violet
 ] as const;
+
+// The hash fallback only draws from the original eight hues — they're biased
+// away from red / amber / emerald, the most "loaded" status hues, so an
+// auto-assigned agent dot is never mistaken for a status.
+const HASH_SPAN = 8;
 
 /** Stable FNV-1a hash so the same string always maps to the same color. */
 function hashString(input: string): number {
@@ -46,11 +61,22 @@ function hashString(input: string): number {
  * names (Harbour / Hearsay / Tarot Journal all collided under `% 8`).
  *
  * Note: with a fixed palette, hashing can't guarantee zero collisions between
- * distinct agents. In v2 the agent's color becomes a stored, round-robin-assigned
- * column (editable), with this hash as the default/fallback.
+ * distinct agents — it's the fallback for agents without a stored color.
+ * Prefer `resolveAgentColor` when the stored column is available.
  */
 export function agentColor(key: string | null | undefined): string {
   if (!key) return "#71717a"; // neutral zinc for workflows/no-agent rows
-  const idx = Math.floor((hashString(key) / 0x100000000) * AGENT_COLORS.length);
+  const idx = Math.floor((hashString(key) / 0x100000000) * HASH_SPAN);
   return AGENT_COLORS[idx];
+}
+
+/**
+ * Hex color for an agent: the stored (user-chosen) color when set, otherwise
+ * the stable name-hash fallback.
+ */
+export function resolveAgentColor(
+  color: string | null | undefined,
+  nameKey: string | null | undefined,
+): string {
+  return color || agentColor(nameKey);
 }

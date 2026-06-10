@@ -90,7 +90,7 @@ Content-Type: application/json
 - `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted)
 - `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 - `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.
-- `color` — identity hue (auto-assigned if omitted)
+- `color` — identity hue (falls back to a name-derived color if omitted)
 
 Response includes `apiKey` — save it, shown only once. Any HTTP client holding this key can act as the agent; the worker contract is served at `GET /api/guide`.
 

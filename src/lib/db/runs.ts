@@ -30,7 +30,7 @@ export function getRunById(id: string) {
   const db = getDb();
   const run = db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_command as job_prerun_command,
-           j.workflow_command as job_workflow_command, a.name as agent_name, a.cli as agent_cli
+           j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -209,7 +209,7 @@ export function listRunsByJob(jobId: string, limit = 10, opts: { includeSkipped?
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
-           a.name as agent_name, a.cli as agent_cli
+           a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -227,7 +227,7 @@ export function listRunsByAgent(agentId: string, limit = 10, opts: { includeSkip
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command,
            j.workflow_command as job_workflow_command,
-           a.name as agent_name, a.cli as agent_cli
+           a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -245,7 +245,7 @@ export function listScheduledRuns(orgId: string, projectId?: string) {
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -260,7 +260,7 @@ export function listRunningRuns(orgId: string, projectId?: string) {
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -275,7 +275,7 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -290,7 +290,7 @@ export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
   const projectFilter = projectId ? `AND r.project_id = ?` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name
+           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id
@@ -361,7 +361,7 @@ export function listRunsHistory(orgId: string, filters: RunsHistoryFilters = {},
   const rows = db.prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command,
-           a.name as agent_name, a.cli as agent_cli
+           a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN projects p ON r.project_id = p.id

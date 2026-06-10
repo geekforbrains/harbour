@@ -101,7 +101,7 @@ export function createWorkflow(projectId: string, data: {
 export function getJobById(id: string) {
   const db = getDb();
   const job = db.prepare(`
-    SELECT j.*, a.name as agent_name
+    SELECT j.*, a.name as agent_name, a.color as agent_color
     FROM jobs j
     LEFT JOIN agents a ON j.agent_id = a.id
     WHERE j.id = ?
@@ -144,7 +144,7 @@ export function listJobsByAgent(agentId: string) {
 export function listAllJobs(projectId: string) {
   const db = getDb();
   return db.prepare(`
-    SELECT j.*, a.name as agent_name,
+    SELECT j.*, a.name as agent_name, a.color as agent_color,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,

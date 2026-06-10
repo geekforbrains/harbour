@@ -29,10 +29,10 @@ import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { SelectedItems, PickerDialog } from "@/components/app/create-dialog";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
-import { agentColor } from "@/lib/agent-color";
+import { resolveAgentColor } from "@/lib/agent-color";
 
 type Job = {
-  id: string; kind: "agent" | "workflow"; agent_id: string | null; agent_name: string | null; name: string; description: string | null;
+  id: string; kind: "agent" | "workflow"; agent_id: string | null; agent_name: string | null; agent_color: string | null; name: string; description: string | null;
   instructions: string | null; schedule: string; prerun_command: string | null; postrun_command: string | null; postrun_gates: number; workflow_command: string | null;
   timeout_minutes: number; model: string | null; thinking: string | null;
   title_format: string | null;
@@ -207,7 +207,7 @@ export default function JobDetailPage() {
           <div className="flex items-center gap-2 text-sm">
             <span
               className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-              style={{ backgroundColor: agentColor(job.agent_name) }}
+              style={{ backgroundColor: resolveAgentColor(job.agent_color, job.agent_name) }}
             />
             <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
           </div>

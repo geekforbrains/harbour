@@ -18,7 +18,7 @@ import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film,
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
-import { agentColor } from "@/lib/agent-color";
+import { resolveAgentColor } from "@/lib/agent-color";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
 import { AttachmentList } from "@/components/app/attachment-display";
 import type { SerializedAttachment } from "@/lib/attachments-serialize";
@@ -42,7 +42,7 @@ type Activity = {
 type Run = {
   id: string; job_id: string; agent_id: string | null; status: string;
   title: string | null;
-  job_name: string; job_kind: string; agent_name: string | null; agent_cli: string | null;
+  job_name: string; job_kind: string; agent_name: string | null; agent_color: string | null; agent_cli: string | null;
   session_id: string | null; session_cwd: string | null;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
@@ -606,7 +606,7 @@ export default function RunDetailPage() {
             <>
               <span
                 className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-                style={{ backgroundColor: agentColor(run.agent_name) }}
+                style={{ backgroundColor: resolveAgentColor(run.agent_color, run.agent_name) }}
               />
               <Link href={`/agents/${run.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{run.agent_name}</Link>
             </>
@@ -642,7 +642,7 @@ export default function RunDetailPage() {
                   <div
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 bg-muted text-muted-foreground"
                     style={entry.author_type === "agent"
-                      ? { backgroundColor: `${agentColor(run.agent_name)}1f`, color: agentColor(run.agent_name) }
+                      ? { backgroundColor: `${resolveAgentColor(run.agent_color, run.agent_name)}1f`, color: resolveAgentColor(run.agent_color, run.agent_name) }
                       : entry.author_type === "user"
                       ? { backgroundColor: "var(--foreground)", color: "var(--background)" }
                       : undefined}

@@ -108,7 +108,7 @@ Index: `idx_projects_org`.
 | `api_key_hash` | TEXT | NN | sha256 of the bearer key |
 | `cli` | TEXT | | `claude` / `codex` / `gemini` (Harbour-run agents); NULL for external |
 | `model` / `thinking` | TEXT | | default model + effort override |
-| `color` | TEXT | | stored identity hue (round-robin default; user-selectable) |
+| `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
 | `eager` | INTEGER | NN, default 0 | drain queue without the 60s pause |
 | `remote` | INTEGER | NN, default 0 | runner lives on another machine |
 | `runner_fingerprint` | TEXT | | one-runtime-per-agent guard |

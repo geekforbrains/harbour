@@ -23,8 +23,9 @@ import {
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { statusStyle } from "@/lib/status";
-import { agentColor } from "@/lib/agent-color";
+import { resolveAgentColor } from "@/lib/agent-color";
 import { apiFetch } from "@/lib/api/client";
+import { AgentColorPicker } from "@/components/app/agent-color-picker";
 
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -75,6 +76,7 @@ export default function AgentDetailPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editColor, setEditColor] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editEager, setEditEager] = useState(false);
@@ -87,6 +89,7 @@ export default function AgentDetailPage() {
       await updateAgent.mutateAsync({
         name: editName,
         description: editDesc,
+        color: editColor,
         model: editModel,
         thinking: editThinking,
         eager: editEager,
@@ -145,7 +148,7 @@ export default function AgentDetailPage() {
         <div className="flex items-start gap-3">
           <div
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-            style={{ backgroundColor: `${agentColor(agent.name)}1f`, color: agentColor(agent.name) }}
+            style={{ backgroundColor: `${resolveAgentColor(agent.color, agent.name)}1f`, color: resolveAgentColor(agent.color, agent.name) }}
           >
             <Bot className="h-5 w-5" />
           </div>
@@ -166,7 +169,7 @@ export default function AgentDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setConnectKey(null); setConnectCopied(false); setShowConnect(true); }} title="Connect Runner">
             <Wifi className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditColor(agent.color || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -319,6 +322,7 @@ export default function AgentDetailPage() {
               <Label>Description</Label>
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
+            <AgentColorPicker value={editColor} onChange={setEditColor} previewName={editName} />
             {agent.cli && CLI_CONFIG[agent.cli] && (
               <ModelThinkingSelect
                 cli={agent.cli}
