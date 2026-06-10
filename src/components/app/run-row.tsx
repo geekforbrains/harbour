@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Terminal, Zap, Pause, Play } from "lucide-react";
+import { Bot, Terminal, Zap, Pause, Play } from "lucide-react";
 import { useUpdateJob } from "@/lib/hooks/use-jobs";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
@@ -61,9 +61,9 @@ export function RunRow({ run, showActions = true }: Props) {
               <><Terminal className="h-3 w-3" /><span>Workflow</span></>
             ) : (
               <>
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-                  style={{ backgroundColor: resolveAgentColor(run.agent_color, run.agent_name) }}
+                <Bot
+                  className="h-3 w-3 shrink-0"
+                  style={{ color: resolveAgentColor(run.agent_color, run.agent_name) }}
                 />
                 {run.job_prerun_command && <Terminal className="h-3 w-3" />}
                 <span className="font-mono">{run.agent_name}</span>
