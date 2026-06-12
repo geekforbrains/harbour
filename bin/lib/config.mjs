@@ -35,7 +35,7 @@ export function loadWorkflowRunnerConfigs() {
   }
 }
 
-// Session tracking: run_id -> { sessionId, cli }
+// Session tracking: run_id -> { sessionId, cli, cwd }
 export function loadSessions() {
   if (!fs.existsSync(SESSIONS_FILE)) return {};
   try {

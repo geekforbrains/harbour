@@ -24,7 +24,8 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 
 | Column | What it sets |
 |---|---|
-| `name` | Human label, also used to slugify the harbour workspace dir |
+| `name` | Human label (renaming it never changes the slug) |
+| `slug` | Creation-time, immutable workspace path segment — see [Workspaces](#workspaces) |
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | drain the queue back-to-back instead of waiting 60s between runs |
@@ -105,9 +106,13 @@ For Claude only, the runner pre-generates a session UUID before spawning so `PUT
 
 ### Workspaces
 
-Each harbour agent gets a workspace directory at `~/.harbour/workspaces/<slugified-agent-name>/` (created lazily by `ensureWorkingDir`). The runner sets this as the CLI's `cwd`, so all of an agent's runs share filesystem state — checked-out repos, build caches, downloaded fixtures. Two agents have independent workspaces; two **runs** of the same agent share one. If you want isolation between jobs, do that in your job instructions (e.g. `cd /tmp/some-clean-dir && …`), not at the workspace level.
+Each harbour agent gets a workspace directory at `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` (created lazily by `ensureWorkingDir`). The path mirrors the org → project → agent hierarchy, so two agents with the same name in different projects get distinct workspaces. The runner sets this as the CLI's `cwd`, so all of an agent's runs share filesystem state — checked-out repos, build caches, downloaded fixtures. Two agents have independent workspaces; two **runs** of the same agent share one. If you want isolation between jobs, do that in your job instructions (e.g. `cd /tmp/some-clean-dir && …`), not at the workspace level.
 
-The workspace path defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_HOME` to relocate the whole tree. There's no per-agent override; if you want one agent in a different directory, point its job instructions at it.
+Each path segment is a **slug**, assigned at creation from the entity's name (lowercase; runs of anything outside `a-z0-9` collapse to a single `-`; edges trimmed) and **immutable on rename** — renaming an org, project, or agent never moves or orphans a workspace; the folder keeps its creation-time name. Names must be unique per scope ignoring case and punctuation (orgs instance-wide, projects per org, agents per project): "Dev Agent" and "Dev_Agent" produce the same slug, and creating the second is rejected with a clear error. Uniqueness is enforced at creation only, on the slug — after renames, display names may come to duplicate. Archived orgs and projects keep holding their slug, so a later same-name entity can't inherit leftover workspace directories on runner machines. Enforcement details in [database-schema.md](../reference/database-schema.md#slugs).
+
+The runner never derives the path from display names — the `/next` payload carries a `workspace` block of the three slugs (see [guide.md](../guide.md)), and the runner validates each segment against `^[a-z0-9-]+$`, refusing the run (rather than transforming the path) if any segment is malformed. Against an older server that sends no workspace block, it falls back to the legacy flat `workspaces/<agent>/` layout with a logged warning. Runs paused after the upgrade resume in the cwd pinned in `sessions.json` when they ran, so renames and layout changes never move them; runs already waiting when the runner was upgraded have no pinned cwd and resume in the legacy flat directory derived from the agent's current name — avoid renaming an agent while it has pre-upgrade waiting runs. After upgrading, old flat directories are inert and can be deleted once no waiting/running runs remain. Deleting an org, project, or agent doesn't clean its workspace directories on runner machines either — disk cleanup is manual.
+
+The workspace root defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_HOME` to relocate the whole tree. There's no per-agent override; if you want one agent in a different directory, point its job instructions at it.
 
 The runner also layers two workspace-derived things onto each spawn: any job-linked env vars (`payload.env`) are merged into the spawned process environment so the agent's shell can expand `$VAR` natively (rather than the LLM emitting the secret as text), and if the workspace has a `bin/` directory it's prepended to PATH so per-agent wrapper scripts resolve as bare command names. Both behaviors are no-ops when there are no env vars / no `bin/`.
 
@@ -180,7 +185,8 @@ Docs, secrets, and databases are shared at the **org** level (or scoped to a pro
 ## Source-of-truth pointers
 
 - `src/lib/db/agents.ts` — agent CRUD, API key hashing, rotation.
-- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `cli`, `model`, `thinking`, `color`, `eager`, `remote`, `runner_fingerprint`).
+- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `slug`, `cli`, `model`, `thinking`, `color`, `eager`, `remote`, `runner_fingerprint`).
+- `src/lib/slug.ts` — the canonical slug algorithm and the name-collision errors.
 - `src/app/api/agents/[id]/next/route.ts` — the polling endpoint and the `api.endpoints` builder for run payloads.
 - `src/app/api/agents/[id]/rotate-key/route.ts` — key rotation.
 - `bin/lib/runner.mjs` — the local runner: poll, spawn, stream, kill, finalize.

@@ -3,12 +3,21 @@
 import { createContext, useContext } from "react";
 
 export type User = { userId: string; email: string; displayName: string; isInstanceAdmin: boolean };
-export type Project = { id: string; name: string; created_at: number; updated_at: number };
+export type Project = {
+  id: string;
+  name: string;
+  /** Workspace folder segment — assigned at creation, immutable on rename. */
+  slug?: string;
+  created_at: number;
+  updated_at: number;
+};
 
 /** Org as returned by `/api/auth/me` (orgs the user belongs to) + member role. */
 export type Org = {
   id: string;
   name: string;
+  /** Workspace folder segment — assigned at creation, immutable on rename. */
+  slug?: string;
   settings?: string;
   member_role?: "editor" | "viewer";
   created_at: number;

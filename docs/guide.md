@@ -109,6 +109,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "timeout_minutes": 30
   },
   "agent": { "cli": "claude", "model": null, "thinking": null, "eager": false },
+  "workspace": { "org": "acme", "project": "marketing", "agent": "social-media-bot" },
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
@@ -172,7 +173,9 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gate commands — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gate commands — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+
+The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 

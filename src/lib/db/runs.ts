@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
+import { getAgentWorkspace } from "./agents";
 import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
 import { getComposedDatabasesForJob, getDatabaseById } from "./database";
 import { getComposedDocsForJob } from "./docs";
@@ -951,6 +952,10 @@ export function buildRunPayload(runId: string) {
 
   const isWorkflow = job.kind === "workflow";
 
+  // Workspace slugs for agent runs (workflow runs get no workspace key). The
+  // runner nests its workspace dir as <org>/<project>/<agent> from these.
+  const workspace = run.agent_id ? getAgentWorkspace(run.agent_id) : null;
+
   return {
     run: { id: run.id, status: run.status, title: run.title || null, activity: run.activity },
     job: {
@@ -969,6 +974,7 @@ export function buildRunPayload(runId: string) {
       timeout_minutes: job.timeout_minutes ?? 30,
     },
     ...(agent ? { agent } : {}),
+    ...(workspace ? { workspace } : {}),
     docs,
     data,
     env,

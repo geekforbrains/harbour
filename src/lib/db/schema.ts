@@ -30,6 +30,18 @@ export function resetDb() {
 }
 
 /**
+ * True when err is better-sqlite3's unique-index violation. Used as the race
+ * backstop behind the slug pre-checks in createOrg/createProject/createAgent.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE"
+  );
+}
+
+/**
  * v2 schema — clean break, no migrations. Every table is created directly in
  * its final v2 shape. Org → Project (mandatory) → Agent / Job → Run; resources
  * (docs / env_vars / databases) are dual-tier (org-level or project-level).
@@ -53,6 +65,7 @@ export function initializeSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS orgs (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      slug TEXT NOT NULL,                    -- creation-time, immutable, filesystem-safe workspace path segment
       settings TEXT NOT NULL DEFAULT '{}',   -- JSON: { timezone, ... } (org-scoped)
       archived_at INTEGER,                   -- soft-delete
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -100,6 +113,7 @@ export function initializeSchema(db: Database.Database) {
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
       archived_at INTEGER,                -- soft-delete (normal path); hard delete = admin escape hatch
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -111,6 +125,7 @@ export function initializeSchema(db: Database.Database) {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
       description TEXT,
       api_key_hash TEXT NOT NULL,
       cli TEXT,                           -- 'claude' | 'codex' | 'gemini'
@@ -354,9 +369,13 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_set_password_tokens_hash ON set_password_tokens(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orgs_slug ON orgs(slug);
+
     CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_slug ON projects(org_id, slug);
 
     CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_slug ON agents(project_id, slug);
     CREATE INDEX IF NOT EXISTS idx_workflow_runners_org ON workflow_runners(org_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);

@@ -23,13 +23,16 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 - Timestamps are epoch seconds; IDs are uuid except `run_output.id` /
   `captain_output.id` (auto-increment, used as SSE `?after=N` cursors).
 - Errors are `{ "error": "<message>" }`. `401` unauthenticated, `403`
-  forbidden/out-of-scope, `409` for transition conflicts (illegal run-status
-  edge, kill-while-not-running).
+  forbidden/out-of-scope, `409` for conflicts — an illegal run-status edge,
+  kill-while-not-running, or a create (`POST /api/orgs`, `/api/projects`,
+  `/api/agents`) whose name slugifies to an existing sibling's slug (a name
+  with no letters or numbers at all is a `400`).
 - **Scope** comes from the query string / cookies: org routes read `?orgId=` or
   the `harbour_org` cookie; project routes read `?projectId=`; `[id]` routes
   resolve the owning org from the resource.
 - **`/next` payload** (`GET /api/agents/:id/next` and `/api/workflows/next`):
-  `null` or `{ run, job, docs, data, env, attachments, api }`. The `api` block is
+  `null` or `{ run, job, docs, data, env, attachments, api }`, plus `agent` and
+  `workspace` (the org/project/agent slugs) on agent runs. The `api` block is
   pre-resolved full URLs. Full schema in [guide.md](../guide.md).
 - **SSE**: `GET /api/runs/:id/output/stream` and
   `GET /api/captain/conversations/:id/stream` emit `event: output` (poll-backed),

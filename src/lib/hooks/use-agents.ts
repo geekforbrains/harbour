@@ -8,6 +8,8 @@ import { useScope } from "@/lib/hooks/use-project-filter";
 export type Agent = {
   id: string;
   name: string;
+  /** Workspace folder segment — assigned at creation, immutable on rename. */
+  slug?: string | null;
   description?: string | null;
   cli: string | null;
   model: string | null;

@@ -46,6 +46,8 @@ Content-Type: application/json
 ```
 `timezone` is optional and stored in the org's settings.
 
+Org names must be unique instance-wide ignoring case and punctuation — at creation the org gets an immutable slug from its name (e.g. `Acme Corp` → `acme-corp`, used as a workspace path segment on runner machines), and a name whose slug collides with an existing org's returns 409 ("Acme Corp" and "acme_corp" are the same slug). A name with no letters or numbers at all returns 400. Renaming later never changes the slug.
+
 ### Update an Org
 ```
 PUT /api/orgs?orgId=<id>    { "name": "...", "settings": { "timezone": "..." } }
@@ -57,6 +59,8 @@ Settings are merged with the existing values, not replaced.
 GET  /api/projects?orgId=<id>
 POST /api/projects?orgId=<id>    { "name": "Marketing" }
 ```
+
+Project names are unique per org, under the same slug rules as orgs — 409 on collision, 400 for a name with no letters or numbers.
 
 ### Get / Update / Archive a Project
 ```
@@ -86,7 +90,7 @@ Content-Type: application/json
 }
 ```
 
-`name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Optional fields:
+`name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Agent names are unique per project, under the same slug rules as orgs and projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
 - `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `thinking` is validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini`; an unknown level is a 400. Empty/omitted means the CLI default.
 - `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 - `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.

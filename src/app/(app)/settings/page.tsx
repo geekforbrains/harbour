@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { CLI_CONFIG } from "@/lib/cli-config";
+import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useUpdateOrg } from "@/lib/hooks/use-orgs";
 
 type Settings = Record<string, string>;
@@ -225,6 +226,7 @@ export default function SettingsPage() {
   const [tzOpen, setTzOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectNameLoaded, setProjectNameLoaded] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -238,6 +240,7 @@ export default function SettingsPage() {
   if (activeProject && (!projectNameLoaded || projectName === "")) {
     setProjectName(activeProject.name);
     setProjectNameLoaded(true);
+    setRenameError(null);
   }
   if (!activeProject && projectNameLoaded) {
     setProjectNameLoaded(false);
@@ -245,10 +248,16 @@ export default function SettingsPage() {
 
   async function handleRenameProject() {
     if (!activeProjectId || !projectName.trim() || projectName === activeProject?.name) return;
-    await apiFetch(`/api/projects/${activeProjectId}`, {
-      method: "PUT",
-      body: { name: projectName.trim() },
-    });
+    setRenameError(null);
+    try {
+      await apiFetch(`/api/projects/${activeProjectId}`, {
+        method: "PUT",
+        body: { name: projectName.trim() },
+      });
+    } catch (err) {
+      setRenameError(mutationErrorMessage(err, "Failed to rename project"));
+      return;
+    }
     queryClient.invalidateQueries({ queryKey: qk.projects.all });
   }
 
@@ -347,6 +356,7 @@ export default function SettingsPage() {
                 }}
                 className="text-sm"
               />
+              {renameError && <p className="text-xs text-destructive">{renameError}</p>}
             </div>
             <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
               <div>

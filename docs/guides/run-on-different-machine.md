@@ -9,7 +9,7 @@ The runner is the thing that actually spawns the CLI tool (Claude Code, Codex, G
 - **iOS / Xcode builds** need a Mac. The harbour server can sit on a Linux box; the runner sits on the Mac.
 - **GPU jobs** need the machine with the GPU. Co-locate the runner there.
 - **On-prem repos / VPN-only services** can't be reached from a public harbour. Put the runner inside the network and let it reach out.
-- **Big working directories.** A runner cloning a 10 GB monorepo into `~/.harbour/agents/<name>` does not need to clone it onto the harbour server.
+- **Big working directories.** A runner cloning a 10 GB monorepo into `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` does not need to clone it onto the harbour server.
 
 The agent record itself (jobs, schedule, prompt, model, docs, env vars) lives on harbour. Only the execution moves.
 
@@ -116,7 +116,7 @@ The split is straightforward but worth being explicit about.
 
 - The runner process itself.
 - The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever you picked.
-- Working directories at `~/.harbour/agents/<slugified-name>/` — this is where the CLI's `cwd` lives. Clone repos here.
+- Working directories at `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
 - **Prerun scripts.** If a job uses a prerun command (a shell command that runs as a gate before the LLM), the script must exist at `~/.harbour/workflows/` on the **remote**, not on the harbour server. The runner cd's into that directory and runs the command there. Recommendation: keep `~/.harbour/workflows/` in a git repo and sync it across machines like any other dotfile.
 - Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the `/next` payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
 

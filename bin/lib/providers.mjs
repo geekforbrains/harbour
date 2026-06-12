@@ -517,9 +517,32 @@ export function resolveRunConfig(payload, fallback = {}) {
   };
 }
 
-export function ensureWorkingDir(agentName) {
+// What a single workspace path segment must look like. Exported so tests can
+// lock this against the server's slugify — every slug the server assigns must
+// pass this regex, or the runner will refuse the run.
+export const WORKSPACE_SEGMENT_RE = /^[a-z0-9-]+$/;
+
+/**
+ * Resolve (and create) a workspace directory from pre-slugged path segments:
+ * ensureWorkingDir(["acme", "website", "dev-agent"]) →
+ * ~/.harbour/workspaces/acme/website/dev-agent.
+ *
+ * Segments are validated, never transformed: re-slugifying runner-side could
+ * map two distinct server slugs onto one directory, silently reintroducing
+ * the same-name workspace collision the nested layout exists to eliminate.
+ * A segment that fails WORKSPACE_SEGMENT_RE is a hard error.
+ */
+export function ensureWorkingDir(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    throw new Error("No workspace path segments provided");
+  }
+  for (const segment of segments) {
+    if (typeof segment !== "string" || !WORKSPACE_SEGMENT_RE.test(segment)) {
+      throw new Error(`Invalid workspace path segment: ${JSON.stringify(segment)}`);
+    }
+  }
   const home = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
-  const dir = path.join(home, "workspaces", agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
+  const dir = path.join(home, "workspaces", ...segments);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

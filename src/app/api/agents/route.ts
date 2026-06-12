@@ -3,6 +3,7 @@ import { withProjectAuth } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
+import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
 export const GET = withProjectAuth(
   async (req) => {
@@ -28,14 +29,25 @@ export const POST = withProjectAuth(
     const thinkingError = validateThinking(cli, thinking);
     if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
 
-    const agent = createAgent(projectId, name, description, {
-      cli,
-      model,
-      thinking,
-      color,
-      eager: !!eager,
-      remote: !!remote,
-    });
+    let agent: ReturnType<typeof createAgent>;
+    try {
+      agent = createAgent(projectId, name, description, {
+        cli,
+        model,
+        thinking,
+        color,
+        eager: !!eager,
+        remote: !!remote,
+      });
+    } catch (err) {
+      if (err instanceof NameCollisionError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      if (err instanceof InvalidNameError) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+      throw err;
+    }
 
     // Local agents run on this machine, so register them with the co-located
     // runner now. Remote agents are registered on their own machine via

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin, withOrgAuth } from "@/lib/auth";
 import { createOrg, getOrgById, getOrgSettings, updateOrg } from "@/lib/db/queries";
+import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
 // Create an org. Only instance admins create orgs (they manage the instance).
 // An optional `timezone` is folded into the org's `settings` JSON so a freshly
@@ -15,8 +16,18 @@ export const POST = withInstanceAdmin(async (req) => {
   if (typeof body.timezone === "string" && body.timezone.trim()) {
     settings.timezone = body.timezone.trim();
   }
-  const org = createOrg(name, settings);
-  return NextResponse.json(org, { status: 201 });
+  try {
+    const org = createOrg(name, settings);
+    return NextResponse.json(org, { status: 201 });
+  } catch (err) {
+    if (err instanceof NameCollisionError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof InvalidNameError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
 });
 
 // Org settings (e.g. timezone) live in the org's `settings` JSON. The target

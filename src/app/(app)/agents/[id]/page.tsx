@@ -10,6 +10,7 @@ import {
   Check,
   Copy,
   Cpu,
+  Folder,
   Settings,
   Terminal,
   Trash2,
@@ -42,6 +43,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { apiFetch } from "@/lib/api/client";
 import { CLI_CONFIG } from "@/lib/cli-config";
+import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import {
   useAgent,
   useAgentJobs,
@@ -58,6 +60,8 @@ import { timeAgo } from "@/lib/time";
 type Agent = {
   id: string;
   name: string;
+  /** Workspace folder segment — assigned at creation, immutable on rename. */
+  slug?: string | null;
   description: string | null;
   cli: string | null;
   model: string | null;
@@ -67,6 +71,8 @@ type Agent = {
   remote: number | null;
   last_polled_at: number | null;
   created_at: number;
+  /** Slug path segments for the agent's on-disk workspace on the runner. */
+  workspace?: { org: string; project: string; agent: string } | null;
 };
 type Job = {
   id: string;
@@ -136,8 +142,7 @@ export default function AgentDetailPage() {
         eager: editEager,
       });
     } catch {
-      alert("Failed to update agent");
-      return;
+      return; // surfaced inline from updateAgent.error; leave dialog open
     }
     setShowSettings(false);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -248,6 +253,7 @@ export default function AgentDetailPage() {
               setEditModel(agent.model || "");
               setEditThinking(agent.thinking || "");
               setEditEager(!!agent.eager);
+              updateAgent.reset();
               setShowSettings(true);
             }}
             title="Settings"
@@ -292,6 +298,17 @@ export default function AgentDetailPage() {
             {agent.last_polled_at ? timeAgo(agent.last_polled_at) : "Never polled"}
           </span>
         </div>
+        {agent.workspace && (
+          <div className="col-span-2 sm:col-span-3 flex items-center gap-2 text-sm">
+            <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span
+              className="text-xs font-mono text-muted-foreground truncate"
+              title="Working directory under the runner's HARBOUR_HOME (default ~/.harbour)"
+            >
+              workspaces/{agent.workspace.org}/{agent.workspace.project}/{agent.workspace.agent}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Jobs */}
@@ -493,6 +510,11 @@ export default function AgentDetailPage() {
                 </div>
               </label>
             </div>
+            {updateAgent.isError && (
+              <p className="text-xs text-destructive">
+                {mutationErrorMessage(updateAgent.error, "Failed to update agent")}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto">

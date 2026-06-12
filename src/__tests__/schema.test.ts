@@ -94,11 +94,15 @@ describe("v2 schema", () => {
 // ===========================================================================
 
 describe("foreign keys", () => {
+  // The raw INSERTs include a slug so the only constraint left to trip is the
+  // FK — without it they'd "pass" on the slug NOT NULL instead.
   it("rejects a project pointing at a non-existent org", () => {
     const db = getDb();
     expect(() =>
-      db.prepare(`INSERT INTO projects (id, org_id, name) VALUES ('p1', 'nope', 'X')`).run(),
-    ).toThrow();
+      db
+        .prepare(`INSERT INTO projects (id, org_id, name, slug) VALUES ('p1', 'nope', 'X', 'x')`)
+        .run(),
+    ).toThrow(/FOREIGN KEY/);
   });
 
   it("rejects an agent pointing at a non-existent project", () => {
@@ -106,10 +110,10 @@ describe("foreign keys", () => {
     expect(() =>
       db
         .prepare(
-          `INSERT INTO agents (id, project_id, name, api_key_hash) VALUES ('a1', 'nope', 'X', 'h')`,
+          `INSERT INTO agents (id, project_id, name, slug, api_key_hash) VALUES ('a1', 'nope', 'X', 'x', 'h')`,
         )
         .run(),
-    ).toThrow();
+    ).toThrow(/FOREIGN KEY/);
   });
 
   it("rejects a run pointing at a non-existent job", () => {

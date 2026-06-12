@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
-import { deleteAgent, getAgentById, updateAgent } from "@/lib/db/queries";
+import { deleteAgent, getAgentById, getAgentWorkspace, updateAgent } from "@/lib/db/queries";
 import { loadRunners, removeRunnerConfig, saveRunnerConfig } from "@/lib/runners";
 
 export const GET = withResourceAuth("agent", "id", { role: "viewer" })(
@@ -9,7 +9,8 @@ export const GET = withResourceAuth("agent", "id", { role: "viewer" })(
     const { id } = await params;
     const agent = getAgentById(id);
     if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
-    return NextResponse.json(agent);
+    // Workspace slugs let the dashboard show the agent's on-disk runner path.
+    return NextResponse.json({ ...agent, workspace: getAgentWorkspace(id) });
   },
 );
 

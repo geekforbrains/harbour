@@ -5,7 +5,7 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
 v1 → v2 migration; a fresh database is the only supported path.
 
-- **27 tables**, **29 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **27 tables**, **32 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
   `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
@@ -27,6 +27,22 @@ in the schema, not bolted on:
 - `runs.project_id` is denormalized (copied from the job) so a run resolves to
   its org in a single join (`src/lib/db/access.ts`).
 
+## Slugs
+
+`orgs`, `projects`, and `agents` each carry a `slug` (TEXT NN) — the
+filesystem-safe workspace path segment runners use to nest workspaces as
+`<org-slug>/<project-slug>/<agent-slug>`. Semantics (algorithm in
+`src/lib/slug.ts`, enforcement in the create paths of the query layer):
+
+- **Assigned at creation** from the name (lowercase; runs of non-`[a-z0-9]`
+  collapse to a single `-`; trimmed). A name that slugifies to `""` is rejected.
+- **Immutable on rename** — workspace paths stay stable.
+- **Unique per scope**, enforced by unique indexes: org slugs instance-wide
+  (`idx_orgs_slug`), project slugs per org (`idx_projects_org_slug`), agent
+  slugs per project (`idx_agents_project_slug`). Archived rows keep their slug
+  and still block reuse, so a new same-name org/project can't inherit leftover
+  workspace directories on runner machines.
+
 ## Identity & access
 
 ### `users`
@@ -44,9 +60,12 @@ in the schema, not bolted on:
 |---|---|---|---|
 | `id` | TEXT | PK | |
 | `name` | TEXT | NN | |
+| `slug` | TEXT | NN, U | creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `settings` | TEXT | NN, default `'{}'` | JSON, org-scoped (e.g. `timezone`) |
 | `archived_at` | INTEGER | | soft-delete |
 | `created_at` / `updated_at` | INTEGER | NN | |
+
+Index: `idx_orgs_slug(slug)` (UNIQUE).
 
 ### `memberships`
 Maps a user to an org with a role. Instance admins need **no** membership row.
@@ -91,10 +110,11 @@ users CASCADE), `last_used_at`, timestamps.
 | `id` | TEXT | PK | |
 | `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
 | `name` | TEXT | NN | |
+| `slug` | TEXT | NN | unique per org; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `archived_at` | INTEGER | | soft-delete (normal path); hard delete is the admin escape hatch |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Index: `idx_projects_org`.
+Indexes: `idx_projects_org`, `idx_projects_org_slug(org_id, slug)` (UNIQUE).
 
 ## Operational entities
 
@@ -104,6 +124,7 @@ Index: `idx_projects_org`.
 | `id` | TEXT | PK | |
 | `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
 | `name` | TEXT | NN | |
+| `slug` | TEXT | NN | unique per project; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `description` | TEXT | | |
 | `api_key_hash` | TEXT | NN | sha256 of the bearer key |
 | `cli` | TEXT | | `claude` / `codex` / `gemini` (Harbour-run agents); NULL for external |
@@ -116,7 +137,8 @@ Index: `idx_projects_org`.
 | `created_at` / `updated_at` | INTEGER | NN | |
 
 There is no stored `type` column — an external agent simply has no runner
-configured. Indexes: `idx_agents_project`.
+configured. Indexes: `idx_agents_project`,
+`idx_agents_project_slug(project_id, slug)` (UNIQUE).
 
 ### `workflow_runners`
 Org-scoped credentials for the deterministic workflow poller.

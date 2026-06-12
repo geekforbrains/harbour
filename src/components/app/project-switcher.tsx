@@ -24,9 +24,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk, SCOPED_DOMAINS } from "@/lib/api/keys";
+import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useCreateOrg } from "@/lib/hooks/use-orgs";
 import { useCreateProject } from "@/lib/hooks/use-projects";
 import { useApp } from "./app-context";
+import { SlugPreview } from "./slug-preview";
 
 export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "mobile" }) {
   const { user, orgs, activeOrgId, setActiveOrgId, projects, activeProjectId, setActiveProjectId } =
@@ -64,12 +66,29 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
     invalidateScoped();
   }
 
+  function closeNewProject() {
+    setShowNew(false);
+    setNewName("");
+    createProject.reset();
+  }
+
+  function closeNewOrg() {
+    setShowNewOrg(false);
+    setNewOrgName("");
+    setNewOrgTz("");
+    createOrg.reset();
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newName.trim()) return;
-    const project = await createProject.mutateAsync(newName.trim());
-    setNewName("");
-    setShowNew(false);
+    let project: Awaited<ReturnType<typeof createProject.mutateAsync>>;
+    try {
+      project = await createProject.mutateAsync(newName.trim());
+    } catch {
+      return; // surfaced inline from createProject.error; leave dialog open
+    }
+    closeNewProject();
     await queryClient.invalidateQueries({ queryKey: qk.projects.all });
     handleSelectProject(project.id);
   }
@@ -85,13 +104,16 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
   async function handleCreateOrg(e: React.FormEvent) {
     e.preventDefault();
     if (!newOrgName.trim()) return;
-    const org = await createOrg.mutateAsync({
-      name: newOrgName.trim(),
-      timezone: newOrgTz || undefined,
-    });
-    setNewOrgName("");
-    setNewOrgTz("");
-    setShowNewOrg(false);
+    let org: Awaited<ReturnType<typeof createOrg.mutateAsync>>;
+    try {
+      org = await createOrg.mutateAsync({
+        name: newOrgName.trim(),
+        timezone: newOrgTz || undefined,
+      });
+    } catch {
+      return; // surfaced inline from createOrg.error; leave dialog open
+    }
+    closeNewOrg();
     // me/orgs are invalidated by the hook; jump straight into the new org.
     handleSelectOrg(org.id);
   }
@@ -179,7 +201,13 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={showNew} onOpenChange={setShowNew}>
+      <Dialog
+        open={showNew}
+        onOpenChange={(open) => {
+          if (!open) closeNewProject();
+          else setShowNew(true);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New Project</DialogTitle>
@@ -194,9 +222,15 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
                 autoFocus
                 required
               />
+              <SlugPreview name={newName} />
+              {createProject.isError && (
+                <p className="text-xs text-destructive">
+                  {mutationErrorMessage(createProject.error, "Failed to create project")}
+                </p>
+              )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>
+              <Button type="button" variant="ghost" onClick={closeNewProject}>
                 Cancel
               </Button>
               <Button type="submit" disabled={createProject.isPending}>
@@ -207,7 +241,13 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showNewOrg} onOpenChange={setShowNewOrg}>
+      <Dialog
+        open={showNewOrg}
+        onOpenChange={(open) => {
+          if (!open) closeNewOrg();
+          else setShowNewOrg(true);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New Organization</DialogTitle>
@@ -222,6 +262,12 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
                 autoFocus
                 required
               />
+              <SlugPreview name={newOrgName} />
+              {createOrg.isError && (
+                <p className="text-xs text-destructive">
+                  {mutationErrorMessage(createOrg.error, "Failed to create organization")}
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Timezone</Label>
@@ -242,7 +288,7 @@ export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" |
               </p>
             </div>
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowNewOrg(false)}>
+              <Button type="button" variant="ghost" onClick={closeNewOrg}>
                 Cancel
               </Button>
               <Button type="submit" disabled={createOrg.isPending}>

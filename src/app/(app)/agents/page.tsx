@@ -7,6 +7,7 @@ import { ListState } from "@/components/app/list-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
+import { SlugPreview } from "@/components/app/slug-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +46,7 @@ type CliTool = {
 
 import { apiFetch } from "@/lib/api/client";
 import { CLI_CONFIG } from "@/lib/cli-config";
+import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
@@ -141,6 +143,7 @@ export default function AgentsPage() {
     setNewAgent(null);
     setCopied(false);
     setColor("");
+    createAgent.reset();
     setSelectedCli(null);
     setSelectedModel("");
     setSelectedThinking("");
@@ -382,6 +385,12 @@ export default function AgentsPage() {
                   autoFocus
                   required
                 />
+                <SlugPreview name={name} label="Workspace folder" />
+                {createAgent.isError && (
+                  <p className="text-xs text-destructive">
+                    {mutationErrorMessage(createAgent.error, "Failed to create agent")}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="agent-desc">Description</Label>
@@ -446,6 +455,7 @@ export default function AgentsPage() {
                     setSelectedCli(null);
                     setSelectedModel("");
                     setSelectedThinking("");
+                    createAgent.reset();
                   }}
                 >
                   Back

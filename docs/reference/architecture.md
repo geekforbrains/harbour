@@ -193,8 +193,12 @@ runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`;
 to the server every ~750ms and replayed to the dashboard via SSE.
 
 **Sessions & workspaces.** Each agent runs its CLI in
-`~/.harbour/workspaces/<agent-slug>/`; session ids are cached in `sessions.json`
-to resume killed/waiting runs. **Eager** agents (`agents.eager`) loop within one
+`~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/`, built from the
+payload's `workspace` block of immutable slugs (segments validated against
+`^[a-z0-9-]+$`; legacy flat fallback for older servers — see
+[agents.md](../concepts/agents.md#workspaces)); session ids and the run's cwd
+are cached in `sessions.json` to resume killed/waiting runs in place. **Eager**
+agents (`agents.eager`) loop within one
 tick while outcomes stay clean (`done`/`waiting`/`skipped`), bailing on
 `failed`/`killed`/empty/error, capped at 50 iterations
 (`shouldContinueEagerLoop`).

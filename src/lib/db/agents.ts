@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
+import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
-import { getDb } from "./schema";
+import { getDb, isUniqueViolation } from "./schema";
 
 function generateApiKey(): string {
   return `hbr_${crypto.randomBytes(32).toString("hex")}`;
@@ -9,6 +10,13 @@ function generateApiKey(): string {
 
 function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+function agentCollisionError(existingName: string, slug: string) {
+  return new NameCollisionError(
+    `An agent named "${existingName}" already exists in this project (folder name "${slug}") — ` +
+      `names must be unique ignoring case and punctuation.`,
+  );
 }
 
 export function createAgent(
@@ -25,6 +33,15 @@ export function createAgent(
   },
 ) {
   const db = getDb();
+  const slug = slugify(name);
+  if (!slug) {
+    throw new InvalidNameError("Agent name must contain at least one letter or number.");
+  }
+  // Slugs are unique per project (the agent's workspace directory name).
+  const existing = db
+    .prepare(`SELECT name FROM agents WHERE project_id = ? AND slug = ?`)
+    .get(projectId, slug) as { name: string } | undefined;
+  if (existing) throw agentCollisionError(existing.name, slug);
   const id = uuid();
   const apiKey = generateApiKey();
   const apiKeyHash = hashApiKey(apiKey);
@@ -34,26 +51,40 @@ export function createAgent(
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
   const remote = opts?.remote ? 1 : 0;
-  db.prepare(
-    `INSERT INTO agents (id, project_id, name, description, api_key_hash, cli, model, thinking, color, eager, remote)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    projectId,
-    name,
-    description || null,
-    apiKeyHash,
-    cli,
-    model,
-    thinking,
-    color,
-    eager,
-    remote,
-  );
+  try {
+    db.prepare(
+      `INSERT INTO agents (id, project_id, name, slug, description, api_key_hash, cli, model, thinking, color, eager, remote)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      projectId,
+      name,
+      slug,
+      description || null,
+      apiKeyHash,
+      cli,
+      model,
+      thinking,
+      color,
+      eager,
+      remote,
+    );
+  } catch (err) {
+    // Race backstop: a concurrent create can slip past the pre-check; the
+    // unique index catches it.
+    if (isUniqueViolation(err)) {
+      const winner = db
+        .prepare(`SELECT name FROM agents WHERE project_id = ? AND slug = ?`)
+        .get(projectId, slug) as { name: string } | undefined;
+      throw agentCollisionError(winner?.name ?? name, slug);
+    }
+    throw err;
+  }
   return {
     id,
     project_id: projectId,
     name,
+    slug,
     description,
     apiKey,
     cli,
@@ -90,10 +121,31 @@ export function getAgentById(id: string) {
   return (
     (db
       .prepare(
-        `SELECT id, project_id, name, description, cli, model, thinking, color, eager, remote, runner_fingerprint, last_polled_at, created_at, updated_at
+        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, remote, runner_fingerprint, last_polled_at, created_at, updated_at
      FROM agents WHERE id = ?`,
       )
       .get(id) as any) || null
+  );
+}
+
+/**
+ * Workspace path segments for an agent — the stored org/project/agent slugs,
+ * read live so the workspace always reflects the current hierarchy. Identity
+ * segments only, never absolute paths: the runner owns its filesystem layout
+ * (it may be a different machine).
+ */
+export function getAgentWorkspace(agentId: string) {
+  const db = getDb();
+  return (
+    (db
+      .prepare(`
+        SELECT o.slug AS org, p.slug AS project, a.slug AS agent
+        FROM agents a
+        JOIN projects p ON a.project_id = p.id
+        JOIN orgs o ON p.org_id = o.id
+        WHERE a.id = ?
+      `)
+      .get(agentId) as { org: string; project: string; agent: string } | undefined) || null
   );
 }
 
@@ -101,7 +153,7 @@ export function listAgents(projectId: string) {
   const db = getDb();
   return db
     .prepare(`
-    SELECT a.id, a.project_id, a.name, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -129,6 +181,7 @@ export function updateAgent(
   const fields: string[] = [];
   const values: any[] = [];
   if (data.name !== undefined) {
+    // Rename never touches the slug — workspace paths stay stable.
     fields.push("name = ?");
     values.push(data.name);
   }

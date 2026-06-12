@@ -828,8 +828,53 @@ async function processNextRun(runner) {
   let sessionId = existingSession?.sessionId || null;
   const isNewSession = !isResume;
 
+  // ---- Workspace resolution (issue #40) -------------------------------------
+  // Workspaces mirror the data-model hierarchy on disk —
+  // ~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/ — built from
+  // the payload's `workspace` block of server-assigned, immutable slugs.
+  // Resolution ladder:
+  //   1. A resumed session's pinned cwd, verbatim. Claude CLI sessions are
+  //      cwd-scoped, so a moved cwd breaks --resume — the path saved at run
+  //      start wins over any rename or layout change made since.
+  //   2. A resumed session WITHOUT a cwd was persisted by a pre-upgrade
+  //      runner, which necessarily started under the legacy flat layout —
+  //      resume there so the session and working tree are found.
+  //   3. payload.workspace → the nested layout.
+  //   4. No workspace block (older server) → legacy flat layout.
+  // The legacy slug keeps the OLD inline derivation byte-for-byte so existing
+  // installs keep their directories.
+  const legacySlug = agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const ws = payload.workspace;
+  let workingDir;
+  try {
+    if (existingSession?.cwd) {
+      workingDir = existingSession.cwd;
+      mkdirSync(workingDir, { recursive: true });
+    } else if (existingSession) {
+      workingDir = ensureWorkingDir([legacySlug]);
+    } else if (
+      ws &&
+      typeof ws.org === "string" &&
+      typeof ws.project === "string" &&
+      typeof ws.agent === "string"
+    ) {
+      workingDir = ensureWorkingDir([ws.org, ws.project, ws.agent]);
+    } else {
+      console.warn(
+        `  [${agentName}] Server sent no workspace block (predates workspace scoping) — using the legacy flat workspace layout.`,
+      );
+      workingDir = ensureWorkingDir([legacySlug]);
+    }
+  } catch (err) {
+    const message = `Cannot resolve workspace directory: ${err.message}. Refusing to run — fix the slugs server-side.`;
+    console.error(`  [${agentName}] ${message}`);
+    apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: message }).catch(() => {
+      /* best effort */
+    });
+    return { outcome: "config-error", eager: false };
+  }
+
   // For Claude, generate a session ID upfront so we can always resume
-  const workingDir = ensureWorkingDir(agentName);
   if (isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
     // Report pre-generated session ID immediately
@@ -967,7 +1012,10 @@ async function processNextRun(runner) {
     { agentRan = true, preserveSession = false } = {},
   ) {
     if (finalSessionId && (outcome === "waiting" || preserveSession)) {
-      sessions[runId] = { sessionId: finalSessionId, cli };
+      // cwd pins the workspace for resumes: the CLI session lives under this
+      // directory, so later turns must run there even if the agent is renamed
+      // or the layout changes in the meantime.
+      sessions[runId] = { sessionId: finalSessionId, cli, cwd: workingDir };
       saveSessions(sessions);
     } else {
       delete sessions[runId];

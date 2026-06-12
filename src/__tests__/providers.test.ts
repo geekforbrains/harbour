@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLI_CONFIG } from "@/lib/cli-config";
-import { getProvider, runCliTool, sanitizeThinking } from "../../bin/lib/providers.mjs";
+import { slugify } from "@/lib/slug";
+import {
+  ensureWorkingDir,
+  getProvider,
+  runCliTool,
+  sanitizeThinking,
+  WORKSPACE_SEGMENT_RE,
+} from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
 // They guard against silent flag drift in the upstream CLIs (issue #24 was
@@ -233,4 +243,99 @@ describe("runCliTool inactivity timer (issue #15)", () => {
     expect(res.code).toBe(0);
     expect(lines.length).toBeGreaterThanOrEqual(9);
   }, 8000);
+});
+
+// ---------------------------------------------------------------------------
+// Workspace path segments (issue #40)
+//
+// The server assigns slugs (src/lib/slug.ts) and the runner validates each
+// path segment against WORKSPACE_SEGMENT_RE before mkdir. Two bundles (TS app
+// vs plain-JS runner), so lock them together: every slug the server can
+// produce is either "" (rejected at creation as an invalid name) or accepted
+// by the runner verbatim — the server can never mint a segment the runner
+// refuses.
+// ---------------------------------------------------------------------------
+describe("slugify output is always a valid workspace segment", () => {
+  const NASTY_NAMES = [
+    "Dev Agent",
+    "Dev_Agent",
+    "  My  Org!! ",
+    "日本語",
+    "🚀 Launch Crew 🚀",
+    "../../../etc/passwd",
+    "..",
+    "a/b/c",
+    "C:\\Users\\agent",
+    "UPPER CASE NAME",
+    "tabs\tand\nnewlines",
+    "dots.dashes-and---runs",
+    "café au lait",
+    "name (copy) #2!",
+    "-leading-and-trailing-",
+    "null\u0000byte",
+    "zwsp\u200bname",
+    "",
+    "   ",
+    "🚀🚀",
+  ];
+
+  it("every non-empty slug matches WORKSPACE_SEGMENT_RE", () => {
+    for (const name of NASTY_NAMES) {
+      const slug = slugify(name);
+      if (slug !== "") {
+        expect(slug, `slugify(${JSON.stringify(name)})`).toMatch(WORKSPACE_SEGMENT_RE);
+      }
+    }
+  });
+
+  it("the battery exercises both outcomes (guard against a vacuous loop)", () => {
+    const slugs = NASTY_NAMES.map(slugify);
+    expect(slugs).toContain("");
+    expect(slugs).toContain("dev-agent");
+  });
+});
+
+describe("ensureWorkingDir", () => {
+  const prevHome = process.env.HARBOUR_HOME;
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-ws-test-"));
+    process.env.HARBOUR_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HARBOUR_HOME;
+    else process.env.HARBOUR_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("creates the nested org/project/agent directory under HARBOUR_HOME", () => {
+    const dir = ensureWorkingDir(["acme", "website", "dev-agent"]);
+    expect(dir).toBe(path.join(home, "workspaces", "acme", "website", "dev-agent"));
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("supports the legacy single-segment (flat) layout", () => {
+    const dir = ensureWorkingDir(["dev-agent"]);
+    expect(dir).toBe(path.join(home, "workspaces", "dev-agent"));
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("refuses invalid segments instead of transforming them", () => {
+    expect(() => ensureWorkingDir([".."])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir(["a/b"])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir([""])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir(["UPPER"])).toThrow(/Invalid workspace path segment/);
+    // One bad segment poisons the whole path, wherever it sits.
+    expect(() => ensureWorkingDir(["acme", "..", "dev-agent"])).toThrow(
+      /Invalid workspace path segment/,
+    );
+    // Validation happens before mkdir — a refused run creates nothing.
+    expect(fs.existsSync(path.join(home, "workspaces"))).toBe(false);
+  });
+
+  it("rejects an empty segment list", () => {
+    expect(() => ensureWorkingDir([])).toThrow(/No workspace path segments/);
+  });
 });
