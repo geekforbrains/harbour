@@ -69,6 +69,10 @@ const PROVIDERS = {
     // providers support it; the flag lets the runner pick resume vs a fresh
     // finalize turn generically without provider-specific branching.
     canResume: true,
+    // Levels the CLI's --effort flag accepts. Mirrors CLI_CONFIG in
+    // src/lib/cli-config.ts (two bundles, so duplicated by necessity);
+    // providers.test.ts locks the two together.
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
     generateSessionId() {
       return crypto.randomUUID();
     },
@@ -237,6 +241,9 @@ const PROVIDERS = {
 
   codex: {
     canResume: true,
+    // Levels model_reasoning_effort accepts — kept in sync with CLI_CONFIG
+    // (see claude.thinkingLevels above).
+    thinkingLevels: ["low", "medium", "high", "xhigh"],
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
       // generic config override instead: -c model_reasoning_effort=<level>.
@@ -376,6 +383,9 @@ const PROVIDERS = {
 
   gemini: {
     canResume: true,
+    // Gemini takes no thinking level at all (see buildCommand) — kept in sync
+    // with CLI_CONFIG (see claude.thinkingLevels above).
+    thinkingLevels: [],
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
       // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
       // by model selection) and requires --skip-trust for headless mode in
@@ -468,6 +478,23 @@ export function getProvider(cli) {
   const provider = PROVIDERS[cli];
   if (!provider) throw new Error(`Unknown CLI provider: ${cli}`);
   return provider;
+}
+
+/**
+ * Guard the resolved thinking level against the provider's accepted list
+ * (issue #39: `--effort off` failed every run at CLI launch). A level the
+ * CLI won't accept — written before API validation existed, or stranded by
+ * CLI version drift — is dropped so the run proceeds on the CLI default.
+ *
+ * Returns { thinking, dropped }: `dropped` carries the discarded value when
+ * it's worth warning about, i.e. only for CLIs that take a level at all
+ * (gemini ignores thinking entirely, so dropping a stale value is silent).
+ */
+export function sanitizeThinking(cli, thinking) {
+  if (!thinking) return { thinking: null, dropped: null };
+  const levels = PROVIDERS[cli]?.thinkingLevels || [];
+  if (levels.includes(thinking)) return { thinking, dropped: null };
+  return { thinking: null, dropped: levels.length > 0 ? thinking : null };
 }
 
 /**

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
+import { validateCli, validateThinking } from "@/lib/cli-config";
 import { deleteAgent, getAgentById, updateAgent } from "@/lib/db/queries";
 import { loadRunners, removeRunnerConfig, saveRunnerConfig } from "@/lib/runners";
 
@@ -19,6 +20,18 @@ export const PUT = withResourceAuth("agent", "id", { role: "editor" })(
     if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
     const body = await req.json();
+    if (body.cli !== undefined) {
+      const cliError = validateCli(body.cli);
+      if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
+    }
+    if (body.cli !== undefined || body.thinking !== undefined) {
+      // Validate the effective combination, not just the changed field — a cli
+      // change alone must not strand a thinking level the new CLI rejects.
+      const cli = body.cli !== undefined ? body.cli : existing.cli;
+      const thinking = body.thinking !== undefined ? body.thinking : existing.thinking;
+      const thinkingError = validateThinking(cli, thinking);
+      if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
+    }
     const updated = updateAgent(id, body);
 
     // Sync runner config when any synced field changed.

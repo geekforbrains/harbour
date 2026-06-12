@@ -10,7 +10,7 @@ import {
   createWorkflow,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
-import { getProvider, resolveRunConfig } from "../../bin/lib/providers.mjs";
+import { getProvider, resolveRunConfig, sanitizeThinking } from "../../bin/lib/providers.mjs";
 
 // End-to-end coverage for the "harbour is the source of truth for agent config"
 // model: the /next payload carries the agent's live cli/model/thinking, the
@@ -237,6 +237,19 @@ describe("payload -> command, all CLIs", () => {
     expect(cmd.args[cmd.args.indexOf("-m") + 1]).toBe("gemini-2.5-pro");
     expect(cmd.args).not.toContain("--thinking");
     expect(cmd.args).not.toContain("--effort");
+  });
+
+  it("an unknown thinking level is dropped before the command, not passed as a flag (issue #39)", () => {
+    // The production incident: an agent stored with thinking "off" produced
+    // `--effort off`, which the claude CLI rejects — every run failed at
+    // launch. The runner now sanitizes the resolved level first.
+    const payload = { agent: { cli: "claude", model: "sonnet", thinking: "off" }, job: {} };
+    const { cli, model, thinking } = resolveRunConfig(payload);
+    const sanitized = sanitizeThinking(cli, thinking);
+    expect(sanitized).toEqual({ thinking: null, dropped: "off" });
+    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, sanitized.thinking);
+    expect(cmd.args).not.toContain("--effort");
+    expect(cmd.args).not.toContain("off");
   });
 
   it("job override flows through to the command (opus beats sonnet for claude)", () => {

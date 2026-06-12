@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getProvider, runCliTool } from "../../bin/lib/providers.mjs";
+import { CLI_CONFIG } from "@/lib/cli-config";
+import { getProvider, runCliTool, sanitizeThinking } from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
 // They guard against silent flag drift in the upstream CLIs (issue #24 was
@@ -102,6 +103,50 @@ describe("codex createParser", () => {
 
     expect(first.events[0].content).toBe("Hello.");
   });
+});
+
+// Issue #39: a thinking level the CLI doesn't accept (e.g. "off", written via
+// the API before validation existed, or left behind by CLI version drift) must
+// not fail the run. The runner sanitizes the resolved level before building
+// the command: known levels pass, unknown ones are dropped and reported so the
+// run proceeds on the CLI default.
+describe("sanitizeThinking (issue #39)", () => {
+  it("passes a known level through", () => {
+    expect(sanitizeThinking("claude", "high")).toEqual({ thinking: "high", dropped: null });
+    expect(sanitizeThinking("codex", "xhigh")).toEqual({ thinking: "xhigh", dropped: null });
+  });
+
+  it("drops an unknown level instead of failing the run", () => {
+    expect(sanitizeThinking("claude", "off")).toEqual({ thinking: null, dropped: "off" });
+  });
+
+  it("treats empty as unset", () => {
+    expect(sanitizeThinking("claude", null)).toEqual({ thinking: null, dropped: null });
+    expect(sanitizeThinking("claude", "")).toEqual({ thinking: null, dropped: null });
+    expect(sanitizeThinking("claude", undefined)).toEqual({ thinking: null, dropped: null });
+  });
+
+  it("silently drops any level for a cli with no thinking flag", () => {
+    // Gemini ignores thinking entirely — dropping a stale value is not worth
+    // a warning on every run.
+    expect(sanitizeThinking("gemini", "high")).toEqual({ thinking: null, dropped: null });
+  });
+
+  it("silently drops for an unknown cli", () => {
+    expect(sanitizeThinking("cursor", "high")).toEqual({ thinking: null, dropped: null });
+  });
+});
+
+// The dashboard/API validate against CLI_CONFIG (src/lib/cli-config.ts); the
+// runner sanitizes against each provider's thinkingLevels. These are two
+// bundles (TS app vs plain-JS runner) so the lists are duplicated by
+// necessity — this test locks them together so they can't drift.
+describe("provider thinkingLevels match CLI_CONFIG", () => {
+  for (const [cli, config] of Object.entries(CLI_CONFIG)) {
+    it(`${cli}: thinkingLevels === CLI_CONFIG.${cli}.thinkingOptions`, () => {
+      expect(getProvider(cli).thinkingLevels).toEqual(config.thinkingOptions);
+    });
+  }
 });
 
 describe("gemini provider (issue #24)", () => {

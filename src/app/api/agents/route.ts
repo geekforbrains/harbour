@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withProjectAuth } from "@/lib/auth";
+import { validateCli, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
@@ -22,6 +23,10 @@ export const POST = withProjectAuth(
     if (!cli) {
       return NextResponse.json({ error: "cli is required" }, { status: 400 });
     }
+    const cliError = validateCli(cli);
+    if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
+    const thinkingError = validateThinking(cli, thinking);
+    if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
 
     const agent = createAgent(projectId, name, description, {
       cli,

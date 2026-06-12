@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
-import { deleteJob, getJobById, updateJob } from "@/lib/db/queries";
+import { validateThinking } from "@/lib/cli-config";
+import { deleteJob, getAgentById, getJobById, updateJob } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withResourceAuth("job", "id", { role: "viewer" })(
@@ -37,6 +38,13 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
     }
     if (body.envVarIds !== undefined && !Array.isArray(body.envVarIds)) {
       return NextResponse.json({ error: "envVarIds must be an array of strings" }, { status: 400 });
+    }
+    if (body.thinking !== undefined) {
+      // A thinking override rides the owning agent's CLI; workflow jobs have
+      // no agent (and no CLI), so any non-empty level is rejected.
+      const agent = existing.agent_id ? getAgentById(existing.agent_id) : undefined;
+      const thinkingError = validateThinking(agent?.cli ?? null, body.thinking);
+      if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
     }
     const updated = updateJob(id, body);
     return NextResponse.json(updated);

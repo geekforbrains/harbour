@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
+import { validateThinking } from "@/lib/cli-config";
 import { createJob, getAgentById, listJobsByAgent } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
@@ -23,6 +24,10 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
     if (!body.name || !body.schedule) {
       return NextResponse.json({ error: "name and schedule are required" }, { status: 400 });
     }
+
+    // A per-job thinking override rides the agent's CLI — validate against it.
+    const thinkingError = validateThinking(agent.cli, body.thinking);
+    if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
 
     const normalized = normalizeSchedule(body.schedule);
     if (!normalized) {

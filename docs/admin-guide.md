@@ -87,7 +87,7 @@ Content-Type: application/json
 ```
 
 `name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Optional fields:
-- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted)
+- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `thinking` is validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini`; an unknown level is a 400. Empty/omitted means the CLI default.
 - `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 - `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.
 - `color` — identity hue (falls back to a name-derived color if omitted)
@@ -101,7 +101,7 @@ PUT    /api/agents/:id    { "name": "...", "description": "...", "model": "...",
 DELETE /api/agents/:id
 ```
 
-Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically.
+Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically. `cli` and `thinking` are validated together (same rules as create) — changing `cli` to one that doesn't accept the agent's current `thinking` level is a 400 unless the request also re-sets or clears `thinking`.
 
 ### Rotate Agent API Key
 ```
@@ -135,7 +135,7 @@ Content-Type: application/json
 
 `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"`.
 
-Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking`, `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level, validated against the agent's `cli` — same per-CLI values as agent create), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
 ### Create a Workflow (No Agent)
 ```
@@ -184,7 +184,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking`, `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking` (agent jobs only, validated against the agent's `cli`), `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```

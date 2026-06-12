@@ -8,7 +8,13 @@ import {
   loadWorkflowRunnerConfigs,
   saveSessions,
 } from "./config.mjs";
-import { ensureWorkingDir, getProvider, resolveRunConfig, runCliTool } from "./providers.mjs";
+import {
+  ensureWorkingDir,
+  getProvider,
+  resolveRunConfig,
+  runCliTool,
+  sanitizeThinking,
+} from "./providers.mjs";
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
@@ -790,17 +796,33 @@ async function processNextRun(runner) {
   // cli/model/thinking come live from the /next payload (harbour is the source
   // of truth); the runner config is identity-only but may carry legacy values
   // as a fallback. Resolve before anything that needs the provider.
-  const { cli, model: agentModel, thinking: agentThinking } = resolveRunConfig(payload, runner);
+  const { cli, model: agentModel, thinking: resolvedThinking } = resolveRunConfig(payload, runner);
   if (!cli) {
     console.error(`  [${agentName}] No CLI configured for this agent — set one in the dashboard.`);
     return { outcome: "config-error", eager: false };
   }
   const provider = getProvider(cli);
 
+  // A thinking level the CLI won't accept must not fail the run (issue #39:
+  // `--effort off` killed every launch) — drop it and run on the CLI default.
+  const { thinking: agentThinking, dropped: droppedThinking } = sanitizeThinking(
+    cli,
+    resolvedThinking,
+  );
+
   // Live eager flag from server, falling back to cached runner config
   const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
 
   const runId = payload.run.id;
+
+  if (droppedThinking) {
+    const warning = `Ignoring unsupported thinking level \`${droppedThinking}\` for ${cli} — running with the CLI default. Fix the agent or job's thinking setting in the dashboard.`;
+    console.error(`  [${agentName}] ${warning}`);
+    apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: warning }).catch(() => {
+      /* best effort */
+    });
+  }
+
   const existingSession = sessions[runId];
   const isResume = !!existingSession;
   let sessionId = existingSession?.sessionId || null;
