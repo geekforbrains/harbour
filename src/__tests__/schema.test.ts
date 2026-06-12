@@ -25,7 +25,7 @@ import {
   listProjects,
   unarchiveOrg,
 } from "@/lib/db/queries";
-import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { diffSchema, getDb, initializeSchema, resetDb, setDb, verifySchema } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown — fresh in-memory v2 DB per test
@@ -86,6 +86,56 @@ describe("v2 schema", () => {
     expect(job.agent_id).toBe(agent.id);
     expect(run.project_id).toBe(project.id); // denormalized from the job
     expect(run.job_id).toBe(job.id);
+  });
+});
+
+// ===========================================================================
+// Schema drift detection (verifySchema / diffSchema)
+// ===========================================================================
+
+describe("schema drift detection", () => {
+  it("reports no drift for a freshly initialized DB", () => {
+    const db = getDb();
+    expect(diffSchema(db)).toEqual([]);
+    expect(() => verifySchema(db)).not.toThrow();
+  });
+
+  it("ignores agent-managed d_* data tables", () => {
+    const db = getDb();
+    db.exec(`CREATE TABLE d_proj_leads_abc123 (id INTEGER PRIMARY KEY, email TEXT)`);
+    expect(diffSchema(db)).toEqual([]);
+  });
+
+  it("detects a missing column left behind by CREATE TABLE IF NOT EXISTS", () => {
+    const db = getDb();
+    db.exec(`ALTER TABLE jobs DROP COLUMN prerun_command`);
+    const drift = diffSchema(db);
+    expect(drift).toContain("table jobs: missing column prerun_command (TEXT)");
+    expect(() => verifySchema(db)).toThrow(/jobs: missing column prerun_command/);
+    expect(() => verifySchema(db)).toThrow(/fresh database is the only supported path/);
+  });
+
+  it("detects an unexpected (removed-from-schema) column", () => {
+    const db = getDb();
+    db.exec(`ALTER TABLE jobs ADD COLUMN legacy_flag INTEGER`);
+    expect(diffSchema(db)).toContain("table jobs: unexpected column legacy_flag");
+  });
+
+  it("detects a stale index masking CREATE INDEX IF NOT EXISTS", () => {
+    const db = getDb();
+    db.exec(`
+      DROP INDEX idx_jobs_schedule;
+      CREATE INDEX idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+    `);
+    const drift = diffSchema(db);
+    expect(drift.some((d) => d.startsWith("index idx_jobs_schedule: differs"))).toBe(true);
+  });
+
+  it("detects a missing table", () => {
+    const db = getDb();
+    db.exec(`PRAGMA foreign_keys = OFF; DROP TABLE job_docs;`);
+    expect(diffSchema(db)).toContain("table job_docs: missing");
+    db.pragma("foreign_keys = ON");
   });
 });
 

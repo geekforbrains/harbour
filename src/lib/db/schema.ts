@@ -7,16 +7,26 @@ let _db: Database.Database | null = null;
 export function getDb(): Database.Database {
   if (!_db) {
     ensureDir(harbourHome());
-    _db = new Database(dbPath());
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
+    const db = new Database(dbPath());
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
     // Two runners polling one org can race to claim the same run. With a busy
     // timeout the loser waits for the winner's claim write instead of failing
     // immediately with SQLITE_BUSY; the guarded claim UPDATEs in runs.ts (which
     // only flip a run to 'running' while it is still scheduled/pending) then make
     // the lost claim a no-op rather than a double-claim.
-    _db.pragma("busy_timeout = 5000");
-    initializeSchema(_db);
+    db.pragma("busy_timeout = 5000");
+    try {
+      initializeSchema(db);
+    } catch (err) {
+      // A drifted DB can make initializeSchema itself throw (e.g. a new index
+      // referencing a column an old-shape table lacks). Prefer the precise
+      // drift report over the raw SQLite error when drift is the cause.
+      verifySchema(db);
+      throw err;
+    }
+    verifySchema(db);
+    _db = db;
   }
   return _db;
 }
@@ -421,6 +431,119 @@ export function initializeSchema(db: Database.Database) {
   } catch {
     /* non-fatal */
   }
+}
+
+type ColumnInfo = {
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+};
+
+function describeColumn(c: ColumnInfo): string {
+  const parts = [c.type || "ANY"];
+  if (c.notnull) parts.push("NOT NULL");
+  if (c.dflt_value != null) parts.push(`DEFAULT ${c.dflt_value}`);
+  if (c.pk) parts.push("PRIMARY KEY");
+  return parts.join(" ");
+}
+
+/**
+ * Diff the live DB against the schema this build expects. The expected shape
+ * is derived by running initializeSchema against a throwaway in-memory DB —
+ * the same code path that creates real databases — so the check can never go
+ * stale. Returns human-readable drift lines; empty means in sync.
+ *
+ * Compares table columns structurally (by name, order-insensitive, so a
+ * future ALTER-based migration path stays compatible) and index definitions
+ * textually — a stale same-name index makes CREATE INDEX IF NOT EXISTS a
+ * silent no-op, so existence alone isn't enough. Tables the schema doesn't
+ * define (agent-managed `d_*` data tables) are ignored.
+ */
+export function diffSchema(live: Database.Database): string[] {
+  const expected = new Database(":memory:");
+  try {
+    initializeSchema(expected);
+    const drift: string[] = [];
+
+    const tableNames = (db: Database.Database) =>
+      (db.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+      ).all() as { name: string }[]).map((r) => r.name);
+    const columns = (db: Database.Database, table: string) =>
+      db.prepare(
+        `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?)`
+      ).all(table) as ColumnInfo[];
+
+    for (const table of tableNames(expected)) {
+      const want = columns(expected, table);
+      const have = columns(live, table);
+      if (have.length === 0) {
+        drift.push(`table ${table}: missing`);
+        continue;
+      }
+      const haveByName = new Map(have.map((c) => [c.name, c]));
+      const wantByName = new Map(want.map((c) => [c.name, c]));
+      for (const col of want) {
+        const got = haveByName.get(col.name);
+        if (!got) {
+          drift.push(`table ${table}: missing column ${col.name} (${describeColumn(col)})`);
+        } else if (
+          got.type !== col.type ||
+          got.notnull !== col.notnull ||
+          got.dflt_value !== col.dflt_value ||
+          got.pk !== col.pk
+        ) {
+          drift.push(
+            `table ${table}: column ${col.name} differs (expected ${describeColumn(col)}, found ${describeColumn(got)})`
+          );
+        }
+      }
+      for (const col of have) {
+        if (!wantByName.has(col.name)) {
+          drift.push(`table ${table}: unexpected column ${col.name}`);
+        }
+      }
+    }
+
+    const indexes = (db: Database.Database) =>
+      db.prepare(
+        `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`
+      ).all() as { name: string; sql: string }[];
+    const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
+    const liveIndexes = new Map(indexes(live).map((i) => [i.name, normalize(i.sql)]));
+    for (const idx of indexes(expected)) {
+      const got = liveIndexes.get(idx.name);
+      const want = normalize(idx.sql);
+      if (got === undefined) drift.push(`index ${idx.name}: missing`);
+      else if (got !== want) drift.push(`index ${idx.name}: differs (expected "${want}", found "${got}")`);
+    }
+
+    return drift;
+  } finally {
+    expected.close();
+  }
+}
+
+/**
+ * Refuse to run against an out-of-sync database. v2 has no schema migrations,
+ * so a drifted DB is an unsupported state — failing at startup with a precise
+ * diff beats booting "fine" and 500ing at runtime with cryptic SQLite errors.
+ */
+export function verifySchema(db: Database.Database) {
+  const drift = diffSchema(db);
+  if (drift.length === 0) return;
+  throw new Error(
+    [
+      `Database schema at ${dbPath()} is out of sync with this version of Harbour:`,
+      ...drift.map((d) => `  - ${d}`),
+      ``,
+      `Harbour v2 has no schema migrations — a fresh database is the only supported path.`,
+      `Move or delete the database file and restart to recreate it, or apply the`,
+      `changes above manually if you need to keep existing data.`,
+    ].join("\n")
+  );
 }
 
 /**
