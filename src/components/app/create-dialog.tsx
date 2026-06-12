@@ -15,10 +15,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ApiError } from "@/lib/api/client";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
 // Sub-dialog for picking docs or env vars
 export function PickerDialog({
@@ -162,6 +164,7 @@ export function CreateDialog({
 }) {
   const createAgentJob = useCreateAgentJob();
   const createWorkflowJob = useCreateWorkflowJob();
+  const activeProjectId = useActiveProjectId();
 
   // Scoped lists from the data layer (loaded while the dialog is open).
   const { data: agents = [] } = useAgents(undefined, { enabled: open });
@@ -190,6 +193,15 @@ export function CreateDialog({
   const [postrunCommand, setPostrunCommand] = useState("");
   const [postrunGates, setPostrunGates] = useState(false);
   const [titleFormat, setTitleFormat] = useState("");
+  // Workflow-only: scope is fixed at creation. Agent jobs are always project-level.
+  const [workflowScope, setWorkflowScope] = useState<"project" | "org">("project");
+
+  // Without an active project, "This project" isn't an option — force org level.
+  const orgScoped = kind === "workflow" && (workflowScope === "org" || !activeProjectId);
+  // An org-level workflow may link only org-level resources (project_id IS NULL);
+  // the server rejects anything wider with a 400.
+  const eligibleDocs = orgScoped ? docs.filter((d) => d.project_id === null) : docs;
+  const eligibleEnvVars = orgScoped ? envVars.filter((ev) => ev.project_id === null) : envVars;
 
   // Default the agent select to the first agent once the list loads.
   useEffect(() => {
@@ -220,6 +232,7 @@ export function CreateDialog({
     setPostrunCommand("");
     setPostrunGates(false);
     setTitleFormat("");
+    setWorkflowScope("project");
   }
 
   function handleClose(value: boolean) {
@@ -238,6 +251,13 @@ export function CreateDialog({
       return;
     setSubmitting(true);
 
+    // Drop selections that aren't linkable in the chosen scope (e.g. pinned
+    // project-level docs auto-seeded before the user picked "Entire org").
+    const docIds = selectedDocIds.filter((sid) => eligibleDocs.some((d) => d.id === sid));
+    const envVarIds = selectedEnvVarIds.filter((sid) =>
+      eligibleEnvVars.some((ev) => ev.id === sid),
+    );
+
     const body = {
       name,
       description: description || undefined,
@@ -250,21 +270,22 @@ export function CreateDialog({
       model: !isWorkflow ? model || undefined : undefined,
       thinking: !isWorkflow ? thinking || undefined : undefined,
       titleFormat: !isWorkflow ? titleFormat.trim() || undefined : undefined,
-      docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
-      envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
+      docIds: docIds.length > 0 ? docIds : undefined,
+      envVarIds: envVarIds.length > 0 ? envVarIds : undefined,
     };
 
     try {
-      // Workflow jobs are created in the active project (scoped POST); agent
-      // jobs inherit their agent's project. v2 has no separate link step.
+      // Workflow jobs are created at the chosen scope (active project, or the
+      // whole org); agent jobs inherit their agent's project. v2 has no
+      // separate link step.
       if (isWorkflow) {
-        await createWorkflowJob.mutateAsync(body);
+        await createWorkflowJob.mutateAsync({ body, orgLevel: orgScoped });
       } else {
         await createAgentJob.mutateAsync({ agentId, body });
       }
       handleClose(false);
-    } catch {
-      alert("Failed to create job");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to create job");
     } finally {
       setSubmitting(false);
     }
@@ -313,7 +334,7 @@ export function CreateDialog({
   const docsEnvVarsFields = (
     <>
       <SelectedItems
-        items={docs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={selectedDocIds}
         onRemove={(id) => setSelectedDocIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowDocPicker(true)}
@@ -321,7 +342,7 @@ export function CreateDialog({
         label="Docs"
       />
       <SelectedItems
-        items={envVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
+        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={selectedEnvVarIds}
         onRemove={(id) => setSelectedEnvVarIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowEnvVarPicker(true)}
@@ -342,6 +363,25 @@ export function CreateDialog({
 
           <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
             {kind === "agent" && sharedFields}
+
+            {kind === "workflow" && (
+              <div className="space-y-2">
+                <Label>Scope</Label>
+                <select
+                  value={orgScoped ? "org" : "project"}
+                  onChange={(e) => setWorkflowScope(e.target.value === "org" ? "org" : "project")}
+                  className={SELECT_CLASS}
+                >
+                  <option value="project" disabled={!activeProjectId}>
+                    This project
+                  </option>
+                  <option value="org">Entire org</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Fixed at creation. Org workflows can link only org-level docs and secrets.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Name</Label>
@@ -481,7 +521,7 @@ export function CreateDialog({
         open={showDocPicker}
         onOpenChange={setShowDocPicker}
         title="Select Docs"
-        items={docs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={new Set(selectedDocIds)}
         onToggle={(id) => toggleItem(id, selectedDocIds, setSelectedDocIds)}
         icon={FileText}
@@ -490,7 +530,7 @@ export function CreateDialog({
         open={showEnvVarPicker}
         onOpenChange={setShowEnvVarPicker}
         title="Select Secrets"
-        items={envVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
+        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={new Set(selectedEnvVarIds)}
         onToggle={(id) => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
         icon={KeyRound}

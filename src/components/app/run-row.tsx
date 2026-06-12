@@ -3,6 +3,7 @@
 import { Bot, Pause, Play, Terminal, Zap } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { OrgBadge } from "@/components/app/org-badge";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,9 @@ import { timeAgo } from "@/lib/time";
 export type RunRowData = {
   id: string;
   status: string;
+  org_id: string;
+  /** null = org-level run (its workflow has no project). */
+  project_id: string | null;
   job_id: string;
   job_name: string;
   job_kind?: "agent" | "workflow" | null;
@@ -64,6 +68,7 @@ export function RunRow({ run, showActions = true }: Props) {
               <>
                 <Terminal className="h-3 w-3" />
                 <span>Workflow</span>
+                {run.project_id === null && <OrgBadge className="h-4 px-1.5" />}
               </>
             ) : (
               <>

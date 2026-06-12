@@ -92,7 +92,7 @@ There is **no** signup route.
 
 | Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| GET / POST | `/api/jobs` | `withProjectAuth` (viewer / editor) | List jobs / create a **workflow** job |
+| GET / POST | `/api/jobs` | `withOrgAuth` (viewer / editor) | List jobs / create a **workflow** job; `?projectId=` |
 | GET | `/api/jobs/:id` | `withResourceAuth` job (viewer) | Fetch |
 | PUT / DELETE | `/api/jobs/:id` | `withResourceAuth` job (editor) | Update / delete |
 | GET | `/api/jobs/:id/runs` | `withResourceAuth` job (viewer) | List the job's runs |
@@ -102,11 +102,18 @@ There is **no** signup route.
 | POST | `/api/jobs/:id/data` | `withAgentOrUser` (editor) | Link a database |
 | DELETE | `/api/jobs/:id/data/:dataId` | `withResourceAuth` job (editor) | Unlink a database |
 
+`/api/jobs` is dual-tier like the shared-context lists: `GET` with `?projectId=`
+includes org-level jobs, and `POST` without a `projectId` (query or body)
+creates an **org-level** workflow — agent jobs (`POST /api/agents/:id/jobs`)
+are always project-level, and scope is fixed at creation. An org-level job may
+link only org-level docs / env vars / databases; the link routes (and create /
+update with `docIds` / `envVarIds`) return 400 otherwise.
+
 ## Runs
 
 | Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| GET | `/api/runs` | `withOrgAuth` (viewer) | Bundled `{scheduled, running, waiting, recent}`; `?filter=`, `?projectId=` |
+| GET | `/api/runs` | `withOrgAuth` (viewer) | Bundled `{scheduled, running, waiting, recent}`; `?filter=`, `?projectId=` (org-level runs included) |
 | GET | `/api/runs/history` | `withOrgAuth` (viewer) | Paginated history |
 | GET | `/api/runs/:id` | `withResourceAuth` run (viewer) | Run + activity + attachments |
 | DELETE | `/api/runs/:id` | `withResourceAuth` run (editor) | Delete run + uploads |

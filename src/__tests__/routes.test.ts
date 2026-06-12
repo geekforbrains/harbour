@@ -264,7 +264,7 @@ describe("cross-org isolation (negative tests)", () => {
 
     // Make org-B a ready workflow job, due in the past.
     const db = getDb();
-    const wfJobId = createWorkflow(other.project.id, {
+    const wfJobId = createWorkflow(other.org.id, other.project.id, {
       name: "wf",
       schedule: '{"every":60}',
       command: "echo hi",
@@ -415,8 +415,8 @@ describe("POST /api/runs/[id]/activity (viewer may comment)", () => {
 
 describe("job creation: workflows vs agent prerun gates", () => {
   it("POST /api/jobs creates a first-class workflow job", async () => {
-    const { project, editor } = fixture();
-    const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
+    const { org, project, editor } = fixture();
+    const req = userReq(editor.id, `http://x/api/jobs?orgId=${org.id}&projectId=${project.id}`, {
       method: "POST",
       body: JSON.stringify({ name: "X", schedule: '{"every":60}', command: "echo hi" }),
       headers: { "content-type": "application/json" },
@@ -430,8 +430,7 @@ describe("job creation: workflows vs agent prerun gates", () => {
 
   it("POST /api/jobs rejects an agentId (agent jobs use the agent endpoint)", async () => {
     const { org, project, editor, agent } = fixture();
-    void org;
-    const req = userReq(editor.id, `http://x/api/jobs?projectId=${project.id}`, {
+    const req = userReq(editor.id, `http://x/api/jobs?orgId=${org.id}&projectId=${project.id}`, {
       method: "POST",
       body: JSON.stringify({
         name: "X",
@@ -470,7 +469,7 @@ describe("workflow run reporting", () => {
   // can report their status even though no agent owns them.
   it("an in-org workflow runner can set status on a workflow run", async () => {
     const { project } = fixture();
-    const wfJob = createWorkflow(project.id, {
+    const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       command: "echo hi",
@@ -501,7 +500,7 @@ describe("workflow run reporting", () => {
 
   it("an agent cannot set status on a workflow run", async () => {
     const { project, agent } = fixture();
-    const wfJob = createWorkflow(project.id, {
+    const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       command: "echo hi",
@@ -518,7 +517,7 @@ describe("workflow run reporting", () => {
 
   it("an out-of-org workflow runner cannot touch a workflow run", async () => {
     const { project } = fixture();
-    const wfJob = createWorkflow(project.id, {
+    const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       command: "echo hi",

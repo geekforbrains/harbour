@@ -92,7 +92,7 @@ function fixture() {
   const agent = createAgent(project.id, "Dev");
   const agentJob = createJob(project.id, agent.id, { name: "AJ", schedule: '{"every":60}' })!;
   const agentRun = createRun(agentJob.id, agent.id)!;
-  const wfJob = createWorkflow(project.id, {
+  const wfJob = createWorkflow(org.id, project.id, {
     name: "WF",
     schedule: '{"every":60}',
     command: "echo hi",
@@ -136,7 +136,7 @@ describe("workflow run status isolation", () => {
   it("still accepts terminal statuses on a workflow run", async () => {
     const { project, runner } = fixture();
     for (const status of ["done", "failed", "skipped", "killed"]) {
-      const job = createWorkflow(project.id, {
+      const job = createWorkflow(project.org_id, project.id, {
         name: `WF-${status}`,
         schedule: '{"every":60}',
         command: "echo hi",

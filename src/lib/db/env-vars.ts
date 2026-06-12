@@ -141,6 +141,20 @@ export function listPinnedEnvVarIds(projectId: string): string[] {
 // Link/unlink env vars to jobs
 export function linkEnvVarToJob(jobId: string, envVarId: string) {
   const db = getDb();
+  // An org-level job (project_id NULL) may only link org-level vars of its own
+  // org — a project-scoped secret on an org-scoped job would widen its blast
+  // radius to the whole org. Routes map this error to 400.
+  const job = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
+    | { org_id: string; project_id: string | null }
+    | undefined;
+  if (job && job.project_id === null) {
+    const envVar = db
+      .prepare(`SELECT org_id, project_id FROM env_vars WHERE id = ?`)
+      .get(envVarId) as { org_id: string; project_id: string | null } | undefined;
+    if (!envVar || envVar.project_id !== null || envVar.org_id !== job.org_id) {
+      throw new Error("Org-level jobs can only link org-level env vars");
+    }
+  }
   db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`).run(
     jobId,
     envVarId,
@@ -161,20 +175,18 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
  *
  *     job-linked  >  project-level  >  org-level   (more specific wins)
  *
+ * An org-level job (project_id NULL) has no project tier — the tier-2 query's
+ * `project_id = NULL` matches nothing — so it composes org-tier + job-linked.
+ *
  * Returns the final decrypted name→value map.
  */
 export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string> {
   const db = getDb();
 
-  // Resolve the job's scope (its project and that project's org).
-  const scope = db
-    .prepare(`
-    SELECT j.project_id, p.org_id
-    FROM jobs j
-    JOIN projects p ON j.project_id = p.id
-    WHERE j.id = ?
-  `)
-    .get(jobId) as { project_id: string; org_id: string } | undefined;
+  // Resolve the job's scope directly from the denormalized columns.
+  const scope = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
+    | { org_id: string; project_id: string | null }
+    | undefined;
   if (!scope) return {};
 
   type Row = { name: string; encrypted_value: string };

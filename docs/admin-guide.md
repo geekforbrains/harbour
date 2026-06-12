@@ -8,7 +8,7 @@ You have admin access to a Harbour instance — the control plane for AI agents 
 
 Key concepts:
 - **Orgs** — top-level tenants. Every project belongs to an org; resources never cross org lines.
-- **Projects** — containers inside an org. Every agent and job lives in exactly one project. Docs, databases, and env vars are either project-level or org-level (shared across the org's projects).
+- **Projects** — containers inside an org. Every agent lives in exactly one project. Docs, databases, env vars — and workflow jobs — are either project-level or org-level (shared across the org's projects); agent jobs are always project-level.
 - **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun commands. Workflow jobs run shell commands with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
@@ -28,7 +28,7 @@ The key acts as the user who created it — all actions are attributed to that u
 
 ## Scope: Orgs and Projects
 
-List and create endpoints are scoped by query param — `?orgId=<id>` for org-level resources (runs, docs, databases, env vars, projects) and `?projectId=<id>` for project-level ones (agents, jobs). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
+List and create endpoints are scoped by query param — `?orgId=<id>` for org-scoped resources (runs, jobs, docs, databases, env vars, projects) and `?projectId=<id>` for project-level ones (agents). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
 
 Discover your scope first:
 
@@ -122,8 +122,11 @@ GET /api/agents/:id/jobs
 
 ### List Jobs
 ```
-GET /api/jobs?projectId=<id>
+GET /api/jobs?orgId=<id>
+GET /api/jobs?orgId=<id>&projectId=<id>
 ```
+
+Without `projectId`, returns the org's org-level workflows only; with it, the project's jobs plus the org-level workflows.
 
 ### Create an Agent Job
 ```
@@ -143,7 +146,7 @@ Optional fields: `prerunCommand` (shell command run before the agent — exit 0 
 
 ### Create a Workflow (No Agent)
 ```
-POST /api/jobs?projectId=<id>
+POST /api/jobs?orgId=<id>
 Content-Type: application/json
 
 {
@@ -154,7 +157,7 @@ Content-Type: application/json
 }
 ```
 
-Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
+Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
 
 ### Schedule Format
 
@@ -188,7 +191,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking` (agent jobs only, validated against the agent's `cli`), `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking` (agent jobs only, validated against the agent's `cli`), `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. Scope is not updatable — a job can't move between org-level and project-level. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```
@@ -209,6 +212,8 @@ DELETE /api/jobs/:id/env-vars/:envVarId
 DELETE /api/jobs/:id/data/:dataId
 ```
 
+An org-level workflow can link only org-level resources — a project-scoped doc/env var/database returns 400.
+
 ### List a Job's Runs
 ```
 GET /api/jobs/:id/runs
@@ -224,7 +229,7 @@ GET /api/runs?orgId=<id>&filter=recent
 GET /api/runs?orgId=<id>&projectId=<id>
 ```
 
-Default returns all active runs grouped by status. `filter=waiting` returns runs needing human input. `filter=recent` returns recently completed runs. `projectId` narrows any of these to one project.
+Default returns all active runs grouped by status. `filter=waiting` returns runs needing human input. `filter=recent` returns recently completed runs. `projectId` narrows any of these to one project (runs of org-level workflows are still included).
 
 ### Get a Run
 ```
@@ -523,7 +528,7 @@ DELETE /api/admin-api-keys/:id
 8. Give the worker agent its API key and the Harbour URL
 
 ### Set up a workflow (no agent)
-1. `POST /api/jobs?projectId=<id>` — create the workflow with `command` and schedule
+1. `POST /api/jobs?orgId=<id>` — create the workflow with `command` and schedule (add `projectId` for project-level)
 2. `POST /api/workflow-runners?orgId=<id>` — mint runner credentials; run the returned `workflow connect` command on the runner host
 3. Place the script in `~/.harbour/workflows/` on the runner host
 4. Optionally link docs/env vars for context (passed via stdin JSON)

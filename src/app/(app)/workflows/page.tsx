@@ -4,18 +4,22 @@ import { Calendar, Plus, Workflow } from "lucide-react";
 import { useState } from "react";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { ListState } from "@/components/app/list-state";
+import { OrgBadge } from "@/components/app/org-badge";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useJobs } from "@/lib/hooks/use-jobs";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
 import { timeAgo } from "@/lib/time";
 
 type WorkflowJob = {
   id: string;
   kind: "agent" | "workflow";
+  org_id: string;
+  /** null = org-level workflow. */
+  project_id: string | null;
   name: string;
   description: string | null;
   schedule: string;
@@ -28,7 +32,7 @@ type WorkflowJob = {
 
 export default function WorkflowsPage() {
   const [showCreate, setShowCreate] = useState(false);
-  const activeProjectId = useActiveProjectId();
+  const activeOrgId = useActiveOrgId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
   // Workflows share the jobs API; agent jobs (kind === "agent") live at /jobs.
@@ -49,8 +53,8 @@ export default function WorkflowsPage() {
       />
 
       <ListState
-        scope={activeProjectId}
-        scopeNeed="project"
+        scope={activeOrgId}
+        scopeNeed="org"
         scopeEntity="workflows"
         isEmpty={workflows.length === 0}
         emptyIcon={<Workflow className="h-10 w-10 text-muted-foreground/40" />}
@@ -84,6 +88,7 @@ export default function WorkflowsPage() {
                   )}
                 </div>
               </div>
+              {wf.project_id === null && <OrgBadge />}
               {!wf.active && (
                 <Badge variant="secondary" className="text-[10px] shrink-0">
                   Paused

@@ -98,7 +98,7 @@ describe("/next payload carries live agent config", () => {
   it("omits the agent block for a deterministic workflow run", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Website")!;
-    const job = createWorkflow(project.id, {
+    const job = createWorkflow(org.id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       command: "echo hi",

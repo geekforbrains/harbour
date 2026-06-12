@@ -2,8 +2,10 @@
 
 Orgs and projects are Harbour's **tenancy**, not an optional view filter. An
 instance admin owns the install; work is organized into **orgs → projects**; and
-every agent, job, and run lives inside exactly one project. Projects are where
-operational entities are born and scoped.
+every agent, job, and run lives inside a project — except org-level
+**workflows** (and their runs), which belong to the org as a whole
+([workflows](workflows.md#data-model)). Projects are where operational entities
+are born and scoped.
 
 ## The hierarchy
 
@@ -21,9 +23,11 @@ changes things, and an **instance admin** satisfies any check in any org.
 Two ownership shapes (full columns in
 [database-schema.md](../reference/database-schema.md)):
 
-- **Operational entities** — `agents`, `jobs`, `runs` — carry a NOT NULL
-  `project_id`. An agent belongs to one project; deleting the project cascades
-  them away.
+- **Operational entities** — `agents` carry a NOT NULL `project_id`; an agent
+  belongs to one project, and deleting the project cascades it away. `jobs` and
+  `runs` carry a NOT NULL `org_id` plus a nullable `project_id`: agent jobs are
+  always project-level, but a **workflow** job may be org-level
+  (`project_id IS NULL`), and its runs inherit that. Scope is fixed at creation.
 - **Resources** — `docs`, `env_vars` (Secrets), `databases` — are **dual-tier**:
   a NOT NULL `org_id` plus a nullable `project_id`. `project_id IS NULL` means
   **org-level** (usable by every project in the org); otherwise **project-level**.
@@ -49,18 +53,19 @@ Creating something while a project is active scopes it there — "+ Agent" /
 
 Projects soft-delete (`archived_at`) on the normal path; a hard delete is the
 admin escape hatch. Either way the cascade follows the `project_id` FKs — the
-project's agents, jobs, and runs go with it. Org-level resources
-(`project_id IS NULL`) are untouched; project-level resources in that project
-cascade.
+project's agents, jobs, and runs go with it. Org-level rows
+(`project_id IS NULL`) — resources and workflows — are untouched; project-level
+resources in that project cascade.
 
 ## What projects don't do
 
 - **No cross-org references.** A resource in org A can never be used by org B.
 - **No nesting.** Flat list within an org.
 - **No multi-project entities.** An agent or job belongs to exactly one project
-  (the direct FK). Sharing *within* an org is done at the **org level** — an
-  org-level doc / secret / database is visible to every project in the org —
-  not by referencing one entity from many projects.
+  (the direct FK) — or, for workflows only, to the org tier. Sharing *within* an
+  org is done at the **org level** — an org-level doc / secret / database /
+  workflow is visible to every project in the org — not by referencing one
+  entity from many projects.
 
 ## Source-of-truth pointers
 

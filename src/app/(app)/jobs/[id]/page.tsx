@@ -25,6 +25,7 @@ import { BackLink } from "@/components/app/back-link";
 import { PickerDialog, SelectedItems } from "@/components/app/create-dialog";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { OrgBadge } from "@/components/app/org-badge";
 import { PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
 import { StatusDot } from "@/components/app/run-status";
@@ -49,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
+import { ApiError } from "@/lib/api/client";
 import { useAgent } from "@/lib/hooks/use-agents";
 import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
@@ -64,6 +66,9 @@ import { formatTimestamp, timeAgo } from "@/lib/time";
 type Job = {
   id: string;
   kind: "agent" | "workflow";
+  org_id: string;
+  /** null = org-level workflow (agent jobs are always project-level). */
+  project_id: string | null;
   agent_id: string | null;
   agent_name: string | null;
   agent_color: string | null;
@@ -180,8 +185,8 @@ export default function JobDetailPage() {
           envVarIds: editEnvVarIds,
         },
       });
-    } catch {
-      alert("Failed to update job");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to update job");
       return;
     }
     setShowEdit(false);
@@ -199,8 +204,8 @@ export default function JobDetailPage() {
   async function handleLinkDoc(docId: string) {
     try {
       await linkMutations.linkDoc.mutateAsync(docId);
-    } catch {
-      alert("Failed to link doc");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to link doc");
     }
   }
 
@@ -215,8 +220,8 @@ export default function JobDetailPage() {
   async function handleLinkEnvVar(envVarId: string) {
     try {
       await linkMutations.linkEnvVar.mutateAsync(envVarId);
-    } catch {
-      alert("Failed to link secret");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to link secret");
     }
   }
 
@@ -248,6 +253,13 @@ export default function JobDetailPage() {
     return <div className="text-sm text-muted-foreground py-12 text-center">Job not found.</div>;
 
   const isWorkflow = job.kind === "workflow";
+  const isOrgLevel = job.project_id === null;
+  // Org-level workflows may link only org-level resources; the server 400s
+  // anything project-scoped, so don't offer it.
+  const linkableDocs = isOrgLevel ? allDocs.filter((d) => d.project_id === null) : allDocs;
+  const linkableEnvVars = isOrgLevel
+    ? allEnvVars.filter((ev) => ev.project_id === null)
+    : allEnvVars;
 
   return (
     <div className="space-y-6">
@@ -260,6 +272,7 @@ export default function JobDetailPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">{job.name}</h1>
+            {isOrgLevel && <OrgBadge />}
             {!job.active && <Badge variant="secondary">Paused</Badge>}
           </div>
           {job.description && (
@@ -532,7 +545,7 @@ export default function JobDetailPage() {
           </DialogHeader>
           {(() => {
             const linkedIds = new Set(job.docs.map((d) => d.id));
-            const available = allDocs.filter((d) => !linkedIds.has(d.id));
+            const available = linkableDocs.filter((d) => !linkedIds.has(d.id));
             if (available.length === 0) {
               return (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -577,7 +590,7 @@ export default function JobDetailPage() {
           </DialogHeader>
           {(() => {
             const linkedIds = new Set(job.envVars.map((ev) => ev.id));
-            const available = allEnvVars.filter((ev) => !linkedIds.has(ev.id));
+            const available = linkableEnvVars.filter((ev) => !linkedIds.has(ev.id));
             if (available.length === 0) {
               return (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -727,7 +740,7 @@ export default function JobDetailPage() {
               />
             )}
             <SelectedItems
-              items={allDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+              items={linkableDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
               selectedIds={editDocIds}
               onRemove={(did) => setEditDocIds((prev) => prev.filter((i) => i !== did))}
               onAdd={() => setShowEditDocPicker(true)}
@@ -735,7 +748,7 @@ export default function JobDetailPage() {
               label="Docs"
             />
             <SelectedItems
-              items={allEnvVars}
+              items={linkableEnvVars}
               selectedIds={editEnvVarIds}
               onRemove={(evid) => setEditEnvVarIds((prev) => prev.filter((i) => i !== evid))}
               onAdd={() => setShowEditEnvVarPicker(true)}
@@ -766,7 +779,7 @@ export default function JobDetailPage() {
         open={showEditDocPicker}
         onOpenChange={setShowEditDocPicker}
         title="Select Docs"
-        items={allDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={linkableDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={new Set(editDocIds)}
         onToggle={(did) =>
           setEditDocIds((prev) =>
@@ -779,7 +792,7 @@ export default function JobDetailPage() {
         open={showEditEnvVarPicker}
         onOpenChange={setShowEditEnvVarPicker}
         title="Select Secrets"
-        items={allEnvVars}
+        items={linkableEnvVars}
         selectedIds={new Set(editEnvVarIds)}
         onToggle={(evid) =>
           setEditEnvVarIds((prev) =>

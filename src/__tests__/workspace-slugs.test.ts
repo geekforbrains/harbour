@@ -172,7 +172,7 @@ describe("run payload workspace block", () => {
   it("omits the workspace key for a workflow run (no agent, no CLI, no workspace)", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Ops")!;
-    const workflow = createWorkflow(project.id, {
+    const workflow = createWorkflow(org.id, project.id, {
       name: "Health Check",
       schedule: '{"every":60}',
       command: "echo hi",

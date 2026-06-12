@@ -49,7 +49,7 @@ const HOUR_AGO = () => Math.floor(Date.now() / 1000) - 3600;
 function workflowJob(active = true) {
   const org = createOrg("Acme")!;
   const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(project.id, {
+  const wf = createWorkflow(org.id, project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     command: "echo sync",
@@ -190,7 +190,7 @@ describe("buildRunPayload: workflow run shape", () => {
     const doc = createDoc(org.id, project.id, "Runbook", "do the thing")!;
     const env = createEnvVar(org.id, project.id, "API_TOKEN", "secret")!;
 
-    const wf = createWorkflow(project.id, {
+    const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       command: "echo sync",

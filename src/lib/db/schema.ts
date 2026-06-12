@@ -45,6 +45,8 @@ export function isUniqueViolation(err: unknown): boolean {
  * v2 schema — clean break, no migrations. Every table is created directly in
  * its final v2 shape. Org → Project (mandatory) → Agent / Job → Run; resources
  * (docs / env_vars / databases) are dual-tier (org-level or project-level).
+ * Workflow jobs are dual-tier too (project_id NULL = org-level); agent jobs
+ * are always project-level, enforced by the CHECK on jobs.
  *
  * There is no v1 → v2 migration: a fresh DB is the only supported path.
  */
@@ -154,7 +156,8 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level (workflow jobs only)
       kind TEXT NOT NULL DEFAULT 'agent' CHECK(kind IN ('agent','workflow')),
       agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,   -- set for agent jobs, NULL for workflow jobs
       name TEXT NOT NULL,
@@ -173,12 +176,14 @@ export function initializeSchema(db: Database.Database) {
       last_run_at INTEGER,
       next_run_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      CHECK(kind != 'agent' OR project_id IS NOT NULL)
     );
 
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,  -- denormalized
+      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,          -- denormalized
+      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,           -- denormalized; NULL = org-level job's run
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'running'
@@ -377,10 +382,12 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_slug ON agents(project_id, slug);
     CREATE INDEX IF NOT EXISTS idx_workflow_runners_org ON workflow_runners(org_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_org ON jobs(org_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(kind, agent_id, active, next_run_at);
 
+    CREATE INDEX IF NOT EXISTS idx_runs_org ON runs(org_id);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
     CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);

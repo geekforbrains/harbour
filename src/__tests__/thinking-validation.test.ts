@@ -320,7 +320,7 @@ describe("PUT /api/jobs/:id — thinking override validation", () => {
 
   it("rejects a thinking override on a workflow job (no agent, no CLI)", async () => {
     const { org, project } = fixture();
-    const job = createWorkflow(project.id, {
+    const job = createWorkflow(org.id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       command: "echo hi",

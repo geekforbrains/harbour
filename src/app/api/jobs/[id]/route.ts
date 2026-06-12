@@ -46,8 +46,14 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
       const thinkingError = validateThinking(agent?.cli ?? null, body.thinking);
       if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
     }
-    const updated = updateJob(id, body);
-    return NextResponse.json(updated);
+    try {
+      const updated = updateJob(id, body);
+      return NextResponse.json(updated);
+    } catch (error) {
+      // Link guard: an org-level job may only link org-level resources.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   },
 );
 

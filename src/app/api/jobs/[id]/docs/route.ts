@@ -17,7 +17,13 @@ export const POST = withResourceAuth("job", "id", { role: "editor" })(
       return NextResponse.json({ error: "Doc not found" }, { status: 404 });
     }
 
-    linkDocToJob(id, body.docId);
+    try {
+      linkDocToJob(id, body.docId);
+    } catch (error) {
+      // Link guard: an org-level job may only link org-level docs.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true }, { status: 201 });
   },
 );

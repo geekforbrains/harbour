@@ -19,7 +19,13 @@ export const POST = withResourceAuth("job", "id", { role: "editor" })(
       return NextResponse.json({ error: "Env var not found" }, { status: 404 });
     }
 
-    linkEnvVarToJob(id, body.envVarId);
+    try {
+      linkEnvVarToJob(id, body.envVarId);
+    } catch (error) {
+      // Link guard: an org-level job may only link org-level env vars.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true });
   },
 );

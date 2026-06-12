@@ -72,7 +72,7 @@ function agentSetup() {
 function workflowSetup() {
   const org = createOrg("Acme")!;
   const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(project.id, {
+  const wf = createWorkflow(org.id, project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     command: "echo sync",

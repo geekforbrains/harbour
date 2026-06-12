@@ -18,7 +18,13 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Database not found" }, { status: 404 });
     }
 
-    linkDatabaseToJob(id, body.databaseId);
+    try {
+      linkDatabaseToJob(id, body.databaseId);
+    } catch (error) {
+      // Link guard: an org-level job may only link org-level databases.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ ok: true }, { status: 201 });
   },
   {

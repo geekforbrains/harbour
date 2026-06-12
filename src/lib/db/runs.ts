@@ -14,16 +14,17 @@ import { getDb } from "./schema";
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
-  // Resolve project_id (denormalized) and a placeholder title from the job.
-  const job = db.prepare(`SELECT name, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { name: string; project_id: string }
+  // Resolve org_id/project_id (denormalized; project_id is NULL for org-level
+  // workflow jobs) and a placeholder title from the job.
+  const job = db.prepare(`SELECT name, org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
+    | { name: string; org_id: string; project_id: string | null }
     | undefined;
   if (!job) return null;
   const title = defaultRunTitle(job.name, Math.floor(Date.now() / 1000));
   db.prepare(`
-    INSERT INTO runs (id, project_id, job_id, agent_id, status, claimed_at, title)
-    VALUES (?, ?, ?, ?, 'running', unixepoch(), ?)
-  `).run(id, job.project_id, jobId, agentId || null, title);
+    INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, claimed_at, title)
+    VALUES (?, ?, ?, ?, ?, 'running', unixepoch(), ?)
+  `).run(id, job.org_id, job.project_id, jobId, agentId || null, title);
   return getRunById(id);
 }
 
@@ -265,21 +266,21 @@ export function listRunsByAgent(
     .all(agentId, limit, offset);
 }
 
-// Run list queries are MANDATORILY scoped to an org: runs have no org_id column,
-// so we join through the run's denormalized project_id to projects.org_id. The
-// optional projectId narrows further within the org.
+// Run list queries are MANDATORILY scoped to an org via the run's denormalized
+// org_id. The optional projectId narrows further within the org but still
+// includes org-level runs (project_id NULL) — dual-tier display, same
+// semantics as listDocs.
 export function listScheduledRuns(orgId: string, projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'scheduled' AND p.org_id = ? ${projectFilter}
+    WHERE r.status = 'scheduled' AND r.org_id = ? ${projectFilter}
     ORDER BY r.scheduled_for ASC
   `)
     .all(...(projectId ? [orgId, projectId] : [orgId]));
@@ -287,16 +288,15 @@ export function listScheduledRuns(orgId: string, projectId?: string) {
 
 export function listRunningRuns(orgId: string, projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'running' AND p.org_id = ? ${projectFilter}
+    WHERE r.status = 'running' AND r.org_id = ? ${projectFilter}
     ORDER BY r.updated_at DESC
   `)
     .all(...(projectId ? [orgId, projectId] : [orgId]));
@@ -304,16 +304,15 @@ export function listRunningRuns(orgId: string, projectId?: string) {
 
 export function listWaitingRuns(orgId: string, projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('waiting', 'pending') AND p.org_id = ? ${projectFilter}
+    WHERE r.status IN ('waiting', 'pending') AND r.org_id = ? ${projectFilter}
     ORDER BY r.updated_at ASC
   `)
     .all(...(projectId ? [orgId, projectId] : [orgId]));
@@ -321,16 +320,15 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
 
 export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
            j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed', 'killed') AND p.org_id = ? ${projectFilter}
+    WHERE r.status IN ('done', 'failed', 'killed') AND r.org_id = ? ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `)
     .all(...(projectId ? [orgId, projectId, limit] : [orgId, limit]));
@@ -369,9 +367,8 @@ export function listRunsHistory(
   const where: string[] = [];
   const params: (string | number)[] = [];
 
-  // MANDATORY org scope: runs have no org_id, so constrain via the run's
-  // denormalized project_id joined to projects.org_id (join added below).
-  where.push(`p.org_id = ?`);
+  // MANDATORY org scope via the run's denormalized org_id.
+  where.push(`r.org_id = ?`);
   params.push(orgId);
 
   // Status filter: validate against allowed set; default excludes 'skipped'
@@ -394,7 +391,8 @@ export function listRunsHistory(
     params.push(filters.jobId);
   }
   if (filters.projectId) {
-    where.push(`r.project_id = ?`);
+    // Project filter still includes org-level runs (dual-tier display).
+    where.push(`(r.project_id = ? OR r.project_id IS NULL)`);
     params.push(filters.projectId);
   }
   // Time window matches the column we sort on so the filter feels predictable.
@@ -418,7 +416,6 @@ export function listRunsHistory(
            a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
     WHERE ${where.join(" AND ")}
     ORDER BY COALESCE(r.completed_at, r.created_at) ${order}, r.created_at ${order}
@@ -679,7 +676,9 @@ export function getAgentNextRun(agentId: string) {
 
 // Workflow polling: get next deterministic workflow run (no agent assigned).
 // MANDATORY org scope: candidate runs/jobs are constrained to the caller's org
-// via project_id → projects.org_id so a runner never claims another org's work.
+// via the denormalized org_id so a runner never claims another org's work.
+// Org-level workflows (project_id NULL) are claimed the same way as
+// project-level ones — runners are org-scoped either way.
 export function getNextWorkflowRun(orgId: string) {
   const db = getDb();
 
@@ -690,8 +689,7 @@ export function getNextWorkflowRun(orgId: string) {
     .prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN projects p ON r.project_id = p.id
-      WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND p.org_id = ?
+    WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND r.org_id = ?
     AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `)
     .all(orgId, now) as { id: string; timeout_minutes: number }[];
@@ -704,10 +702,9 @@ export function getNextWorkflowRun(orgId: string) {
     const scheduledRun = db
       .prepare(`
       SELECT r.id FROM runs r
-      JOIN projects p ON r.project_id = p.id
       JOIN jobs j ON r.job_id = j.id
       WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
-      AND p.org_id = ?
+      AND r.org_id = ?
       ORDER BY r.scheduled_for ASC LIMIT 1
     `)
       .get(now, orgId) as any;
@@ -732,10 +729,9 @@ export function getNextWorkflowRun(orgId: string) {
     const readyJob = db
       .prepare(`
       SELECT j.id FROM jobs j
-      JOIN projects p ON j.project_id = p.id
       WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
       AND j.workflow_command IS NOT NULL
-      AND p.org_id = ?
+      AND j.org_id = ?
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
         SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
@@ -768,10 +764,9 @@ export function peekWorkflowNext(orgId: string) {
   const scheduledRun = db
     .prepare(`
     SELECT r.id, j.name as job_name FROM runs r
-    JOIN projects p ON r.project_id = p.id
     JOIN jobs j ON r.job_id = j.id
     WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
-    AND p.org_id = ?
+    AND r.org_id = ?
     ORDER BY r.scheduled_for ASC LIMIT 1
   `)
     .get(now, orgId) as any;
@@ -788,10 +783,9 @@ export function peekWorkflowNext(orgId: string) {
   const readyJob = db
     .prepare(`
     SELECT j.id, j.name FROM jobs j
-    JOIN projects p ON j.project_id = p.id
     WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
     AND j.workflow_command IS NOT NULL
-    AND p.org_id = ?
+    AND j.org_id = ?
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
     AND NOT EXISTS (
       SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')

@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
-import { withProjectAuth } from "@/lib/auth";
+import { withOrgAuth } from "@/lib/auth";
+import { orgIdForProject } from "@/lib/db/access";
 import { createWorkflow, listAllJobs } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
-export const GET = withProjectAuth(
-  async (req) => {
-    const projectId = req.nextUrl.searchParams.get("projectId")!;
-    return NextResponse.json(listAllJobs(projectId));
+export const GET = withOrgAuth(
+  async (req, auth) => {
+    const projectId = req.nextUrl.searchParams.get("projectId") || null;
+    return NextResponse.json(listAllJobs(auth.orgId, projectId));
   },
   { role: "viewer" },
 );
 
 // Create a first-class workflow job (no agent, shell command only).
-export const POST = withProjectAuth(
-  async (req) => {
-    const projectId = req.nextUrl.searchParams.get("projectId")!;
+// Dual-tier: project-level when projectId given, org-level otherwise.
+export const POST = withOrgAuth(
+  async (req, auth) => {
     const body = await req.json();
     const { name, description, schedule, command, docIds, envVarIds, timeoutMinutes } = body;
     // This endpoint only creates deterministic workflow jobs. Agent jobs (and
@@ -31,6 +32,15 @@ export const POST = withProjectAuth(
         { status: 400 },
       );
     }
+
+    // Project-level when projectId given; otherwise org-level. Scope is fixed
+    // at creation.
+    const projectId = body.projectId ?? req.nextUrl.searchParams.get("projectId") ?? null;
+    // A client-supplied project must belong to the caller's org.
+    if (projectId && orgIdForProject(projectId) !== auth.orgId) {
+      return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
+    }
+
     const normalized = normalizeSchedule(schedule);
     if (!normalized) {
       return NextResponse.json(
@@ -41,16 +51,22 @@ export const POST = withProjectAuth(
         { status: 400 },
       );
     }
-    const job = createWorkflow(projectId, {
-      name,
-      description,
-      schedule: normalized,
-      command,
-      timeoutMinutes,
-      docIds,
-      envVarIds,
-    });
-    return NextResponse.json(job, { status: 201 });
+    try {
+      const job = createWorkflow(auth.orgId, projectId, {
+        name,
+        description,
+        schedule: normalized,
+        command,
+        timeoutMinutes,
+        docIds,
+        envVarIds,
+      });
+      return NextResponse.json(job, { status: 201 });
+    } catch (error) {
+      // Link guard: an org-level workflow may only link org-level resources.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   },
   { role: "editor" },
 );

@@ -117,14 +117,14 @@ describe("foreign keys", () => {
   });
 
   it("rejects a run pointing at a non-existent job", () => {
-    const { project } = hierarchy();
+    const { org, project } = hierarchy();
     const db = getDb();
     expect(() =>
       db
         .prepare(
-          `INSERT INTO runs (id, project_id, job_id, status) VALUES ('r1', ?, 'nope', 'running')`,
+          `INSERT INTO runs (id, org_id, project_id, job_id, status) VALUES ('r1', ?, ?, 'nope', 'running')`,
         )
-        .run(project.id),
+        .run(org.id, project.id),
     ).toThrow();
   });
 });
@@ -226,7 +226,7 @@ describe("workflows", () => {
   it("creates workflows independently of agent jobs", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Ops")!;
-    const workflow = createWorkflow(project.id, {
+    const workflow = createWorkflow(org.id, project.id, {
       name: "Health Check",
       schedule: '{"every":60}',
       command: "bash check.sh",

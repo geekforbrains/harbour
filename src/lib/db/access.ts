@@ -68,26 +68,21 @@ export function orgIdForAgent(id: string): string | null {
 
 export function orgIdForJob(id: string): string | null {
   const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT p.org_id AS org_id
-       FROM jobs j JOIN projects p ON j.project_id = p.id
-       WHERE j.id = ?`,
-    )
-    .get(id) as { org_id: string } | undefined;
+  // jobs.org_id is denormalized and NOT NULL — resolving via projects would
+  // miss org-level workflow jobs (project_id NULL).
+  const row = db.prepare(`SELECT org_id FROM jobs WHERE id = ?`).get(id) as
+    | { org_id: string }
+    | undefined;
   return row?.org_id ?? null;
 }
 
 export function orgIdForRun(id: string): string | null {
   const db = getDb();
-  // runs.project_id is denormalized, so a single join suffices.
-  const row = db
-    .prepare(
-      `SELECT p.org_id AS org_id
-       FROM runs r JOIN projects p ON r.project_id = p.id
-       WHERE r.id = ?`,
-    )
-    .get(id) as { org_id: string } | undefined;
+  // runs.org_id is denormalized and NOT NULL — resolving via projects would
+  // miss org-level workflow runs (project_id NULL).
+  const row = db.prepare(`SELECT org_id FROM runs WHERE id = ?`).get(id) as
+    | { org_id: string }
+    | undefined;
   return row?.org_id ?? null;
 }
 

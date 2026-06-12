@@ -35,7 +35,11 @@ Agent jobs use the same table, but with a different shape:
 | `agent_id` | Owning agent |
 | `prerun_command` | Optional gate before the LLM |
 
-Workflow runner credentials live in `workflow_runners`. They are org-scoped, enabled or disabled independently, and authenticate only workflow polling plus allowed workflow-run reporting endpoints.
+Workflow jobs are dual-tier, like docs, env vars, and databases: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
+
+An org-level workflow may link only **org-level** docs, env vars, and databases — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Its composed context is the org tier plus its own job links; there is no project tier.
+
+Workflow runner credentials live in `workflow_runners`. They are org-scoped, enabled or disabled independently, and authenticate only workflow polling plus allowed workflow-run reporting endpoints. A runner claims every due workflow in its org, org-level and project-level alike.
 
 ## Creating Workflows
 
@@ -44,7 +48,7 @@ From the dashboard, open the **Workflows** page and create a new workflow.
 From the API:
 
 ```http
-POST /api/jobs?projectId=<project-id>
+POST /api/jobs?orgId=<org-id>&projectId=<project-id>
 Content-Type: application/json
 
 {
@@ -55,6 +59,8 @@ Content-Type: application/json
   "timeoutMinutes": 10
 }
 ```
+
+`projectId` is optional (query or body) — without it the workflow is **org-level**.
 
 `POST /api/jobs` only creates workflows. Agent jobs are created under an agent with `POST /api/agents/:id/jobs`.
 

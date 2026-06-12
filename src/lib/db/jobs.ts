@@ -1,9 +1,10 @@
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
 import { getNextRunTime } from "../schedule";
+import { orgIdForProject } from "./access";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { listPinnedDocIds } from "./docs";
-import { listPinnedEnvVarIds } from "./env-vars";
+import { linkEnvVarToJob, listPinnedEnvVarIds } from "./env-vars";
 import { getDb } from "./schema";
 import { getTimezone } from "./settings";
 
@@ -28,15 +29,19 @@ export function createJob(
 ) {
   const db = getDb();
   const id = uuid();
+  // Agent jobs are always project-level; the org is derived, never passed.
+  const orgId = orgIdForProject(projectId);
+  if (!orgId) throw new Error("Project not found");
   const nextRunAt =
     data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, postrun_command, postrun_gates, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, postrun_command, postrun_gates, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
+      orgId,
       projectId,
       agentId,
       data.name,
@@ -53,27 +58,28 @@ export function createJob(
       nextRunAt,
     );
 
-    // Merge explicitly selected docs/env vars with pinned ones (within this project's scope)
+    // Merge explicitly selected docs/env vars with pinned ones (within this
+    // project's scope). Linked via the guard-bearing link functions so the
+    // org-level tier rules hold on every path.
     const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
-    if (allDocIds.size > 0) {
-      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-      for (const docId of allDocIds) linkStmt.run(id, docId);
-    }
+    for (const docId of allDocIds) linkDocToJob(id, docId);
     const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
-    if (allEnvVarIds.size > 0) {
-      const linkStmt = db.prepare(
-        `INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`,
-      );
-      for (const envId of allEnvVarIds) linkStmt.run(id, envId);
-    }
+    for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
   });
 
   create();
   return getJobById(id);
 }
 
+/**
+ * Create a workflow job. Dual-tier like docs/env_vars/databases: pass projectId
+ * for a project-level workflow, or null for an org-level one shared across the
+ * org's workflow runners. Scope is fixed at creation — updateJob cannot move a
+ * job between tiers. Agent jobs are always project-level (see createJob).
+ */
 export function createWorkflow(
-  projectId: string,
+  orgId: string,
+  projectId: string | null,
   data: {
     name: string;
     description?: string;
@@ -92,10 +98,11 @@ export function createWorkflow(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_command, timeout_minutes, active, next_run_at)
-      VALUES (?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_command, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?)
     `).run(
       id,
+      orgId,
       projectId,
       data.name,
       data.description || null,
@@ -106,18 +113,31 @@ export function createWorkflow(
       nextRunAt,
     );
 
-    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
-    if (allDocIds.size > 0) {
-      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-      for (const docId of allDocIds) linkStmt.run(id, docId);
-    }
-    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
-    if (allEnvVarIds.size > 0) {
-      const linkStmt = db.prepare(
-        `INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`,
-      );
-      for (const envId of allEnvVarIds) linkStmt.run(id, envId);
-    }
+    // Pinned resources auto-attach at the job's own tier: project jobs get
+    // project + org pinned, org-level jobs get org-level pinned only.
+    const pinnedDocIds = projectId
+      ? listPinnedDocIds(projectId)
+      : (
+          db
+            .prepare(`SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`)
+            .all(orgId) as { id: string }[]
+        ).map((r) => r.id);
+    const pinnedEnvVarIds = projectId
+      ? listPinnedEnvVarIds(projectId)
+      : (
+          db
+            .prepare(
+              `SELECT id FROM env_vars WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`,
+            )
+            .all(orgId) as { id: string }[]
+        ).map((r) => r.id);
+
+    // Guard-bearing link functions: an org-level workflow linking a
+    // project-scoped doc/env var throws here and rolls the creation back.
+    const allDocIds = new Set([...(data.docIds || []), ...pinnedDocIds]);
+    for (const docId of allDocIds) linkDocToJob(id, docId);
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...pinnedEnvVarIds]);
+    for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
   });
 
   create();
@@ -177,8 +197,16 @@ export function listJobsByAgent(agentId: string) {
     .all(agentId);
 }
 
-export function listAllJobs(projectId: string) {
+/**
+ * Two-tier list: org-level jobs (project_id IS NULL — workflows only) plus the
+ * given project's jobs. Pass projectId=null to list only org-level jobs.
+ */
+export function listAllJobs(orgId: string, projectId: string | null = null) {
   const db = getDb();
+  const projectFilter = projectId
+    ? "AND (j.project_id = ? OR j.project_id IS NULL)"
+    : "AND j.project_id IS NULL";
+  const params = projectId ? [orgId, projectId] : [orgId];
   return db
     .prepare(`
     SELECT j.*, a.name as agent_name, a.color as agent_color,
@@ -188,12 +216,14 @@ export function listAllJobs(projectId: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
     FROM jobs j
     LEFT JOIN agents a ON j.agent_id = a.id
-    WHERE j.project_id = ?
+    WHERE j.org_id = ? ${projectFilter}
     ORDER BY j.name
   `)
-    .all(projectId);
+    .all(...params);
 }
 
+// Scope (org_id/project_id) is fixed at creation — deliberately absent from
+// the field whitelist so a job can never move between tiers.
 export function updateJob(
   id: string,
   data: {
@@ -293,17 +323,16 @@ export function updateJob(
       fields.push("updated_at = unixepoch()");
       db.prepare(`UPDATE jobs SET ${fields.join(", ")} WHERE id = ?`).run(...values, id);
     }
+    // Replacement links go through the guard-bearing link functions: an
+    // org-level job replacing its links with a project-scoped resource throws
+    // and rolls the whole update back (routes map it to 400).
     if (data.docIds !== undefined) {
       db.prepare(`DELETE FROM job_docs WHERE job_id = ?`).run(id);
-      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-      for (const docId of data.docIds) linkStmt.run(id, docId);
+      for (const docId of data.docIds) linkDocToJob(id, docId);
     }
     if (data.envVarIds !== undefined) {
       db.prepare(`DELETE FROM job_env_vars WHERE job_id = ?`).run(id);
-      const linkStmt = db.prepare(
-        `INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`,
-      );
-      for (const envId of data.envVarIds) linkStmt.run(id, envId);
+      for (const envId of data.envVarIds) linkEnvVarToJob(id, envId);
     }
   });
   update();
@@ -320,12 +349,13 @@ export function deleteJob(id: string) {
 /**
  * Manually fire a scheduled run for a job (dashboard "Run now" / debug). One-off
  * runs no longer exist in v2 — this is the only ad-hoc trigger path. The run
- * inherits the job's project (denormalized onto the run).
+ * inherits the job's org and project (denormalized onto the run; project may be
+ * NULL for org-level workflows).
  */
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
   const job = db
-    .prepare(`SELECT id, project_id, agent_id, name FROM jobs WHERE id = ?`)
+    .prepare(`SELECT id, org_id, project_id, agent_id, name FROM jobs WHERE id = ?`)
     .get(jobId) as any;
   if (!job) return null;
 
@@ -338,10 +368,11 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
   // scheduled run with silently-dropped instructions.
   db.transaction(() => {
     db.prepare(`
-      INSERT INTO runs (id, project_id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
     `).run(
       runId,
+      job.org_id,
       job.project_id,
       jobId,
       job.agent_id || null,
@@ -365,6 +396,20 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
 
 export function linkDocToJob(jobId: string, docId: string) {
   const db = getDb();
+  // An org-level job (project_id NULL) may only link org-level resources of its
+  // own org — a project-scoped doc on an org-scoped job would widen the doc's
+  // blast radius to the whole org. Routes map this error to 400.
+  const job = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
+    | { org_id: string; project_id: string | null }
+    | undefined;
+  if (job && job.project_id === null) {
+    const doc = db.prepare(`SELECT org_id, project_id FROM docs WHERE id = ?`).get(docId) as
+      | { org_id: string; project_id: string | null }
+      | undefined;
+    if (!doc || doc.project_id !== null || doc.org_id !== job.org_id) {
+      throw new Error("Org-level jobs can only link org-level docs");
+    }
+  }
   db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`).run(jobId, docId);
 }
 

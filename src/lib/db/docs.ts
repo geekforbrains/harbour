@@ -117,7 +117,9 @@ export function listPinnedDocIds(projectId: string): string[] {
  * Composition (per the v2 resource model) = all org-level docs of the job's org
  * + all project-level docs of the job's project + the job's explicitly linked
  * docs, de-duplicated by id (a doc that is both at-tier and job-linked appears
- * once). Each doc carries the content of its latest revision.
+ * once). Each doc carries the content of its latest revision. An org-level job
+ * (project_id NULL) has no project tier — the project-tier branch's
+ * `project_id = NULL` matches nothing — so it composes org-tier + job-linked.
  *
  * Docs have no name/key, so there is no value-override on collision — only
  * id de-duplication. Returned shape matches the agent contract:
@@ -128,14 +130,9 @@ export function getComposedDocsForJob(
 ): { id: string; title: string; content: string }[] {
   const db = getDb();
 
-  const scope = db
-    .prepare(`
-    SELECT j.project_id, p.org_id
-    FROM jobs j
-    JOIN projects p ON j.project_id = p.id
-    WHERE j.id = ?
-  `)
-    .get(jobId) as { project_id: string; org_id: string } | undefined;
+  const scope = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
+    | { org_id: string; project_id: string | null }
+    | undefined;
   if (!scope) return [];
 
   // Union of org-level + project-level + job-linked doc ids for this job, then

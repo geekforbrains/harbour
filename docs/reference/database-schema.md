@@ -5,7 +5,7 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
 v1 → v2 migration; a fresh database is the only supported path.
 
-- **27 tables**, **32 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **27 tables**, **34 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
   `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
@@ -23,9 +23,18 @@ in the schema, not bolted on:
 - **Resources** (`docs`, `env_vars`, `databases`) are **dual-tier**: a NOT NULL
   `org_id` plus a NULLABLE `project_id`. `project_id IS NULL` ⇒ org-level (shared
   across the org); otherwise project-level.
+- **Jobs are dual-tier too**, but only for workflows: `jobs` carries a NOT NULL
+  `org_id` plus a NULLABLE `project_id`; `project_id IS NULL` ⇒ an org-level
+  workflow job claimed by the org's workflow runners. Agent jobs are always
+  project-level (a table CHECK enforces it). Scope is fixed at creation —
+  `updateJob` cannot move a job between tiers — and an org-level job may link
+  only org-level resources (linking a project-scoped doc/env var/database into
+  an org-scoped job would widen its blast radius; the query layer rejects it
+  and routes return 400).
 - **Org-scoped** infrastructure: `workflow_runners`, `captain_conversations`.
-- `runs.project_id` is denormalized (copied from the job) so a run resolves to
-  its org in a single join (`src/lib/db/access.ts`).
+- `runs.org_id` and `runs.project_id` are denormalized (copied from the job) so
+  org-scoped run queries need no join and org-level runs (`project_id` NULL)
+  stay reachable.
 
 ## Slugs
 
@@ -151,7 +160,8 @@ Static configuration for recurring work (agent or workflow).
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
+| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
+| `project_id` | TEXT | FK → `projects` (CASCADE) | **NULL = org-level (workflow jobs only)** |
 | `kind` | TEXT | NN, default `agent`, CHECK in (`agent`, `workflow`) | |
 | `agent_id` | TEXT | FK → `agents` (CASCADE) | set for agent jobs, **NULL for workflow jobs** |
 | `name` / `description` / `instructions` | TEXT | | `instructions` is the agent prompt body |
@@ -167,14 +177,19 @@ Static configuration for recurring work (agent or workflow).
 | `last_run_at` / `next_run_at` | INTEGER | | schedule advance |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_jobs_project`, `idx_jobs_agent`, `idx_jobs_schedule(kind, agent_id, active, next_run_at)`.
+Table CHECK: `kind != 'agent' OR project_id IS NOT NULL` — agent jobs can never
+be org-level.
+
+Indexes: `idx_jobs_org`, `idx_jobs_project`, `idx_jobs_agent`,
+`idx_jobs_schedule(kind, agent_id, active, next_run_at)`.
 
 ### `runs`
 A single execution of a job.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | denormalized from the job |
+| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | denormalized from the job |
+| `project_id` | TEXT | FK → `projects` (CASCADE) | denormalized from the job; **NULL = org-level job's run** |
 | `job_id` | TEXT | NN, FK → `jobs` (CASCADE) | |
 | `agent_id` | TEXT | FK → `agents` (SET NULL) | NULL for workflow runs |
 | `status` | TEXT | NN, default `running`, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
@@ -187,7 +202,8 @@ A single execution of a job.
 | `session_id` / `session_cwd` | TEXT | | CLI session + cwd for resume |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`, `idx_runs_status`.
+Indexes: `idx_runs_org`, `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
+`idx_runs_status`.
 
 ### `run_activity`
 Ordered message log. On workflow runs this is runner output only
@@ -295,6 +311,8 @@ Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
   collisions.
 - **Workflows.** `jobs.kind = 'workflow'` ⇒ `agent_id` is NULL on both the job
   and its runs; claimed via `/api/workflows/next` with workflow-runner auth.
+  Workflow jobs may be org-level (`project_id` NULL — scope fixed at creation,
+  org-level resources only); agent jobs never are (table CHECK).
 - **Env-var encryption.** Plaintext never lands in the DB; the key is read from
   `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
 - **`run_activity.author_type`** allows `workflow`; `ensureRunActivityAuthorTypes`

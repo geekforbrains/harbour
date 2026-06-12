@@ -15,8 +15,8 @@ Jobs don't *do* anything on their own. They sit in the database and wait. When a
 
 Jobs come in two flavors:
 
-- **Agent jobs** — `agent_id` is set. The owning agent picks them up via `/api/agents/:id/next`.
-- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Workflow runners pick these up via `/api/workflows/next`. See [Workflows](workflows.md).
+- **Agent jobs** — `agent_id` is set. Always project-level. The owning agent picks them up via `/api/agents/:id/next`.
+- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Project-level or org-level (`project_id IS NULL`). Workflow runners pick these up via `/api/workflows/next`. See [Workflows](workflows.md).
 
 Agent jobs can also define a `prerun_command`, a gate that runs before the LLM and can skip the run.
 
@@ -150,7 +150,7 @@ A few invariants worth knowing:
 
 ## Source-of-truth pointers
 
-- `src/lib/db/jobs.ts` — `createJob`, `updateJob`, `createOneOffRun`, `triggerJobRun`, `advanceJobSchedule`.
+- `src/lib/db/jobs.ts` — `createJob`, `createWorkflow`, `updateJob`, `triggerJobRun`, `advanceJobSchedule`.
 - `src/lib/db/runs.ts` — the polling ladder (`getAgentNextRun`, `getNextWorkflowRun`), `failStaleRuns`, `updateRunStatus`, `requestKillRun`, `buildRunPayload`.
 - `src/lib/schedule.ts` — `normalizeSchedule` (the human-readable / cron parser) and `getNextRunTime` (timezone-aware advancer).
 - `src/lib/db/schema.ts` — the `runs` CHECK constraint and the `jobs` columns that drive triggers.

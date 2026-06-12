@@ -19,7 +19,7 @@ npm run harbour -- setup   # one-time: create the instance admin (interactive)
 npm start
 ```
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project from the dashboard — every agent and job lives inside a project. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
+`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project from the dashboard — every agent and agent job lives inside a project (workflows can also be org-level). (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
 
 State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 

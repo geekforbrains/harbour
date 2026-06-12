@@ -113,7 +113,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
   it("fails a workflow run claimed past the timeout despite recent updated_at", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(project.id, {
+    const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       command: "echo sync",
@@ -129,7 +129,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
   it("does NOT fail a workflow run claimed within the timeout", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(project.id, {
+    const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       command: "echo sync",
