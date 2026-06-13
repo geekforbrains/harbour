@@ -34,6 +34,11 @@ Agent jobs use the same table, but with a different shape:
 | `kind = 'agent'` | This job is agent-backed |
 | `agent_id` | Owning agent |
 | `prerun_command` | Optional gate before the LLM |
+| `postrun_command` | Optional hook after status finalization |
+
+The command strings above reference script **files by bare name** (e.g.
+`python3 check_health.py`, `./prerun.sh`). The file contents themselves are
+stored per job in a separate table — see [Scripts](#scripts) below.
 
 Workflow jobs are dual-tier, like docs, env vars, and databases: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
 
@@ -128,7 +133,7 @@ The workflow runner executes the command with:
 
 | Item | Value |
 |---|---|
-| Working directory | `$HARBOUR_HOME/workflows`, default `~/.harbour/workflows` |
+| Working directory | The job's per-job scripts directory under `$HARBOUR_HOME/workflows` when the job has scripts; otherwise the flat `$HARBOUR_HOME/workflows` (default `~/.harbour/workflows`). See [Scripts](#scripts) |
 | stdin | Full run payload JSON |
 | stdout | Captured at process exit, posted as the final `workflow` activity entry |
 | stderr | Captured at process exit |
@@ -195,7 +200,11 @@ The workflow receives the same composed run context as an agent run, minus the a
     "prerun": null,
     "command": "python3 check_health.py",
     "workflow": "python3 check_health.py",
-    "timeout_minutes": 30
+    "timeout_minutes": 30,
+    "scripts": [
+      { "filename": "check_health.py", "content": "#!/usr/bin/env python3\n...", "executable": true }
+    ],
+    "scripts_dir": "acme/ops/health-check-1a2b3c4d"
   },
   "docs": [],
   "data": {},
@@ -203,6 +212,8 @@ The workflow receives the same composed run context as an agent run, minus the a
   "attachments": []
 }
 ```
+
+`scripts` and `scripts_dir` are present on **every** run (agent and workflow). `scripts` is the job's stored script files; `scripts_dir` is the relative path under the runner's `$HARBOUR_HOME/workflows` where the runner materializes them before running the command. A job with no scripts gets `scripts: []` and runs from the flat workflows directory — see [Scripts](#scripts).
 
 Linked docs, env vars, databases, and attachments are composed the same way as agent runs. Env vars are decrypted at request time and are plaintext inside the runner process, so treat workflow scripts as trusted code.
 
@@ -245,11 +256,35 @@ Agent jobs can define `prerun_command`. The agent runner executes it before invo
 | `77` | Mark run `skipped`; no LLM is invoked |
 | other | Mark run `failed`; no LLM is invoked |
 
-Prerun commands run from the same `$HARBOUR_HOME/workflows` directory and receive the same stdin payload shape, but they are not independently scheduled and do not use workflow-runner credentials.
+Prerun commands run from the same working directory as the job's other commands — the job's per-job scripts directory when it has scripts, otherwise the flat `$HARBOUR_HOME/workflows` (see [Scripts](#scripts)) — and receive the same stdin payload shape, but they are not independently scheduled and do not use workflow-runner credentials.
 
-## Script Layout
+Agent jobs can also define `postrun_command`, a hook the agent runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun sees every script the prerun does). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
 
-Recommended layout:
+## Scripts
+
+Script **contents** live in Harbour, owned per job (the `job_scripts` table). Add, edit, and delete a job's scripts from its detail page in the dashboard, or over the API (`GET`/`POST /api/jobs/:id/scripts`, `PUT`/`DELETE /api/jobs/:id/scripts/:scriptId`). Each script is a `{ filename, content, executable }` record:
+
+- **filename** — a bare name only: 1–128 characters of `[A-Za-z0-9._-]`, no slashes, and not `.` or `..`. The command string references it by this bare name (`python3 check_health.py`, `./prerun.sh`). A name uniqueness constraint means one filename per job.
+- **content** — the file body, stored as text.
+- **executable** — when true the runner writes the file mode `0o700`; when false `0o600`. Defaults to true.
+
+### How scripts reach the runner
+
+Scripts travel in the `/next` run payload (on both agent and workflow runs):
+
+- `job.scripts` — the array of `{ filename, content, executable }` records, or `[]` when the job has none.
+- `job.scripts_dir` — a **relative** path the server computes from immutable slugs, under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Tiers:
+  - agent job → `<org-slug>/<project-slug>/<agent-slug>/<job-leaf>`
+  - project workflow → `<org-slug>/<project-slug>/<job-leaf>`
+  - org-level workflow → `<org-slug>/<job-leaf>`
+
+  where `<job-leaf>` is `<slugified-job-name>-<first-8-of-job-id>` — stable across renames and collision-free. `scripts_dir` is `null` only for a malformed or unknown job.
+
+Right before running a command, the runner `mkdir -p`s the per-job directory (`$HARBOUR_HOME/workflows/<scripts_dir>`), writes each script there with the mode its `executable` flag implies, then runs the command from that directory. So a command like `./prerun.sh` or `python3 check_health.py` finds the file in its cwd.
+
+### Jobs with no scripts (legacy behavior)
+
+A job with no scripts gets `scripts: []`, and the runner runs its command from the flat `$HARBOUR_HOME/workflows` directory — exactly as before per-job scripts existed. In that case you place the script files there yourself (and keep them in version control if more than one machine runs them):
 
 ```text
 ~/.harbour/
@@ -259,7 +294,7 @@ Recommended layout:
     reconcile_orders.ts
 ```
 
-Keep workflow scripts in version control if more than one machine runs them. Harbour stores the command string, not the script contents.
+When a job *does* carry scripts, the runner materializes them per job and you don't hand-place anything — Harbour is the source of truth for the file contents.
 
 ## Operational Notes
 

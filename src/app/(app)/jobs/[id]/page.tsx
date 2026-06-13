@@ -5,9 +5,11 @@ import {
   CalendarClock,
   Cpu,
   Database,
+  FileCode,
   FileText,
   KeyRound,
   Pause,
+  Pencil,
   Pin,
   Play,
   Plus,
@@ -61,6 +63,13 @@ import {
   useJobRuns,
   useUpdateJob,
 } from "@/lib/hooks/use-jobs";
+import {
+  type JobScript,
+  useCreateJobScript,
+  useDeleteJobScript,
+  useJobScripts,
+  useUpdateJobScript,
+} from "@/lib/hooks/use-scripts";
 import { formatTimestamp, timeAgo } from "@/lib/time";
 
 type Job = {
@@ -141,6 +150,11 @@ export default function JobDetailPage() {
   const deleteJob = useDeleteJob();
   const linkMutations = useJobLinkMutations(id);
 
+  const { data: scripts = [] } = useJobScripts(id);
+  const createScript = useCreateJobScript(id);
+  const updateScript = useUpdateJobScript(id);
+  const deleteScript = useDeleteJobScript(id);
+
   const specificRuns = Array.isArray(jobRunsData) ? jobRunsData : [];
 
   const [showEdit, setShowEdit] = useState(false);
@@ -161,6 +175,70 @@ export default function JobDetailPage() {
   const [editEnvVarIds, setEditEnvVarIds] = useState<string[]>([]);
   const [showEditDocPicker, setShowEditDocPicker] = useState(false);
   const [showEditEnvVarPicker, setShowEditEnvVarPicker] = useState(false);
+
+  // Script editor: null = closed, an empty draft = add, an existing script = edit.
+  const [scriptEditor, setScriptEditor] = useState<JobScript | null>(null);
+  const [scriptDraftFilename, setScriptDraftFilename] = useState("");
+  const [scriptDraftContent, setScriptDraftContent] = useState("");
+  const [scriptDraftExecutable, setScriptDraftExecutable] = useState(true);
+
+  function openAddScript() {
+    setScriptEditor({
+      id: "",
+      job_id: id,
+      filename: "",
+      content: "",
+      executable: 1,
+      created_at: 0,
+      updated_at: 0,
+    });
+    setScriptDraftFilename("");
+    setScriptDraftContent("");
+    setScriptDraftExecutable(true);
+  }
+
+  function openEditScript(script: JobScript) {
+    setScriptEditor(script);
+    setScriptDraftFilename(script.filename);
+    setScriptDraftContent(script.content);
+    setScriptDraftExecutable(!!script.executable);
+  }
+
+  async function handleSaveScript(e: React.FormEvent) {
+    e.preventDefault();
+    if (!scriptEditor) return;
+    try {
+      if (scriptEditor.id) {
+        await updateScript.mutateAsync({
+          scriptId: scriptEditor.id,
+          body: {
+            filename: scriptDraftFilename,
+            content: scriptDraftContent,
+            executable: scriptDraftExecutable,
+          },
+        });
+      } else {
+        await createScript.mutateAsync({
+          filename: scriptDraftFilename,
+          content: scriptDraftContent,
+          executable: scriptDraftExecutable,
+        });
+      }
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to save script");
+      return;
+    }
+    setScriptEditor(null);
+  }
+
+  async function handleDeleteScript(script: JobScript) {
+    if (!confirm(`Delete "${script.filename}"?`)) return;
+    try {
+      await deleteScript.mutateAsync(script.id);
+    } catch {
+      alert("Failed to delete script");
+    }
+  }
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -505,6 +583,62 @@ export default function JobDetailPage() {
         )}
       </section>
 
+      {/* Scripts */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Scripts</SectionHeader>
+          <Button variant="outline" size="sm" onClick={openAddScript}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Files written into the run's working directory before the command runs. Reference each by
+          bare name (e.g. <code className="font-mono">./prerun.sh</code> or{" "}
+          <code className="font-mono">python3 check_health.py</code>).
+        </p>
+        {scripts.length === 0 ? (
+          <EmptyState>No scripts for this job.</EmptyState>
+        ) : (
+          <div className="space-y-2">
+            {scripts.map((s) => (
+              <div key={s.id} className="flex items-center gap-3 rounded-lg border p-3 group">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <FileCode className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openEditScript(s)}
+                  className="text-sm font-mono font-medium flex-1 min-w-0 truncate text-left hover:text-primary transition-colors"
+                >
+                  {s.filename}
+                </button>
+                {!s.executable && (
+                  <Badge variant="secondary" className="shrink-0">
+                    Not executable
+                  </Badge>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openEditScript(s)}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Edit"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteScript(s)}
+                  className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Delete"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Run History */}
       <div className="space-y-3">
         <SectionHeader>Run History</SectionHeader>
@@ -802,6 +936,63 @@ export default function JobDetailPage() {
         icon={KeyRound}
         nameClass="font-mono"
       />
+
+      {/* Script Editor Dialog */}
+      <Dialog open={!!scriptEditor} onOpenChange={(open) => !open && setScriptEditor(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overflow-x-hidden">
+          <DialogHeader>
+            <DialogTitle>{scriptEditor?.id ? "Edit Script" : "Add Script"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveScript} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Filename</Label>
+              <Input
+                value={scriptDraftFilename}
+                onChange={(e) => setScriptDraftFilename(e.target.value)}
+                placeholder="e.g. prerun.sh"
+                className="font-mono text-xs"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Bare filename only — no slashes. Reference it from the command by name (e.g.{" "}
+                <code className="font-mono">./prerun.sh</code>).
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Content</Label>
+              <Textarea
+                value={scriptDraftContent}
+                onChange={(e) => setScriptDraftContent(e.target.value)}
+                rows={12}
+                className="font-mono text-xs max-h-[40vh]"
+                placeholder="#!/usr/bin/env bash&#10;set -euo pipefail"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={scriptDraftExecutable}
+                onClick={() => setScriptDraftExecutable((v) => !v)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${scriptDraftExecutable ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+              >
+                {scriptDraftExecutable ? "Executable" : "Not executable"}
+              </button>
+              <span className="text-xs text-muted-foreground">
+                {scriptDraftExecutable
+                  ? "Written with the +x bit so it can be run directly."
+                  : "Written without the +x bit."}
+              </span>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setScriptEditor(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Trigger Dialog */}
       <TriggerDialog

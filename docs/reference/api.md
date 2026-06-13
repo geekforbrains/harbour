@@ -101,6 +101,8 @@ There is **no** signup route.
 | POST / DELETE | `/api/jobs/:id/env-vars[/:envVarId]` | `withResourceAuth` job (editor) | Link / unlink a secret |
 | POST | `/api/jobs/:id/data` | `withAgentOrUser` (editor) | Link a database |
 | DELETE | `/api/jobs/:id/data/:dataId` | `withResourceAuth` job (editor) | Unlink a database |
+| GET / POST | `/api/jobs/:id/scripts` | `withResourceAuth` job (viewer / editor) | List / create the job's script files |
+| PUT / DELETE | `/api/jobs/:id/scripts/:scriptId` | `withResourceAuth` job (editor) | Update / delete a script file |
 
 `/api/jobs` is dual-tier like the shared-context lists: `GET` with `?projectId=`
 includes org-level jobs, and `POST` without a `projectId` (query or body)
@@ -108,6 +110,16 @@ creates an **org-level** workflow — agent jobs (`POST /api/agents/:id/jobs`)
 are always project-level, and scope is fixed at creation. An org-level job may
 link only org-level docs / env vars / databases; the link routes (and create /
 update with `docIds` / `envVarIds`) return 400 otherwise.
+
+`/api/jobs/:id/scripts` manages the job's per-job script files (the `job_scripts`
+table). A script is `{ id, job_id, filename, content, executable (0|1), created_at,
+updated_at }`. `POST` takes `{ filename, content?, executable? }` (content defaults
+`""`, executable defaults `true`); `PUT` takes any of those, leaving omitted fields
+unchanged. `filename` must be a bare name — 1–128 of `[A-Za-z0-9._-]`, no slashes,
+not `.`/`..` — or the route returns 400. The item routes 404 (`Script not found`)
+when the script's `job_id` doesn't match `:id`, which blocks cross-job mutation.
+These files are delivered in the `/next` payload (`job.scripts` / `job.scripts_dir`)
+and materialized to disk by the runner — see [guide.md](../guide.md).
 
 ## Runs
 

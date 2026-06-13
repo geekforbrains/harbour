@@ -29,7 +29,7 @@ default):
 | `runners.json` | agent runner config (agent → CLI tool mapping) |
 | `workflow-runners.json` | workflow runner credentials |
 | `sessions.json` | CLI session cache for run resume |
-| `workflows/` | user-supplied scripts invoked by workflow jobs and prerun gates |
+| `workflows/` | working root for workflow commands and agent prerun/postrun gates; jobs with scripts get a per-job subdir (`<scripts_dir>`) the runner materializes from the payload, jobs without scripts run from the flat root (operator hand-places files there) |
 | `captain/` | Captain conversation workspace (default cwd) |
 | `runner.log`, `runner.err.log` | launchd output for the agent runner |
 

@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
+import { slugify } from "../slug";
 import { getAgentWorkspace } from "./agents";
 import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
 import { getComposedDatabasesForJob, getDatabaseById } from "./database";
@@ -7,6 +8,7 @@ import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { getDb } from "./schema";
+import { getJobScriptsForPayload } from "./scripts";
 
 // Creates a brand-new run already 'running'. There is no prior status to
 // transition from, so this INSERT is a deliberate bypass of the
@@ -869,6 +871,69 @@ export function peekAgentNext(agentId: string) {
   return { available: false, reason: "nothing_to_do" };
 }
 
+/** Only [a-z0-9-] is a safe filesystem path segment — the slug invariant. */
+const SAFE_SLUG_RE = /^[a-z0-9-]+$/;
+
+/**
+ * Relative path (under the runner's `$HARBOUR_HOME/workflows` root) where the
+ * runner materializes a job's scripts before running its command. Computed
+ * server-side so the runner — which may be a different machine — never derives
+ * paths from untrusted data. Mirrors getAgentWorkspace's slug guards.
+ *
+ *   agent job:        <org-slug>/<project-slug>/<agent-slug>/<job-leaf>
+ *   project workflow: <org-slug>/<project-slug>/<job-leaf>
+ *   org-level workflow: <org-slug>/<job-leaf>
+ *
+ * job-leaf = slug(job.name) + "-" + first 8 chars of job.id — stable across
+ * renames (the id never changes) and collision-free (the id suffix).
+ * Returns null when the job is unknown or any segment isn't a safe slug.
+ */
+export function getJobScriptsDir(jobId: string): string | null {
+  const db = getDb();
+  const job = db
+    .prepare(`
+      SELECT j.id, j.name, j.agent_id,
+        o.slug AS org_slug, p.slug AS project_slug, a.slug AS agent_slug
+      FROM jobs j
+      JOIN orgs o ON j.org_id = o.id
+      LEFT JOIN projects p ON j.project_id = p.id
+      LEFT JOIN agents a ON j.agent_id = a.id
+      WHERE j.id = ?
+    `)
+    .get(jobId) as
+    | {
+        id: string;
+        name: string;
+        agent_id: string | null;
+        org_slug: string;
+        project_slug: string | null;
+        agent_slug: string | null;
+      }
+    | undefined;
+  if (!job) return null;
+
+  const leaf = `${slugify(job.name)}-${job.id.slice(0, 8)}`;
+
+  // Build the segment list per tier. An agent job nests under its agent; a
+  // project workflow under its project; an org-level workflow (project_id NULL)
+  // sits directly under the org. Anything else is a malformed job and yields
+  // null rather than a guessed path.
+  let segments: string[];
+  if (job.agent_id) {
+    if (!job.project_slug || !job.agent_slug) return null;
+    segments = [job.org_slug, job.project_slug, job.agent_slug, leaf];
+  } else if (job.project_slug) {
+    segments = [job.org_slug, job.project_slug, leaf];
+  } else {
+    segments = [job.org_slug, leaf];
+  }
+
+  // Every segment must already be a safe filesystem slug — refuse to hand the
+  // runner a path it could resolve outside its workflows root.
+  if (!segments.every((s) => SAFE_SLUG_RE.test(s))) return null;
+  return segments.join("/");
+}
+
 export function buildRunPayload(runId: string) {
   const db = getDb();
   const run = getRunWithActivity(runId);
@@ -966,6 +1031,11 @@ export function buildRunPayload(runId: string) {
       thinking: job.thinking || null,
       title_format: job.title_format || null,
       timeout_minutes: job.timeout_minutes ?? 30,
+      // Per-job script files the runner materializes into scripts_dir before
+      // running the command. Empty array + scripts_dir keep today's flat-cwd
+      // behavior for jobs with no scripts (backward compatible).
+      scripts: getJobScriptsForPayload(job.id),
+      scripts_dir: getJobScriptsDir(job.id),
     },
     ...(agent ? { agent } : {}),
     ...(workspace ? { workspace } : {}),

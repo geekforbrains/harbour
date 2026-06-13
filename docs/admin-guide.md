@@ -214,6 +214,15 @@ DELETE /api/jobs/:id/data/:dataId
 
 An org-level workflow can link only org-level resources — a project-scoped doc/env var/database returns 400.
 
+### Manage a Job's Scripts
+```
+GET    /api/jobs/:id/scripts
+POST   /api/jobs/:id/scripts             { "filename": "check_health.py", "content": "...", "executable": true }
+PUT    /api/jobs/:id/scripts/:scriptId   { "filename": "...", "content": "...", "executable": true }
+DELETE /api/jobs/:id/scripts/:scriptId
+```
+Scripts hold the file contents the runner materializes before running the job's `command`/`prerunCommand`/`postrunCommand` — referenced by bare filename (e.g. `python3 check_health.py`, `./prerun.sh`). `filename` is required on `POST` and must be a bare name: 1–128 of `[A-Za-z0-9._-]`, no slashes, not `.`/`..` (otherwise 400). `content` defaults to `""` and `executable` to `true` (true → file written executable). `PUT` updates any subset of the three; an omitted field is left unchanged. `GET` returns the list ordered by filename; each record is `{ id, job_id, filename, content, executable (0|1), created_at, updated_at }`. `POST` returns the created record with status 201; `DELETE` returns `{ "ok": true }`. The script files are delivered in the run payload (`job.scripts` / `job.scripts_dir`) and written to disk per job by the runner.
+
 ### List a Job's Runs
 ```
 GET /api/jobs/:id/runs

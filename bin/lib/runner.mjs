@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -346,6 +346,56 @@ function buildPrompt(payload, apiKey, isResume) {
 }
 
 /**
+ * Resolve the absolute cwd a job's command runs from, given its DB-delivered
+ * scripts metadata. Pure (no I/O) so the path logic is unit-testable.
+ *
+ *   - has scripts + a server-computed scripts_dir → the per-job directory
+ *     `$HARBOUR_HOME/workflows/<scripts_dir>` the scripts get materialized into.
+ *   - otherwise → the legacy flat `$HARBOUR_HOME/workflows` cwd (a job with no
+ *     scripts behaves exactly as it did before job_scripts existed).
+ *
+ * scripts_dir is a RELATIVE path computed server-side (getJobScriptsDir) from
+ * already-validated slugs, so the runner never derives paths from untrusted
+ * data. harbourHome defaults to $HARBOUR_HOME (then ~/.harbour).
+ *
+ * @param {object} args
+ * @param {string} [args.harbourHome] - HARBOUR_HOME root (defaults to env/~)
+ * @param {string|null} [args.scriptsDir] - payload.job.scripts_dir (relative)
+ * @param {boolean} args.hasScripts - payload.job.scripts.length > 0
+ * @returns {string} absolute cwd
+ */
+export function resolveScriptsCwd({
+  harbourHome = process.env.HARBOUR_HOME || join(homedir(), ".harbour"),
+  scriptsDir,
+  hasScripts,
+} = {}) {
+  const workflows = join(harbourHome, "workflows");
+  if (hasScripts && scriptsDir) return join(workflows, scriptsDir);
+  return workflows;
+}
+
+/**
+ * Materialize a job's DB-delivered scripts into `cwd` right before its command
+ * runs. mkdir -p's cwd, then writes each `{ filename, content, executable }`
+ * file with mode 0o700 (executable) or 0o600 (data). Filenames are already
+ * server-validated to be bare names with no path separators
+ * (validateScriptFilename); we still `join(cwd, filename)` so the write is
+ * scoped to the job dir. A no-op when there are no scripts (cwd is the legacy
+ * flat workflows dir in that case).
+ *
+ * @param {string} cwd - absolute per-job dir (from resolveScriptsCwd)
+ * @param {{ filename: string, content: string, executable: boolean }[]} scripts
+ */
+export function materializeScripts(cwd, scripts) {
+  mkdirSync(cwd, { recursive: true });
+  for (const s of scripts || []) {
+    const path = join(cwd, s.filename);
+    writeFileSync(path, s.content ?? "");
+    chmodSync(path, s.executable ? 0o700 : 0o600);
+  }
+}
+
+/**
  * Run a workflow command. Pipes the full payload JSON to stdin.
  * Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
  * Returns { code, stdout, stderr }.
@@ -448,6 +498,12 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
  * Extracted so prerun and postrun share one implementation rather than two
  * copies of the kill-poll/timeout dance.
  *
+ * The gate runs from the job's per-job scripts dir (resolveScriptsCwd) with its
+ * DB-delivered scripts materialized there first (materializeScripts), so a
+ * command like `./prerun.sh` finds the file. A job with no scripts falls back
+ * to the legacy flat `$HARBOUR_HOME/workflows` cwd. Both gates of one job share
+ * the same scripts_dir, so postrun sees every script prerun does.
+ *
  * @param {object} args
  * @param {string} args.command       - the shell command to run
  * @param {string} args.payloadJson   - run payload + activity, piped to stdin
@@ -456,6 +512,9 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
  * @param {string} args.runId
  * @param {string} args.agentName     - for log lines
  * @param {string} args.label         - "Prerun" | "Postrun" (log prefix)
+ * @param {{ filename: string, content: string, executable: boolean }[]} [args.scripts]
+ *   - payload.job.scripts (DB-delivered files to materialize)
+ * @param {string|null} [args.scriptsDir] - payload.job.scripts_dir (relative)
  * @param {number} [args.timeoutMs]   - gate timeout (default 30s)
  * @param {number} [args.killPollIntervalMs]
  * @param {Record<string,string>} [args.extraEnv]
@@ -468,12 +527,15 @@ async function runGateCommand({
   runId,
   agentName,
   label,
+  scripts,
+  scriptsDir,
   timeoutMs = 30_000,
   killPollIntervalMs = KILL_POLL_INTERVAL_MS,
   extraEnv,
 }) {
-  const dir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
-  mkdirSync(dir, { recursive: true });
+  const scriptList = scripts || [];
+  const dir = resolveScriptsCwd({ scriptsDir, hasScripts: scriptList.length > 0 });
+  materializeScripts(dir, scriptList);
 
   const killController = new AbortController();
   let killed = false;
@@ -903,6 +965,8 @@ async function processNextRun(runner) {
         runId,
         agentName,
         label: "Prerun",
+        scripts: payload.job.scripts,
+        scriptsDir: payload.job.scripts_dir,
       });
 
       if (wfResult.killed) {
@@ -1381,6 +1445,8 @@ export async function runPostrun({
       runId,
       agentName,
       label: "Postrun",
+      scripts: job?.scripts,
+      scriptsDir: job?.scripts_dir,
       extraEnv: env,
       killPollIntervalMs,
     });
@@ -1561,8 +1627,14 @@ export async function processNextWorkflow(runner, opts = {}) {
     return { outcome: "failed" };
   }
 
-  const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
-  mkdirSync(workflowDir, { recursive: true });
+  // Materialize the job's DB-delivered scripts into its per-job dir and run from
+  // there; a job with no scripts falls back to the legacy flat workflows cwd.
+  const workflowScripts = payload.job?.scripts || [];
+  const workflowDir = resolveScriptsCwd({
+    scriptsDir: payload.job?.scripts_dir,
+    hasScripts: workflowScripts.length > 0,
+  });
+  materializeScripts(workflowDir, workflowScripts);
 
   const workflowTimeoutMs = (payload.job.timeout_minutes || 30) * 60 * 1000;
 

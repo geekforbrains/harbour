@@ -106,7 +106,9 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "model": null,
     "thinking": null,
     "title_format": null,
-    "timeout_minutes": 30
+    "timeout_minutes": 30,
+    "scripts": [],
+    "scripts_dir": "acme/marketing/social-media-bot/morning-tweet-1a2b3c4d"
   },
   "agent": { "cli": "claude", "model": null, "thinking": null, "eager": false },
   "workspace": { "org": "acme", "project": "marketing", "agent": "social-media-bot" },
@@ -176,6 +178,11 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gate commands — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
+
+The `job.scripts` and `job.scripts_dir` fields carry the job's stored script files for the runner that executes its `prerun`/`postrun`/`command` gates. They are present on every run (agent and workflow):
+
+- `scripts` is an array of `{ filename, content, executable }` — the files to drop on disk before running a command (or `[]` when the job has none). `executable: true` means the file should be written with an executable mode.
+- `scripts_dir` is a **relative** path under the runner's `$HARBOUR_HOME/workflows` root. The harbour-agent / workflow runner `mkdir -p`s this directory, writes each `scripts` file into it, and runs the gate commands from there, so a command like `./prerun.sh` finds its file. A job with no scripts (`scripts: []`) runs from the flat `workflows` directory instead. These fields matter only to a runner that executes shell gates; if you're a worker doing the actual LLM work (not running `prerun`/`postrun`/`command`), you can ignore them.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
