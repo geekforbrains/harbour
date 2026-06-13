@@ -2,6 +2,7 @@
 
 import { Calendar, Plus, Workflow } from "lucide-react";
 import { useState } from "react";
+import { ActionTooltip } from "@/components/app/action-tooltip";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { ListState } from "@/components/app/list-state";
 import { OrgBadge } from "@/components/app/org-badge";
@@ -46,9 +47,13 @@ export default function WorkflowsPage() {
         title="Workflows"
         subtitle="Scheduled shell commands — deterministic, no agent."
         actions={
-          <Button onClick={() => setShowCreate(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1.5" /> New Workflow
-          </Button>
+          <ActionTooltip
+            hint={activeOrgId ? undefined : "Select an organization to create a workflow."}
+          >
+            <Button onClick={() => setShowCreate(true)} size="sm" disabled={!activeOrgId}>
+              <Plus className="h-4 w-4 mr-1.5" /> New Workflow
+            </Button>
+          </ActionTooltip>
         }
       />
 

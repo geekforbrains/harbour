@@ -2,6 +2,7 @@
 
 import { Bot, Briefcase, Calendar, Plus } from "lucide-react";
 import { useState } from "react";
+import { ActionTooltip } from "@/components/app/action-tooltip";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
@@ -10,6 +11,7 @@ import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { resolveAgentColor } from "@/lib/agent-color";
+import { useAgents } from "@/lib/hooks/use-agents";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { statusStyle } from "@/lib/status";
@@ -38,8 +40,17 @@ export default function JobsPage() {
   const activeProjectId = useActiveProjectId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
+  // An agent job attaches to an agent in the active project, so creating one
+  // needs both a project and at least one agent there.
+  const { data: agents = [], isLoading: agentsLoading } = useAgents();
   // Workflows (kind === "workflow") have their own page at /workflows.
   const jobs = (jobsData as Job[]).filter((j) => j.kind !== "workflow");
+
+  const newJobHint = !activeProjectId
+    ? "Select a project to create a job."
+    : !agentsLoading && agents.length === 0
+      ? "Create an agent in this project first."
+      : undefined;
 
   if (loading) return <PageLoading />;
 
@@ -52,9 +63,11 @@ export default function JobsPage() {
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
                 project_id reparent route exists; new jobs land in the active project. */}
-            <Button onClick={() => setShowCreate(true)} size="sm">
-              <Plus className="h-4 w-4 mr-1.5" /> New Job
-            </Button>
+            <ActionTooltip hint={newJobHint}>
+              <Button onClick={() => setShowCreate(true)} size="sm" disabled={!!newJobHint}>
+                <Plus className="h-4 w-4 mr-1.5" /> New Job
+              </Button>
+            </ActionTooltip>
           </div>
         }
       />

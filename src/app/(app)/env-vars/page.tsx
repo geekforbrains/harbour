@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Pin, Plus } from "lucide-react";
 import { useState } from "react";
+import { ActionTooltip } from "@/components/app/action-tooltip";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
@@ -70,9 +71,13 @@ export default function EnvVarsPage() {
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
                 project_id reparent route exists; new env vars land in the active scope. */}
-            <Button size="sm" onClick={() => setShowNew(true)}>
-              <Plus className="h-4 w-4 mr-1" /> New Secret
-            </Button>
+            <ActionTooltip
+              hint={activeOrgId ? undefined : "Select an organization to create a secret."}
+            >
+              <Button size="sm" onClick={() => setShowNew(true)} disabled={!activeOrgId}>
+                <Plus className="h-4 w-4 mr-1" /> New Secret
+              </Button>
+            </ActionTooltip>
           </div>
         }
       />

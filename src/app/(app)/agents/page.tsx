@@ -2,6 +2,7 @@
 
 import { Bot, Briefcase, Check, CheckCircle, Copy, Loader2, Plus, XCircle } from "lucide-react";
 import { useState } from "react";
+import { ActionTooltip } from "@/components/app/action-tooltip";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
 import { ListState } from "@/components/app/list-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -187,9 +188,13 @@ export default function AgentsPage() {
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
                 project_id reparent route exists; new agents land in the active project. */}
-            <Button onClick={handleOpenCreate} size="sm" disabled={!activeProjectId}>
-              <Plus className="h-4 w-4 mr-1.5" /> New Agent
-            </Button>
+            <ActionTooltip
+              hint={activeProjectId ? undefined : "Select a project to create an agent."}
+            >
+              <Button onClick={handleOpenCreate} size="sm" disabled={!activeProjectId}>
+                <Plus className="h-4 w-4 mr-1.5" /> New Agent
+              </Button>
+            </ActionTooltip>
           </div>
         }
       />
