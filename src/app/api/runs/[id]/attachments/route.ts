@@ -12,6 +12,7 @@ import {
   type Uploader,
 } from "@/lib/db/queries";
 import { isVideoAutoProcessEnabled } from "@/lib/db/settings";
+import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 import { publicBaseUrl } from "@/lib/request-url";
 import { receiveMultipartUploads, UploadError } from "@/lib/upload";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
@@ -66,20 +67,16 @@ export const POST = withAgentOrUser(
 
     // Embed (URL) — JSON body
     if (contentType.toLowerCase().startsWith("application/json")) {
-      let body: { url?: string; title?: string };
-      try {
-        body = await req.json();
-      } catch {
-        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-      }
-      if (!body.url) return NextResponse.json({ error: "url is required" }, { status: 400 });
-      if (!detectEmbedProvider(body.url)) {
+      const body = await readJson(req);
+      const url = requireNonEmptyString(body.url, "url");
+      const title = optionalString(body.title, "title");
+      if (!detectEmbedProvider(url)) {
         return NextResponse.json({ error: "Invalid embed URL" }, { status: 400 });
       }
       const att = createEmbedAttachment({
         runId: id,
-        url: body.url,
-        title: body.title ?? null,
+        url,
+        title: title ?? null,
         uploader,
       });
       return NextResponse.json(serializeAttachment(att, base), { status: 201 });

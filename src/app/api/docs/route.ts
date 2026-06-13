@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getActorFromAuth, withAgentOrUser, withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
 import { createDoc, listDocs } from "@/lib/db/queries";
+import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
 export const GET = withOrgAuth(
   async (req, auth) => {
@@ -14,15 +15,14 @@ export const GET = withOrgAuth(
 // Docs are created by dashboard users and by agents (per the agent API guide).
 export const POST = withAgentOrUser(
   async (req, auth) => {
-    const body = await req.json();
-    if (!body.title) {
-      return NextResponse.json({ error: "title is required" }, { status: 400 });
-    }
+    const body = await readJson(req);
+    const title = requireNonEmptyString(body.title, "title");
+    const content = optionalString(body.content, "content");
 
     // Project-level when projectId given; otherwise org-level. Agents default
     // to their home project unless an explicit projectId is supplied.
     const projectId =
-      body.projectId ??
+      optionalString(body.projectId, "projectId") ??
       req.nextUrl.searchParams.get("projectId") ??
       (auth.type === "agent" ? auth.projectId : null);
 
@@ -32,7 +32,7 @@ export const POST = withAgentOrUser(
     }
 
     const { actorType, actorId } = getActorFromAuth(auth);
-    const doc = createDoc(auth.orgId, projectId, body.title, body.content, actorType, actorId);
+    const doc = createDoc(auth.orgId, projectId, title, content, actorType, actorId);
     return NextResponse.json(doc, { status: 201 });
   },
   { role: "editor" },

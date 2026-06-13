@@ -14,6 +14,7 @@ import {
   authenticateWorkflowRunner,
   getSession,
 } from "./db/queries";
+import { HttpError } from "./http";
 
 // ── Session cookie ───────────────────────────────────────────────────────────
 
@@ -214,6 +215,30 @@ function asUserAuth(identity: UserIdentity, orgId: string, role: Role): UserAuth
 type Handler<A> = (req: NextRequest, auth: A, ctx: RouteContext) => Promise<Response> | Response;
 
 /**
+ * Invoke an authorized handler, turning any {@link HttpError} it throws (from
+ * `readJson` or the `require*`/`optional*` validation helpers in ./http) into a
+ * clean `{ error }` JSON response with the carried status. This is what lets a
+ * handler validate input by throwing instead of hand-rolling a try/catch around
+ * every check — a malformed body or wrong-typed field becomes a 4xx, never a
+ * 500. Non-HttpError throws propagate unchanged (genuine 500s).
+ */
+async function runHandler<A>(
+  handler: Handler<A>,
+  req: NextRequest,
+  auth: A,
+  ctx: RouteContext,
+): Promise<Response> {
+  try {
+    return await handler(req, auth, ctx);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
+}
+
+/**
  * Org-scoped authorization. Target org comes from the `orgId` query param (or
  * the active-org cookie). `role` is the minimum required; instance_admin always
  * satisfies it.
@@ -231,7 +256,7 @@ export function withOrgAuth(handler: Handler<UserAuth>, opts: { role: Role; orgP
     const role = checkRole(identity, orgId, opts.role);
     if (!role) return forbidden();
 
-    return handler(req, asUserAuth(identity, orgId, role), ctx);
+    return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
   };
 }
 
@@ -258,7 +283,7 @@ export function withProjectAuth(
     const role = checkRole(identity, orgId, opts.role);
     if (!role) return forbidden();
 
-    return handler(req, asUserAuth(identity, orgId, role), ctx);
+    return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
   };
 }
 
@@ -283,7 +308,7 @@ export function withResourceAuth(kind: ResourceKind, idParam: string, opts: { ro
     const role = checkRole(identity, orgId, opts.role);
     if (!role) return forbidden();
 
-    return handler(req, asUserAuth(identity, orgId, role), ctx);
+    return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
   };
 }
 
@@ -298,7 +323,7 @@ export function withAuthenticatedUser(handler: Handler<UserAuth>) {
     const identity = getIdentityFromRequest(req);
     if (!identity) return unauthorized();
     if (identity.type !== "user") return forbidden();
-    return handler(req, asUserAuth(identity, "*", "viewer"), ctx);
+    return runHandler(handler, req, asUserAuth(identity, "*", "viewer"), ctx);
   };
 }
 
@@ -317,7 +342,7 @@ export function withInstanceAdmin(handler: Handler<UserAuth>) {
     const role = resolveAccess(identity.userId, "*");
     if (role !== "instance_admin") return forbidden();
 
-    return handler(req, asUserAuth(identity, "*", role), ctx);
+    return runHandler(handler, req, asUserAuth(identity, "*", role), ctx);
   };
 }
 
@@ -335,7 +360,8 @@ export function withAgentAuth(handler: Handler<AgentAuth>) {
     const orgId = orgIdForProject(identity.projectId);
     if (!orgId) return forbidden();
 
-    return handler(
+    return runHandler(
+      handler,
       req,
       {
         type: "agent",
@@ -355,7 +381,8 @@ export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
     if (!identity) return unauthorized();
     if (identity.type !== "workflow_runner") return forbidden();
 
-    return handler(
+    return runHandler(
+      handler,
       req,
       {
         type: "workflow_runner",
@@ -404,7 +431,8 @@ export function withAgentOrUser(
         if (resolvedOrg === null) return forbidden();
         if (resolvedOrg !== agentOrg) return forbidden();
       }
-      return handler(
+      return runHandler(
+        handler,
         req,
         {
           type: "agent",
@@ -423,7 +451,8 @@ export function withAgentOrUser(
         if (resolvedOrg === null) return forbidden();
         if (resolvedOrg !== identity.orgId) return forbidden();
       }
-      return handler(
+      return runHandler(
+        handler,
         req,
         {
           type: "workflow_runner",
@@ -443,7 +472,7 @@ export function withAgentOrUser(
     if (!orgId) return forbidden();
     const role = checkRole(identity, orgId, opts.role);
     if (!role) return forbidden();
-    return handler(req, asUserAuth(identity, orgId, role), ctx);
+    return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
   };
 }
 

@@ -2,6 +2,27 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getDatabaseById, getRows, insertRows } from "@/lib/db/queries";
+import { badRequest } from "@/lib/http";
+
+// The wire contract (docs/guide.md) allows either a single row object or an
+// array of row objects, so we can't use readJson (which rejects top-level
+// arrays). Parse here with the same clean-400-on-malformed semantics.
+function readRowsBody(text: string): Record<string, unknown>[] {
+  if (!text || text.trim() === "") badRequest("Request body must be a JSON object or array");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    badRequest("Invalid JSON body");
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  for (const row of rows) {
+    if (row === null || typeof row !== "object" || Array.isArray(row)) {
+      badRequest("Each row must be a JSON object");
+    }
+  }
+  return rows as Record<string, unknown>[];
+}
 
 const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
 
@@ -29,8 +50,7 @@ export const POST = withAgentOrUser(
     const db = getDatabaseById(id);
     if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
-    const body = await req.json();
-    const rows = Array.isArray(body) ? body : [body];
+    const rows = readRowsBody(await req.text());
 
     try {
       const result = insertRows(id, rows);

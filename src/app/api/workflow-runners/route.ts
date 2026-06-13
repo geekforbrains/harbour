@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { createWorkflowRunner, listWorkflowRunners } from "@/lib/db/queries";
+import { optionalStringArray, readJson, requireNonEmptyString } from "@/lib/http";
 import { publicBaseUrl } from "@/lib/request-url";
 
 export const GET = withOrgAuth(
@@ -12,13 +13,9 @@ export const GET = withOrgAuth(
 
 export const POST = withOrgAuth(
   async (req, auth) => {
-    const body = await req.json();
-    const name = String(body.name || "").trim();
-    if (!name) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
-
-    const labels = Array.isArray(body.labels) ? body.labels.map(String) : [];
+    const body = await readJson(req);
+    const name = requireNonEmptyString(body.name, "name");
+    const labels = optionalStringArray(body.labels, "labels") ?? [];
     const runner = createWorkflowRunner(auth.orgId, name, { labels });
     const blob = Buffer.from(
       JSON.stringify({

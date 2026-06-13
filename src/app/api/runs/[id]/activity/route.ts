@@ -8,6 +8,7 @@ import {
   listRunActivity,
   updateRunStatus,
 } from "@/lib/db/queries";
+import { optionalString, optionalStringArray, readJson } from "@/lib/http";
 
 export const GET = withResourceAuth("run", "id", { role: "viewer" })(
   async (_req, _auth, { params }) => {
@@ -43,9 +44,9 @@ export const POST = withAgentOrUser(
       );
     }
 
-    const body = (await req.json()) as { content?: string; attachment_ids?: string[] };
-    const content = (body.content ?? "").trim();
-    const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
+    const body = await readJson(req);
+    const content = (optionalString(body.content, "content") ?? "").trim();
+    const attachmentIds = optionalStringArray(body.attachment_ids, "attachment_ids") ?? [];
 
     if (!content && attachmentIds.length === 0) {
       return NextResponse.json({ error: "content or attachment_ids required" }, { status: 400 });

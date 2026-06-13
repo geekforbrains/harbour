@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { validateThinking } from "@/lib/cli-config";
 import { deleteJob, getAgentById, getJobById, updateJob } from "@/lib/db/queries";
+import { optionalPositiveInt, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withResourceAuth("job", "id", { role: "viewer" })(
@@ -19,7 +20,16 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
     const existing = getJobById(id);
     if (!existing) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-    const body = await req.json();
+    const body = await readJson(req);
+    // Type-guard string fields bound to the DB; reject blanking the name.
+    if (body.name !== undefined) body.name = requireNonEmptyString(body.name, "name");
+    body.command = optionalString(body.command, "command");
+    body.instructions = optionalString(body.instructions, "instructions");
+    body.prerunCommand = optionalString(body.prerunCommand, "prerunCommand");
+    body.postrunCommand = optionalString(body.postrunCommand, "postrunCommand");
+    if (body.timeoutMinutes !== undefined) {
+      body.timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
+    }
     if (body.schedule) {
       const normalized = normalizeSchedule(body.schedule);
       if (!normalized) {

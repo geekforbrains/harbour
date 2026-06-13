@@ -8,6 +8,7 @@ import {
   listToolEventsByMessage,
   updateConversation,
 } from "@/lib/db/captain";
+import { optionalString, readJson } from "@/lib/http";
 
 export const GET = withOrgAuth(
   async (_req, auth, { params }) => {
@@ -35,9 +36,10 @@ export const PUT = withOrgAuth(
     if (!conversation || conversation.user_id !== auth.userId) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    const body = await req.json();
-    if (body.title) {
-      updateConversation(id, { title: body.title });
+    const body = await readJson(req);
+    const title = optionalString(body.title, "title");
+    if (title) {
+      updateConversation(id, { title });
     }
     return NextResponse.json(getConversation(id, auth.orgId));
   },

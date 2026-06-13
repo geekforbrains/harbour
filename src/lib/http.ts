@@ -1,0 +1,111 @@
+// Request parsing + input validation helpers shared by API route handlers.
+//
+// The convention: a handler validates its input and either succeeds or rejects
+// with a clear 4xx — it never 500s on a malformed body or silently persists a
+// wrong-typed value. Validation helpers throw {@link HttpError}; every route
+// runs inside an auth wrapper (src/lib/auth.ts) whose `runHandler` catches
+// HttpError and renders it as `{ error }` with the right status. So a handler
+// can just `const body = await readJson(req)` and call the `require*`/`optional*`
+// guards without its own try/catch.
+
+/** An error carrying an HTTP status. Caught centrally by the auth wrappers. */
+export class HttpError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+/** Reject the request with a 400 and a clear message. */
+export function badRequest(message: string): never {
+  throw new HttpError(message, 400);
+}
+
+/**
+ * Parse a JSON request body into a plain object. An empty body becomes `{}` (so
+ * routes with only optional fields just work); malformed JSON or a non-object
+ * top-level value (array, string, number, null) is a clean 400 instead of an
+ * unhandled throw → 500.
+ */
+export async function readJson(req: Request): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await req.text();
+  } catch {
+    throw new HttpError("Could not read request body");
+  }
+  if (!text || text.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new HttpError("Invalid JSON body");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpError("Request body must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Require a non-empty (after trim) string. Returns the trimmed value. */
+export function requireNonEmptyString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    badRequest(`${name} is required and must be a non-empty string`);
+  }
+  return (value as string).trim();
+}
+
+/**
+ * A string field that may be omitted. `undefined`/`null` → `undefined`; any
+ * present value must be a string (else 400). Not trimmed — callers that need a
+ * non-empty value should use {@link requireNonEmptyString}.
+ */
+export function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") badRequest(`${name} must be a string`);
+  return value as string;
+}
+
+/** Require a strictly-positive integer. */
+export function requirePositiveInt(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    badRequest(`${name} must be a positive integer`);
+  }
+  return value as number;
+}
+
+/** An optional strictly-positive integer (omitted → undefined). */
+export function optionalPositiveInt(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requirePositiveInt(value, name);
+}
+
+/** An optional boolean (omitted → undefined; any present value must be boolean). */
+export function optionalBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") badRequest(`${name} must be a boolean`);
+  return value;
+}
+
+/** An optional array of strings (omitted → undefined). */
+export function optionalStringArray(value: unknown, name: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    badRequest(`${name} must be an array of strings`);
+  }
+  return value as string[];
+}
+
+/** Require a value drawn from a fixed set. */
+export function assertOneOf<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  name: string,
+): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    badRequest(`${name} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
+}

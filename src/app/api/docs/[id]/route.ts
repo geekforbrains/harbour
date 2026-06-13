@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getActorFromAuth, withAgentOrUser, withResourceAuth } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { deleteDoc, getDocById, renameDoc, updateDoc } from "@/lib/db/queries";
+import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
 export const GET = withResourceAuth("doc", "id", { role: "viewer" })(
   async (_req, _auth, { params }) => {
@@ -19,14 +20,15 @@ export const PUT = withAgentOrUser(
     const existing = getDocById(id);
     if (!existing) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
 
-    const body = await req.json();
+    const body = await readJson(req);
     const { actorType, actorId } = getActorFromAuth(auth);
 
     if (body.title !== undefined) {
-      renameDoc(id, body.title);
+      // A present title must be non-blank — don't let an update clear it.
+      renameDoc(id, requireNonEmptyString(body.title, "title"));
     }
     if (body.content !== undefined) {
-      updateDoc(id, body.content, actorType, actorId);
+      updateDoc(id, optionalString(body.content, "content") ?? "", actorType, actorId);
     }
 
     return NextResponse.json(getDocById(id));

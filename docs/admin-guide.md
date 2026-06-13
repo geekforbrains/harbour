@@ -26,6 +26,16 @@ Authorization: Bearer hbr_adm_<your_key>
 
 The key acts as the user who created it — all actions are attributed to that user, and your access mirrors theirs. An instance admin reaches every org; an org member reaches only their orgs, at their role (`editor` or `viewer`). Endpoints marked **instance admin** below return 403 for everyone else.
 
+## Input validation & errors
+
+Every mutation endpoint validates its input before touching the database, so you either succeed or get a clear rejection — there's no silent third outcome where a malformed value is stored.
+
+- **Send a JSON object body.** Set `Content-Type: application/json` and send a top-level object (`{ ... }`). A malformed/empty body, a non-JSON body, or a top-level array/string/number is a **400** `{ "error": "..." }` — never a 500. (Where the wire contract allows a bare array — only the row-insert endpoint `POST /api/databases/:id/rows` — that's called out at the endpoint.)
+- **Required fields and types are enforced.** A required field that's missing or empty, a string field given an object, an integer field given `"30m"`, an array field given a string, or an unknown enum value (e.g. an invalid `cli` or column `type`) all return **400** with a human-readable message naming the offending field. Wrong-typed values are rejected, never coerced and stored.
+- **Error envelope.** All errors are `{ "error": "<message>" }`. Status codes: `400` bad input, `401` unauthenticated, `403` forbidden/out-of-scope (a resource in another tenant resolves to 403/404 rather than leaking its existence), `404` not found, `409` conflict (a name-slug collision, or an illegal run-status edge such as killing a non-running run), `429` rate-limited.
+
+The practical contract: submit correctly and the call succeeds, or submit wrong and the response tells you exactly what to fix.
+
 ## Scope: Orgs and Projects
 
 List and create endpoints are scoped by query param — `?orgId=<id>` for org-scoped resources (runs, jobs, docs, databases, env vars, projects) and `?projectId=<id>` for project-level ones (agents). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
@@ -91,7 +101,7 @@ Content-Type: application/json
 ```
 
 `name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Agent names are unique per project, under the same slug rules as orgs and projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
-- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `thinking` is validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini`; an unknown level is a 400. Empty/omitted means the CLI default.
+- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is **not** validated — any string is accepted, since the CLIs take arbitrary model ids. `thinking` **is** validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini` (it takes no thinking level); an unknown level is a 400. Empty/omitted means the CLI default.
 - `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 - `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.
 - `color` — identity hue (falls back to a name-derived color if omitted)
@@ -101,11 +111,11 @@ Response includes `apiKey` — save it, shown only once. Any HTTP client holding
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "...", "description": "...", "model": "...", "thinking": "...", "eager": true }
+PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "eager": true, "remote": false }
 DELETE /api/agents/:id
 ```
 
-Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically. `cli` and `thinking` are validated together (same rules as create) — changing `cli` to one that doesn't accept the agent's current `thinking` level is a 400 unless the request also re-sets or clears `thinking`.
+PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `remote` — omitted fields are left unchanged. `model` is **not** validated (the CLIs accept arbitrary model ids); `thinking` is validated per `cli` (same per-CLI values as create). Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically. `cli` and `thinking` are validated together — changing `cli` to one that doesn't accept the agent's current `thinking` level is a 400 unless the request also re-sets or clears `thinking`.
 
 ### Rotate Agent API Key
 ```
@@ -140,9 +150,9 @@ Content-Type: application/json
 }
 ```
 
-`schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"`.
+Only `name` and `schedule` are required — `instructions` is optional. `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"` (full rules under **Schedule Format** below).
 
-Optional fields: `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level, validated against the agent's `cli` — same per-CLI values as agent create), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `instructions`, `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level, validated against the agent's `cli` — same per-CLI values as agent create), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
 ### Create a Workflow (No Agent)
 ```
@@ -157,7 +167,7 @@ Content-Type: application/json
 }
 ```
 
-Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
+`name`, `schedule`, and `command` are all required. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
 
 ### Schedule Format
 
@@ -173,16 +183,20 @@ The `schedule` field is always a **string**. It can be canonical JSON (string-en
 "schedule": "{\"days\": [1, 2, 3, 4, 5], \"time\": \"09:00\"}"
 ```
 
-Days are 0 (Sunday) through 6 (Saturday). Time is 24-hour `HH:MM`.
+For the interval form, `every` must be a **positive integer of minutes**. For the weekly form, `days` is an array of 0 (Sunday) through 6 (Saturday) and `time` is zero-padded 24-hour `HH:MM`.
 
 Human-readable strings are also accepted:
 - `"every 5 minutes"` → `{"every": 5}`
 - `"hourly"` → `{"every": 60}`
 - `"daily at 9am"` → `{"days": [0,1,2,3,4,5,6], "time": "09:00"}`
 - `"weekly on friday at 9am"` → `{"days": [5], "time": "09:00"}`
-- A 5-field cron expression (`*/N * * * *`, `M H * * DOW`, etc.)
 
-Passing the schedule as a JSON object (not a string) returns a 500.
+And the three narrow cron forms (other cron expressions are **not** parsed):
+- `*/N * * * *` → every N minutes
+- `0 */N * * *` → every N hours
+- `M H * * DOW` → at `H:M` on the given day(s)-of-week (`DOW` may be `*`, a single digit, a comma list, or a `d-d` range)
+
+Anything the parser can't map to one of these shapes — including a `schedule` passed as a JSON object instead of a string — returns a clean **400** with an explanatory `{ error }`.
 
 ### Get / Update / Delete a Job
 ```
@@ -200,7 +214,7 @@ Content-Type: application/json
 
 { "instructions": "Optional extra instructions for this run" }
 ```
-Creates and queues a run immediately, regardless of schedule. Body is optional. Returns `{ "jobId": "...", "runId": "..." }` with status 201. This is also the way to run something ad hoc — there is no standalone "create run" endpoint; every run comes from a job.
+Creates a run in `scheduled` status with `scheduled_for` set to now, regardless of the job's schedule — the assigned agent or workflow runner claims it on its next poll (not an instant in-process execution). Body is optional; any `instructions` are appended to the run's activity log. Returns `{ "jobId": "...", "runId": "..." }` with status 201. This is also the way to run something ad hoc — there is no standalone "create run" endpoint; every run comes from a job.
 
 ### Link Resources to a Job
 ```
@@ -212,7 +226,11 @@ DELETE /api/jobs/:id/env-vars/:envVarId
 DELETE /api/jobs/:id/data/:dataId
 ```
 
-An org-level workflow can link only org-level resources — a project-scoped doc/env var/database returns 400.
+Each POST returns `{ "ok": true }` (the `docs` and `data` routes use status 201; the `env-vars` route uses status 200). The body field is required and must be a non-empty string id, else 400.
+
+Two distinct rejections, by cause:
+- A resource in a **different org** than the job → **404** (it's treated as not found, never leaking cross-tenant existence).
+- A tier violation — an **org-level job linking a project-level resource** → **400** with a message like "Org-level jobs can only link org-level …". An org-level (workflow) job may link only org-level docs/env vars/databases.
 
 ### Manage a Job's Scripts
 ```
@@ -221,7 +239,7 @@ POST   /api/jobs/:id/scripts             { "filename": "check_health.py", "conte
 PUT    /api/jobs/:id/scripts/:scriptId   { "filename": "...", "content": "...", "executable": true }
 DELETE /api/jobs/:id/scripts/:scriptId
 ```
-Scripts hold the file contents the runner materializes before running the job's `command`/`prerunCommand`/`postrunCommand` — referenced by bare filename (e.g. `python3 check_health.py`, `./prerun.sh`). `filename` is required on `POST` and must be a bare name: 1–128 of `[A-Za-z0-9._-]`, no slashes, not `.`/`..` (otherwise 400). `content` defaults to `""` and `executable` to `true` (true → file written executable). `PUT` updates any subset of the three; an omitted field is left unchanged. `GET` returns the list ordered by filename; each record is `{ id, job_id, filename, content, executable (0|1), created_at, updated_at }`. `POST` returns the created record with status 201; `DELETE` returns `{ "ok": true }`. The script files are delivered in the run payload (`job.scripts` / `job.scripts_dir`) and written to disk per job by the runner.
+Scripts hold the file contents the runner materializes before running the job's `command`/`prerunCommand`/`postrunCommand` — referenced by bare filename (e.g. `python3 check_health.py`, `./prerun.sh`). `filename` is required on `POST` and must be a bare name: 1–128 of `[A-Za-z0-9._-]`, no slashes, not `.`/`..` (otherwise 400). `content` defaults to `""` and `executable` to `true` (true → file written executable). `PUT` updates any subset of the three (an omitted field is left unchanged) and returns the updated record. `GET` returns the list ordered by filename; each record is `{ id, job_id, filename, content, executable (0|1), created_at, updated_at }`. `POST` returns the created record with status 201; `DELETE` returns `{ "ok": true }`. The `:scriptId` routes 404 (`Script not found`) when the script doesn't belong to `:id`, blocking cross-job edits. The script files are delivered in the run payload (`job.scripts` / `job.scripts_dir`) and written to disk per job by the runner.
 
 ### List a Job's Runs
 ```
@@ -239,6 +257,20 @@ GET /api/runs?orgId=<id>&projectId=<id>
 ```
 
 Default returns all active runs grouped by status. `filter=waiting` returns runs needing human input. `filter=recent` returns recently completed runs. `projectId` narrows any of these to one project (runs of org-level workflows are still included).
+
+### Run History (paginated, filterable)
+```
+GET /api/runs/history?orgId=<id>&limit=25&offset=0&sort=newest
+```
+Flat, paginated run history for the org — unlike `GET /api/runs`, which buckets only active/recent runs. Query params (all optional):
+- `status` — comma-separated list (`scheduled,running,waiting,pending,done,failed,killed,skipped`). Omitted → all statuses **except** `skipped`.
+- `includeSkipped=1` — include `skipped` runs (only meaningful when `status` is omitted).
+- `agentId`, `jobId`, `projectId` — narrow to one agent / job / project (a `projectId` filter still includes org-level runs).
+- `from`, `to` — unix-second bounds (inclusive).
+- `sort` — `newest` (default) or `oldest`.
+- `limit` (default 25), `offset` (default 0).
+
+Returns `{ "runs": [...], "hasMore": <bool>, "nextOffset": <number|null> }` — pass `nextOffset` back as `offset` to page.
 
 ### Get a Run
 ```
@@ -273,13 +305,13 @@ Only works for runs whose status is `failed`, `skipped`, or `killed` — other s
 ```
 POST /api/runs/:id/kill
 ```
-Only works for runs in `running` status handled by a runner — harbour-run agent runs and workflow runs. Runs driven by an external HTTP client (no runner polling the kill flag) and non-running statuses return 400/409. The runner polls for the kill flag and stops its child process; commenting on a killed agent run resumes the CLI session where it left off, while a killed workflow run is re-run via retry.
+Only works on a run in `running` status — any other status returns **409**. For a running run it sets the kill flag and returns 200 `{ "ok": true, "kill_requested": true }`, and records a "Kill requested" system activity entry. The kill flag is advisory: the agent/runner polls for it and stops its child process. An external HTTP client that never polls the flag simply won't be interrupted, but the call still succeeds. Commenting on a killed agent run resumes the CLI session where it left off; a killed workflow run is re-run via retry.
 
 ### Delete a Run
 ```
 DELETE /api/runs/:id
 ```
-Removes the run and its attachments.
+Removes the run and its attachments. Returns `{ "success": true }` (this route's success envelope is `success`, not the `{ ok: true }` most other deletes use).
 
 ### Attachments
 
@@ -335,6 +367,14 @@ PUT    /api/docs/:id    { "title": "...", "content": "..." }
 DELETE /api/docs/:id
 ```
 
+A doc's content is revision-backed: each `PUT` appends a new revision and the latest revision is the live content `GET` returns.
+
+### Doc Revisions
+```
+GET /api/docs/:id/revisions
+```
+Returns the doc's full revision history, newest first — one entry per `PUT`, each with its content and author.
+
 ### Pin/Unpin a Doc
 ```
 POST /api/docs/:id/pin
@@ -363,7 +403,9 @@ Content-Type: application/json
 }
 ```
 
-Column types: `TEXT`, `INTEGER`, `REAL`. Every table gets an auto-incrementing `_id` column. `projectId` is optional (body or query) — without it the database is org-level. If a database with that name already exists in scope, the existing one is returned instead of creating a duplicate.
+Column `type` must be one of `TEXT`, `INTEGER`, `REAL` (case-insensitive — anything else is a 400). Every table gets an auto-incrementing `_id` column. `projectId` is optional (body or query) — without it the database is org-level. If a database with that name already exists in scope, the existing one is returned instead of creating a duplicate.
+
+**Name sanitization (applies to both the database name and every column name):** names are lowercased, every non-`[a-z0-9_]` character becomes `_`, runs of `_` collapse, leading/trailing `_` are stripped, and the result is truncated to 64 chars — so `"Daily Metrics!"` is stored as `daily_metrics`. A name that sanitizes to empty (no letters or digits) is a 400, as is one that collides with a SQLite reserved word (e.g. `order`, `select`, `group`). A column may not be named `_id` (reserved). At create time a `required: true` column needs no `default` (the table starts empty); adding a required column to an *existing* table later does — see **Add a Column** below.
 
 ### Get / Delete a Database
 ```
@@ -378,6 +420,7 @@ Content-Type: application/json
 
 { "name": "new_field", "type": "TEXT", "default": "" }
 ```
+`name` and `type` are required (`type` allow-listed and sanitized exactly as on create). Adding a `required: true` column to an existing table **must** include a `default` — SQLite can't add a NOT NULL column to a populated table without one — otherwise 400.
 
 ### Insert Rows
 ```
@@ -392,8 +435,9 @@ Content-Type: application/json
 
 ### Read Rows
 ```
-GET /api/databases/:id/rows?limit=50&offset=0&orderBy=date&order=DESC
+GET /api/databases/:id/rows?limit=100&offset=0&orderBy=date&order=DESC
 ```
+All query params are optional. Defaults: `limit=100`, `offset=0`, `order=DESC`. With no `orderBy` the rows come back newest-first by insertion order (`rowid DESC`); supplying an `orderBy` that isn't a real column is a 400. Returns `{ "rows": [...], "total": <count>, "limit": ..., "offset": ... }`.
 
 ### Update / Delete a Row
 ```
@@ -417,7 +461,7 @@ Content-Type: application/json
 { "name": "GITHUB_TOKEN", "value": "ghp_...", "projectId": "uuid" }
 ```
 
-`projectId` is optional — without it the env var is org-level (org scope from `?orgId=<id>`).
+Both `name` and `value` are **required and non-empty** — you cannot create an empty-value secret (a blank or missing `value` is a 400). `projectId` is optional — without it the env var is org-level (org scope from `?orgId=<id>`).
 
 ### Get / Update / Delete an Env Var
 ```

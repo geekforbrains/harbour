@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
 import { createWorkflow, listAllJobs } from "@/lib/db/queries";
+import {
+  optionalPositiveInt,
+  optionalString,
+  optionalStringArray,
+  readJson,
+  requireNonEmptyString,
+} from "@/lib/http";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withOrgAuth(
@@ -16,8 +23,7 @@ export const GET = withOrgAuth(
 // Dual-tier: project-level when projectId given, org-level otherwise.
 export const POST = withOrgAuth(
   async (req, auth) => {
-    const body = await req.json();
-    const { name, description, schedule, command, docIds, envVarIds, timeoutMinutes } = body;
+    const body = await readJson(req);
     // This endpoint only creates deterministic workflow jobs. Agent jobs (and
     // agent prerun gates) go through POST /api/agents/:id/jobs.
     if (body.agentId || body.agent_id) {
@@ -26,22 +32,31 @@ export const POST = withOrgAuth(
         { status: 400 },
       );
     }
-    if (!name || !schedule || !command) {
+    if (!body.name || !body.schedule || !body.command) {
       return NextResponse.json(
         { error: "name, schedule, and command are required" },
         { status: 400 },
       );
     }
+    const name = requireNonEmptyString(body.name, "name");
+    const command = requireNonEmptyString(body.command, "command");
+    const description = optionalString(body.description, "description");
+    const docIds = optionalStringArray(body.docIds, "docIds");
+    const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
+    const timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
 
     // Project-level when projectId given; otherwise org-level. Scope is fixed
     // at creation.
-    const projectId = body.projectId ?? req.nextUrl.searchParams.get("projectId") ?? null;
+    const projectId =
+      optionalString(body.projectId, "projectId") ??
+      req.nextUrl.searchParams.get("projectId") ??
+      null;
     // A client-supplied project must belong to the caller's org.
     if (projectId && orgIdForProject(projectId) !== auth.orgId) {
       return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
     }
 
-    const normalized = normalizeSchedule(schedule);
+    const normalized = normalizeSchedule(body.schedule);
     if (!normalized) {
       return NextResponse.json(
         {

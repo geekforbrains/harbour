@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
 import { createUser, listMemberships, listOrgs, listUsers } from "@/lib/db/queries";
 import { getDb } from "@/lib/db/schema";
+import { optionalBoolean, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
 type UserRow = {
   id: string;
@@ -58,14 +59,11 @@ export const GET = withInstanceAdmin(async () => {
  * NULL until a set-password link is consumed). Returns the created user row.
  */
 export const POST = withInstanceAdmin(async (req) => {
-  const body = await req.json().catch(() => ({}));
-  const email = typeof body.email === "string" ? body.email.trim() : "";
-  const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
-  if (!email) {
-    return NextResponse.json({ error: "email is required" }, { status: 400 });
-  }
+  const body = await readJson(req);
+  const email = requireNonEmptyString(body.email, "email");
+  const displayName = optionalString(body.displayName, "displayName")?.trim() ?? "";
   const user = createUser(email, null, displayName || email, {
-    isInstanceAdmin: !!body.isInstanceAdmin,
+    isInstanceAdmin: optionalBoolean(body.isInstanceAdmin, "isInstanceAdmin") ?? false,
   });
   return NextResponse.json(user, { status: 201 });
 });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withProjectAuth } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
+import { optionalBoolean, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 import { saveRunnerConfig } from "@/lib/runners";
 import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
@@ -16,11 +17,15 @@ export const GET = withProjectAuth(
 export const POST = withProjectAuth(
   async (req) => {
     const projectId = req.nextUrl.searchParams.get("projectId")!;
-    const body = await req.json();
-    const { name, description, cli, model, thinking, color, eager, remote } = body;
-    if (!name) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
+    const body = await readJson(req);
+    const name = requireNonEmptyString(body.name, "name");
+    const description = optionalString(body.description, "description");
+    const model = optionalString(body.model, "model");
+    const color = optionalString(body.color, "color");
+    const eager = optionalBoolean(body.eager, "eager");
+    const remote = optionalBoolean(body.remote, "remote");
+    const thinking = optionalString(body.thinking, "thinking");
+    const cli = body.cli;
     if (!cli) {
       return NextResponse.json({ error: "cli is required" }, { status: 400 });
     }
@@ -32,7 +37,7 @@ export const POST = withProjectAuth(
     let agent: ReturnType<typeof createAgent>;
     try {
       agent = createAgent(projectId, name, description, {
-        cli,
+        cli: cli as string,
         model,
         thinking,
         color,

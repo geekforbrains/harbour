@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { deleteRow, getDatabaseById, updateRow } from "@/lib/db/queries";
+import { readJson } from "@/lib/http";
 
 const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
 
@@ -11,7 +12,7 @@ export const PUT = withAgentOrUser(
     const db = getDatabaseById(id);
     if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
-    const body = await req.json();
+    const body = await readJson(req);
     try {
       const row = updateRow(id, parseInt(rowId, 10), body);
       return NextResponse.json(row);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
 import { createMessage, getConversation } from "@/lib/db/captain";
+import { optionalString, readJson } from "@/lib/http";
 
 export const POST = withOrgAuth(
   async (req, auth, { params }) => {
@@ -15,8 +16,8 @@ export const POST = withOrgAuth(
       return NextResponse.json({ error: "A response is already in progress" }, { status: 409 });
     }
 
-    const body = await req.json();
-    const prompt = body.message?.trim();
+    const body = await readJson(req);
+    const prompt = optionalString(body.message, "message")?.trim();
     if (!prompt) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }

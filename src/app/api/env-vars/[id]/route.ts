@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { deleteEnvVar, getEnvVarById, updateEnvVar } from "@/lib/db/queries";
+import { optionalString, readJson } from "@/lib/http";
 
 export const GET = withResourceAuth("env_var", "id", { role: "viewer" })(
   async (_req, _auth, { params }) => {
@@ -17,9 +18,14 @@ export const PUT = withResourceAuth("env_var", "id", { role: "editor" })(
     const existing = getEnvVarById(id);
     if (!existing) return NextResponse.json({ error: "Env var not found" }, { status: 404 });
 
-    const body = await req.json();
+    const body = await readJson(req);
+    // value may legitimately contain whitespace, so it is not trimmed.
+    const data = {
+      name: optionalString(body.name, "name"),
+      value: optionalString(body.value, "value"),
+    };
     try {
-      const updated = updateEnvVar(id, body);
+      const updated = updateEnvVar(id, data);
       return NextResponse.json(updated);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

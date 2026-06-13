@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
 import { addMembership, getOrgById, getUserById, listMemberships } from "@/lib/db/queries";
+import { assertOneOf, readJson, requireNonEmptyString } from "@/lib/http";
 
 /** Instance-admin-only: list an org's members (user id, email, name, role). */
 export const GET = withInstanceAdmin(async (_req, _auth, ctx) => {
@@ -22,15 +23,9 @@ export const POST = withInstanceAdmin(async (req, _auth, ctx) => {
   if (!getOrgById(orgId)) {
     return NextResponse.json({ error: "Org not found" }, { status: 404 });
   }
-  const body = await req.json().catch(() => ({}));
-  const userId = typeof body.userId === "string" ? body.userId : "";
-  const role = body.role === "editor" || body.role === "viewer" ? body.role : null;
-  if (!userId || !role) {
-    return NextResponse.json(
-      { error: "userId and role ('editor'|'viewer') are required" },
-      { status: 400 },
-    );
-  }
+  const body = await readJson(req);
+  const userId = requireNonEmptyString(body.userId, "userId");
+  const role = assertOneOf(body.role, ["editor", "viewer"] as const, "role");
   const user = getUserById(userId);
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });

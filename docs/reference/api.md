@@ -27,6 +27,13 @@ not-found resolves to **403** to avoid leaking existence across tenants.
   kill-while-not-running, or a create (`POST /api/orgs`, `/api/projects`,
   `/api/agents`) whose name slugifies to an existing sibling's slug (a name
   with no letters or numbers at all is a `400`).
+- **Input validation.** Handlers parse the body with `readJson` and the
+  `require*`/`optional*`/`assertOneOf` guards in `src/lib/http.ts`, which throw
+  `HttpError`; the auth wrappers' `runHandler` renders those as `{ error }`.
+  Net effect every mutation route inherits: a malformed/empty/non-object JSON
+  body is a clean `400` (not a `500`), and a wrong-typed or unknown-enum field
+  is a `400` rather than being silently stored. (`POST /api/databases/:id/rows`
+  parses inline because the contract allows a top-level array.)
 - **Scope** comes from the query string / cookies: org routes read `?orgId=` or
   the `harbour_org` cookie; project routes read `?projectId=`; `[id]` routes
   resolve the owning org from the resource.

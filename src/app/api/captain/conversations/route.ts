@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { createConversation, listConversations } from "@/lib/db/captain";
 import { getSetting } from "@/lib/db/settings";
+import { optionalString, readJson } from "@/lib/http";
 
 export const GET = withOrgAuth(
   async (_req, auth) => {
@@ -13,8 +14,8 @@ export const GET = withOrgAuth(
 
 export const POST = withOrgAuth(
   async (req, auth) => {
-    const body = await req.json();
-    const title = body.title || "New conversation";
+    const body = await readJson(req);
+    const title = optionalString(body.title, "title") || "New conversation";
 
     const cli = getSetting("captain_cli") || "claude";
     const model = getSetting("captain_model") || null;

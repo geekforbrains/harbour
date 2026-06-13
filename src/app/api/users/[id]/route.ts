@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
 import { deleteUser, getUserById, updateUser } from "@/lib/db/queries";
+import { optionalBoolean, optionalString, readJson } from "@/lib/http";
 
 /**
  * Instance-admin-only: update a user — toggle instance_admin or rename. Other
@@ -13,10 +14,12 @@ export const PUT = withInstanceAdmin(async (req, _auth, ctx) => {
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
-  const body = await req.json().catch(() => ({}));
+  const body = await readJson(req);
   const data: { displayName?: string; isInstanceAdmin?: boolean } = {};
-  if (typeof body.displayName === "string") data.displayName = body.displayName.trim();
-  if (typeof body.isInstanceAdmin === "boolean") data.isInstanceAdmin = body.isInstanceAdmin;
+  const displayName = optionalString(body.displayName, "displayName");
+  if (displayName !== undefined) data.displayName = displayName.trim();
+  const isInstanceAdmin = optionalBoolean(body.isInstanceAdmin, "isInstanceAdmin");
+  if (isInstanceAdmin !== undefined) data.isInstanceAdmin = isInstanceAdmin;
   const updated = updateUser(id, data);
   return NextResponse.json(updated);
 });

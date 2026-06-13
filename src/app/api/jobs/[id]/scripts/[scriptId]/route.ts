@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { deleteJobScript, getJobScriptById, updateJobScript } from "@/lib/db/queries";
+import { optionalBoolean, optionalString, readJson } from "@/lib/http";
 
 export const PUT = withResourceAuth("job", "id", { role: "editor" })(
   async (req, _auth, { params }) => {
@@ -11,12 +12,15 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
       return NextResponse.json({ error: "Script not found" }, { status: 404 });
     }
 
-    const body = await req.json();
+    const body = await readJson(req);
+    const filename = optionalString(body.filename, "filename");
+    const content = optionalString(body.content, "content");
+    const executable = optionalBoolean(body.executable, "executable");
     try {
       const updated = updateJobScript(scriptId, {
-        filename: body.filename,
-        content: body.content,
-        executable: body.executable,
+        filename,
+        content,
+        executable,
       });
       return NextResponse.json(updated);
     } catch (error) {

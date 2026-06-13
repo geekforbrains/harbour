@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/auth";
 import { createProject, listProjects } from "@/lib/db/queries";
+import { readJson, requireNonEmptyString } from "@/lib/http";
 import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
 export const GET = withOrgAuth(
@@ -12,12 +13,10 @@ export const GET = withOrgAuth(
 
 export const POST = withOrgAuth(
   async (req, auth) => {
-    const body = await req.json();
-    if (!body.name?.trim()) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
+    const body = await readJson(req);
+    const name = requireNonEmptyString(body.name, "name");
     try {
-      const project = createProject(auth.orgId, body.name.trim());
+      const project = createProject(auth.orgId, name);
       return NextResponse.json(project, { status: 201 });
     } catch (err) {
       if (err instanceof NameCollisionError) {

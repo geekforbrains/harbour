@@ -1,20 +1,19 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin, withOrgAuth } from "@/lib/auth";
 import { createOrg, getOrgById, getOrgSettings, updateOrg } from "@/lib/db/queries";
+import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
 // Create an org. Only instance admins create orgs (they manage the instance).
 // An optional `timezone` is folded into the org's `settings` JSON so a freshly
 // created org carries its schedule timezone from the start.
 export const POST = withInstanceAdmin(async (req) => {
-  const body = await req.json().catch(() => ({}));
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
+  const body = await readJson(req);
+  const name = requireNonEmptyString(body.name, "name");
   const settings: Record<string, unknown> = {};
-  if (typeof body.timezone === "string" && body.timezone.trim()) {
-    settings.timezone = body.timezone.trim();
+  const timezone = optionalString(body.timezone, "timezone");
+  if (timezone?.trim()) {
+    settings.timezone = timezone.trim();
   }
   try {
     const org = createOrg(name, settings);
@@ -36,10 +35,14 @@ export const POST = withInstanceAdmin(async (req) => {
 // a partial update doesn't clobber unrelated keys.
 export const PUT = withOrgAuth(
   async (req, auth) => {
-    const body = await req.json();
+    const body = await readJson(req);
     const data: { name?: string; settings?: Record<string, unknown> } = {};
-    if (typeof body.name === "string") data.name = body.name;
-    if (body.settings && typeof body.settings === "object") {
+    const name = optionalString(body.name, "name");
+    if (name !== undefined) data.name = name;
+    if (body.settings !== undefined && body.settings !== null) {
+      if (typeof body.settings !== "object" || Array.isArray(body.settings)) {
+        return NextResponse.json({ error: "settings must be an object" }, { status: 400 });
+      }
       data.settings = { ...getOrgSettings(auth.orgId), ...body.settings };
     }
     const org = updateOrg(auth.orgId, data) ?? getOrgById(auth.orgId);

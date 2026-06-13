@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, setRunTitle } from "@/lib/db/queries";
+import { readJson } from "@/lib/http";
 import { MAX_TITLE_LENGTH, normalizeTitle } from "@/lib/run-title";
 
 export const PUT = withAgentOrUser(
@@ -17,14 +18,9 @@ export const PUT = withAgentOrUser(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-    }
+    const body = await readJson(req);
 
-    const title = normalizeTitle((body as { title?: unknown })?.title);
+    const title = normalizeTitle(body.title);
     if (!title) {
       return NextResponse.json(
         { error: `title must be a non-empty string (max ${MAX_TITLE_LENGTH} chars)` },

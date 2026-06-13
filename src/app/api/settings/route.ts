@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withInstanceAdmin } from "@/lib/auth";
 import { getAllSettings, isSensitiveSetting, maskSettingValue, setSetting } from "@/lib/db/queries";
+import { readJson } from "@/lib/http";
 
 export const GET = withInstanceAdmin(async () => {
   const settings = getAllSettings();
@@ -13,7 +14,7 @@ export const GET = withInstanceAdmin(async () => {
 });
 
 export const PUT = withInstanceAdmin(async (req) => {
-  const body = await req.json();
+  const body = await readJson(req);
   for (const [key, value] of Object.entries(body)) {
     if (typeof value === "string") {
       setSetting(key, value);

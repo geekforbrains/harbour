@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getJobById, triggerJobRun } from "@/lib/db/queries";
+import { optionalString, readJson } from "@/lib/http";
 
 export const POST = withAgentOrUser(
   async (req, auth, { params }) => {
@@ -15,13 +16,9 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
     }
 
-    let extraInstructions: string | undefined;
-    try {
-      const body = await req.json();
-      if (body.instructions) extraInstructions = body.instructions;
-    } catch {
-      // No body is fine — trigger without extra instructions
-    }
+    // Empty body is fine — trigger without extra instructions.
+    const body = await readJson(req);
+    const extraInstructions = optionalString(body.instructions, "instructions");
 
     const result = triggerJobRun(id, extraInstructions);
     if (!result) return NextResponse.json({ error: "Failed to create run" }, { status: 500 });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
 import { getRunById, updateRunSessionId } from "@/lib/db/queries";
+import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
 export const PUT = withAgentOrUser(
   async (req, auth, { params }) => {
@@ -16,12 +17,11 @@ export const PUT = withAgentOrUser(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await req.json();
-    if (!body.session_id || typeof body.session_id !== "string") {
-      return NextResponse.json({ error: "session_id is required" }, { status: 400 });
-    }
+    const body = await readJson(req);
+    const sessionId = requireNonEmptyString(body.session_id, "session_id");
+    const cwd = optionalString(body.cwd, "cwd");
 
-    updateRunSessionId(id, body.session_id, body.cwd || undefined);
+    updateRunSessionId(id, sessionId, cwd || undefined);
     return NextResponse.json({ ok: true });
   },
   {

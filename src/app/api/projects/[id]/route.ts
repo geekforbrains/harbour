@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { archiveProject, getProjectById, updateProject } from "@/lib/db/queries";
+import { optionalString, readJson } from "@/lib/http";
 
 export const GET = withResourceAuth("project", "id", { role: "viewer" })(
   async (_req, _auth, { params }) => {
@@ -14,8 +15,11 @@ export const GET = withResourceAuth("project", "id", { role: "viewer" })(
 export const PUT = withResourceAuth("project", "id", { role: "editor" })(
   async (req, _auth, { params }) => {
     const { id } = await params;
-    const body = await req.json();
-    const project = updateProject(id, body);
+    const body = await readJson(req);
+    const data: { name?: string } = {};
+    const name = optionalString(body.name, "name");
+    if (name !== undefined) data.name = name;
+    const project = updateProject(id, data);
     if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json(project);
   },

@@ -6,15 +6,21 @@ import { clientIp, loginLimiter } from "@/lib/rate-limit";
 // Intentionally public (no auth wrapper) — brute force is throttled per
 // email+IP instead: 5 failed attempts per 15 minutes, cleared on success.
 export async function POST(req: NextRequest) {
+  let body: { email?: unknown; password?: unknown };
   try {
-    const body = await req.json();
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  try {
     const { email, password } = body;
 
-    if (!email || !password) {
+    if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
       return NextResponse.json({ error: "email and password are required" }, { status: 400 });
     }
 
-    const limitKey = `${String(email).trim().toLowerCase()}:${clientIp(req)}`;
+    const limitKey = `${email.trim().toLowerCase()}:${clientIp(req)}`;
     if (loginLimiter.isLimited(limitKey)) {
       return NextResponse.json(
         { error: "Too many failed login attempts. Try again later." },
