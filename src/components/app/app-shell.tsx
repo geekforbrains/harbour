@@ -137,13 +137,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [projects, activeProjectId, projectStateLoaded]);
 
-  // A project can never be active without an org. In the instance-admin "All
-  // orgs" view (`activeOrgId === null`) `useProjects` is disabled, so the guard
-  // above can't validate — without this mask a project id left in localStorage
-  // would leak through and 403 every project-scoped request (`orgIdForProject`
-  // returns null). Masking at the context boundary keeps every consumer
-  // consistent (the scope prompt shows instead of a broken create form).
-  const effectiveProjectId = activeOrgId ? activeProjectId : null;
+  // A project is only valid *within its own org*, so the exposed project must be
+  // present in the active org's loaded list. This masks two stale-state hazards
+  // that the clear-on-mismatch guard above can't catch on its own:
+  //   - "All orgs" view (`activeOrgId === null`): no org → no project.
+  //   - switching to an org with no (or not-yet-selected) projects while a
+  //     project from another org sits in localStorage — without this it would
+  //     leak through and show the *other* org's agents/jobs (and target creates
+  //     at the wrong org).
+  // We withhold during the brief projects-loading window rather than risk
+  // exposing a cross-org project; the raw id stays in localStorage so the
+  // selection is restored when its real org is active again.
+  const effectiveProjectId =
+    activeOrgId && projects.some((p) => p.id === activeProjectId) ? activeProjectId : null;
 
   // Timezone comes from the active org's settings; falls back to the browser.
   const activeOrg = orgs.find((o) => o.id === activeOrgId);
