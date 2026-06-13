@@ -76,7 +76,6 @@ export function RunRow({ run, showActions = true }: Props) {
                   className="h-3 w-3 shrink-0"
                   style={{ color: resolveAgentColor(run.agent_color, run.agent_name) }}
                 />
-                {run.job_prerun_command && <Terminal className="h-3 w-3" />}
                 <span className="font-mono">{run.agent_name}</span>
               </>
             )}
