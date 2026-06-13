@@ -468,13 +468,17 @@ export function diffSchema(live: Database.Database): string[] {
     const drift: string[] = [];
 
     const tableNames = (db: Database.Database) =>
-      (db.prepare(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
-      ).all() as { name: string }[]).map((r) => r.name);
+      (
+        db
+          .prepare(
+            `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+          )
+          .all() as { name: string }[]
+      ).map((r) => r.name);
     const columns = (db: Database.Database, table: string) =>
-      db.prepare(
-        `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?)`
-      ).all(table) as ColumnInfo[];
+      db
+        .prepare(`SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(?)`)
+        .all(table) as ColumnInfo[];
 
     for (const table of tableNames(expected)) {
       const want = columns(expected, table);
@@ -496,7 +500,7 @@ export function diffSchema(live: Database.Database): string[] {
           got.pk !== col.pk
         ) {
           drift.push(
-            `table ${table}: column ${col.name} differs (expected ${describeColumn(col)}, found ${describeColumn(got)})`
+            `table ${table}: column ${col.name} differs (expected ${describeColumn(col)}, found ${describeColumn(got)})`,
           );
         }
       }
@@ -508,16 +512,17 @@ export function diffSchema(live: Database.Database): string[] {
     }
 
     const indexes = (db: Database.Database) =>
-      db.prepare(
-        `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`
-      ).all() as { name: string; sql: string }[];
+      db
+        .prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`)
+        .all() as { name: string; sql: string }[];
     const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim();
     const liveIndexes = new Map(indexes(live).map((i) => [i.name, normalize(i.sql)]));
     for (const idx of indexes(expected)) {
       const got = liveIndexes.get(idx.name);
       const want = normalize(idx.sql);
       if (got === undefined) drift.push(`index ${idx.name}: missing`);
-      else if (got !== want) drift.push(`index ${idx.name}: differs (expected "${want}", found "${got}")`);
+      else if (got !== want)
+        drift.push(`index ${idx.name}: differs (expected "${want}", found "${got}")`);
     }
 
     return drift;
@@ -542,7 +547,7 @@ export function verifySchema(db: Database.Database) {
       `Harbour v2 has no schema migrations — a fresh database is the only supported path.`,
       `Move or delete the database file and restart to recreate it, or apply the`,
       `changes above manually if you need to keep existing data.`,
-    ].join("\n")
+    ].join("\n"),
   );
 }
 
