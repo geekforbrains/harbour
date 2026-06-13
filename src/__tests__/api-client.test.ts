@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { scoped } from "@/lib/api/client";
+import { ApiError, scoped, shouldRetryQuery } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
+
+describe("shouldRetryQuery()", () => {
+  it("never retries a 4xx — these are not transient (the stale-scope 403 hang)", () => {
+    for (const status of [400, 401, 403, 404, 422, 499]) {
+      expect(shouldRetryQuery(0, new ApiError(status, null))).toBe(false);
+    }
+  });
+
+  it("retries 5xx up to three attempts", () => {
+    const err = new ApiError(500, null);
+    expect(shouldRetryQuery(0, err)).toBe(true);
+    expect(shouldRetryQuery(2, err)).toBe(true);
+    expect(shouldRetryQuery(3, err)).toBe(false);
+  });
+
+  it("retries non-ApiError failures (network/parse blips) up to three attempts", () => {
+    const err = new Error("network down");
+    expect(shouldRetryQuery(0, err)).toBe(true);
+    expect(shouldRetryQuery(3, err)).toBe(false);
+  });
+});
 
 describe("scoped()", () => {
   it("returns the path unchanged when no scope is given", () => {

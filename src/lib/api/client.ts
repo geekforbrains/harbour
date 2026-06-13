@@ -39,6 +39,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * React Query retry predicate. Client errors (4xx) are not transient — a 401,
+ * 403, or 404 will fail identically on every retry, so retrying them with
+ * backoff only converts a clean failure into a multi-second hang (e.g. a stale
+ * project scope 403ing the agents list). Fail fast on 4xx; keep the default
+ * three attempts for 5xx and network/parse blips, which can be transient.
+ */
+export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+    return false;
+  }
+  return failureCount < 3;
+}
+
 async function parseBody(res: Response): Promise<unknown> {
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
