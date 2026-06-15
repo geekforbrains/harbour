@@ -53,6 +53,12 @@ export const qk = {
     runs: (id: string) => ["jobs", "detail", id, "runs"] as const,
   },
 
+  workflowRunners: {
+    all: ["workflow-runners"] as const,
+    // Org-scoped; the GET route reads ?orgId and ignores any project filter.
+    list: (scope?: Scope) => ["workflow-runners", "list", scopeKey(scope)] as const,
+  },
+
   runs: {
     all: ["runs"] as const,
     // The dashboard bundle (scheduled/running/waiting/recent) for a scope.
