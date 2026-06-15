@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { withResourceAuth } from "@/lib/auth";
 import { validateThinking } from "@/lib/cli-config";
 import { deleteJob, getAgentById, getJobById, updateJob } from "@/lib/db/queries";
-import { optionalPositiveInt, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
+import {
+  optionalGate,
+  optionalPositiveInt,
+  optionalString,
+  readJson,
+  requireNonEmptyString,
+} from "@/lib/http";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withResourceAuth("job", "id", { role: "viewer" })(
@@ -23,10 +29,15 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
     const body = await readJson(req);
     // Type-guard string fields bound to the DB; reject blanking the name.
     if (body.name !== undefined) body.name = requireNonEmptyString(body.name, "name");
-    body.command = optionalString(body.command, "command");
     body.instructions = optionalString(body.instructions, "instructions");
-    body.prerunCommand = optionalString(body.prerunCommand, "prerunCommand");
-    body.postrunCommand = optionalString(body.postrunCommand, "postrunCommand");
+    // Gates: undefined leaves them unchanged, null clears, object validates.
+    // command/workflow alias the same workflow gate — resolve the present key
+    // first so an explicit `command: null` still clears (a bare `??` would
+    // collapse null to undefined and silently no-op).
+    body.prerun = optionalGate(body.prerun, "prerun");
+    body.postrun = optionalGate(body.postrun, "postrun");
+    const cmd = body.command !== undefined ? body.command : body.workflow;
+    if (cmd !== undefined) body.workflow = optionalGate(cmd, "command");
     if (body.timeoutMinutes !== undefined) {
       body.timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
     }

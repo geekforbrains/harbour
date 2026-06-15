@@ -28,7 +28,8 @@ type WorkflowJob = {
   total_runs: number;
   skipped_runs: number;
   last_run_at: number | null;
-  workflow_command: string | null;
+  workflow_runtime: string | null;
+  workflow_script: string | null;
 };
 
 export default function WorkflowsPage() {
@@ -77,9 +78,9 @@ export default function WorkflowsPage() {
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(wf.schedule))}
                   </span>
-                  {wf.workflow_command && (
-                    <span className="hidden sm:inline font-mono truncate max-w-60">
-                      {wf.workflow_command}
+                  {wf.workflow_runtime && (
+                    <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono">
+                      {wf.workflow_runtime}
                     </span>
                   )}
                   {(wf.total_runs > 0 || wf.skipped_runs > 0) && (

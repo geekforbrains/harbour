@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
+import { DEFAULT_RUNTIME, type Gate, isRuntime } from "../runtimes";
 import { slugify } from "../slug";
 import { getAgentWorkspace } from "./agents";
 import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
@@ -8,7 +9,17 @@ import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { getDb } from "./schema";
-import { getJobScriptsForPayload } from "./scripts";
+
+/**
+ * Shape a gate's stored `(runtime, script)` columns into the run payload's gate
+ * object, or `null` when the job has no script for that gate. An unrecognized
+ * stored runtime falls back to {@link DEFAULT_RUNTIME} rather than shipping a
+ * value the runner can't execute.
+ */
+function gatePayload(runtime: string | null, content: string | null): Gate | null {
+  if (!content) return null;
+  return { runtime: isRuntime(runtime) ? runtime : DEFAULT_RUNTIME, content };
+}
 
 // Creates a brand-new run already 'running'. There is no prior status to
 // transition from, so this INSERT is a deliberate bypass of the
@@ -34,8 +45,8 @@ export function getRunById(id: string) {
   const db = getDb();
   const run = db
     .prepare(`
-    SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_command as job_prerun_command,
-           j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color, a.cli as agent_cli
+    SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_script as job_prerun_script,
+           j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -231,8 +242,8 @@ export function listRunsByJob(
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command,
-           j.workflow_command as job_workflow_command,
+           j.prerun_script as job_prerun_script,
+           j.workflow_script as job_workflow_script,
            a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
@@ -255,8 +266,8 @@ export function listRunsByAgent(
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command,
-           j.workflow_command as job_workflow_command,
+           j.prerun_script as job_prerun_script,
+           j.workflow_script as job_workflow_script,
            a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
@@ -278,7 +289,7 @@ export function listScheduledRuns(orgId: string, projectId?: string) {
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
+           j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -294,7 +305,7 @@ export function listRunningRuns(orgId: string, projectId?: string) {
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
+           j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -310,7 +321,7 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
+           j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -326,7 +337,7 @@ export function listRecentRuns(orgId: string, limit = 10, projectId?: string) {
   return db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command, a.name as agent_name, a.color as agent_color
+           j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
@@ -414,7 +425,7 @@ export function listRunsHistory(
   const rows = db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
-           j.prerun_command as job_prerun_command, j.workflow_command as job_workflow_command,
+           j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script,
            a.name as agent_name, a.color as agent_color, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
@@ -732,7 +743,7 @@ export function getNextWorkflowRun(orgId: string) {
       .prepare(`
       SELECT j.id FROM jobs j
       WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
-      AND j.workflow_command IS NOT NULL
+      AND j.workflow_script IS NOT NULL
       AND j.org_id = ?
       AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
       AND NOT EXISTS (
@@ -786,7 +797,7 @@ export function peekWorkflowNext(orgId: string) {
     .prepare(`
     SELECT j.id, j.name FROM jobs j
     WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
-    AND j.workflow_command IS NOT NULL
+    AND j.workflow_script IS NOT NULL
     AND j.org_id = ?
     AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
     AND NOT EXISTS (
@@ -1022,19 +1033,20 @@ export function buildRunPayload(runId: string) {
       kind: job.kind,
       name: job.name,
       instructions,
-      prerun: job.prerun_command,
-      postrun: job.postrun_command,
+      // Each gate is a { runtime, content } gist, or null when unset. The
+      // runner materializes the body into scripts_dir and runs it with the
+      // runtime's interpreter. command/workflow alias the same gate.
+      prerun: gatePayload(job.prerun_runtime, job.prerun_script),
+      postrun: gatePayload(job.postrun_runtime, job.postrun_script),
       postrun_gates: !!job.postrun_gates,
-      command: isWorkflow ? job.workflow_command : null,
-      workflow: isWorkflow ? job.workflow_command : null,
+      command: isWorkflow ? gatePayload(job.workflow_runtime, job.workflow_script) : null,
+      workflow: isWorkflow ? gatePayload(job.workflow_runtime, job.workflow_script) : null,
       model: job.model || null,
       thinking: job.thinking || null,
       title_format: job.title_format || null,
       timeout_minutes: job.timeout_minutes ?? 30,
-      // Per-job script files the runner materializes into scripts_dir before
-      // running the command. Empty array + scripts_dir keep today's flat-cwd
-      // behavior for jobs with no scripts (backward compatible).
-      scripts: getJobScriptsForPayload(job.id),
+      // Relative dir (under the runner's $HARBOUR_HOME/workflows) the gate
+      // scripts are materialized into before they run.
       scripts_dir: getJobScriptsDir(job.id),
     },
     ...(agent ? { agent } : {}),

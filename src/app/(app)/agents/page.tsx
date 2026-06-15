@@ -298,12 +298,9 @@ export default function AgentsPage() {
                 <p className="text-xs text-muted-foreground">
                   The command contains the agent API key — treat it like a password. Model, effort,
                   and CLI tool are set here in harbour and applied on every run, so you never have
-                  to reconfigure the remote machine. If this agent&apos;s jobs use prerun commands,
-                  the scripts must exist at{" "}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                    ~/.harbour/workflows/
-                  </code>{" "}
-                  there.
+                  to reconfigure the remote machine. Prerun/postrun gate scripts are stored in
+                  Harbour and materialized onto the runner automatically — just make sure their
+                  runtime (bash, python3, or node) is installed on that machine.
                 </p>
                 <DialogFooter>
                   <Button variant="outline" onClick={handleCopy}>

@@ -323,7 +323,7 @@ describe("PUT /api/jobs/:id — thinking override validation", () => {
     const job = createWorkflow(org.id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const res = await jobPUT(
       editorReq(org.id, `http://x/api/jobs/${job.id}`, "PUT", { thinking: "high" }),

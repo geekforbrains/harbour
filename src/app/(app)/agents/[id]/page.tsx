@@ -86,8 +86,8 @@ type Job = {
   pending_runs: number;
   skipped_runs: number;
   last_run_at: number | null;
-  prerun_command: string | null;
-  workflow_command: string | null;
+  prerun_script: string | null;
+  workflow_script: string | null;
 };
 type Run = {
   id: string;
@@ -349,7 +349,7 @@ export default function AgentDetailPage() {
                     <span className="flex items-center gap-1">
                       <Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}
                     </span>
-                    {job.prerun_command && (
+                    {job.prerun_script && (
                       <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>
                     )}
                     {job.total_runs > 0 && (
@@ -554,10 +554,9 @@ export default function AgentDetailPage() {
                 {connectCommand()}
               </div>
               <p className="text-xs text-muted-foreground">
-                The command contains the agent API key. Treat it like a password. If this
-                agent&apos;s jobs use prerun commands, the scripts must exist at{" "}
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code>{" "}
-                on that machine.
+                The command contains the agent API key. Treat it like a password. Prerun/postrun
+                gate scripts are stored in Harbour and materialized onto the runner automatically —
+                just make sure their runtime (bash, python3, or node) is installed on that machine.
               </p>
               <DialogFooter>
                 <Button variant="outline" onClick={handleCopyConnect}>

@@ -5,7 +5,7 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
 v1 → v2 migration; a fresh database is the only supported path.
 
-- **28 tables**, **35 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **28 tables**, **34 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
   `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
@@ -166,10 +166,13 @@ Static configuration for recurring work (agent or workflow).
 | `agent_id` | TEXT | FK → `agents` (CASCADE) | set for agent jobs, **NULL for workflow jobs** |
 | `name` / `description` / `instructions` | TEXT | | `instructions` is the agent prompt body |
 | `schedule` | TEXT | NN | normalized JSON: `{"every":N}` or `{"days":[0-6],"time":"HH:MM"}` |
-| `prerun_command` | TEXT | | agent gate: exit 0 continues, 77 skips, other fails |
-| `postrun_command` | TEXT | | hook after status finalization |
+| `prerun_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the prerun gist; NULL exactly when `prerun_script` is |
+| `prerun_script` | TEXT | | agent gate body: exit 0 continues, 77 skips, other fails |
+| `postrun_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the postrun gist; NULL exactly when `postrun_script` is |
+| `postrun_script` | TEXT | | post-agent hook body, runs after status finalization |
 | `postrun_gates` | INTEGER | NN, default 0 | 0 = informational (never changes status); 1 = enforcing (nonzero overrides `done`→`failed`) |
-| `workflow_command` | TEXT | | workflow job command (no agent / LLM) |
+| `workflow_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the workflow gist; NULL exactly when `workflow_script` is |
+| `workflow_script` | TEXT | | workflow job command body (no agent / LLM) |
 | `timeout_minutes` | INTEGER | NN, default 30 | |
 | `model` / `thinking` | TEXT | | per-job override |
 | `title_format` | TEXT | | hint for how agents name runs |
@@ -275,24 +278,6 @@ project-level tiers).
 | `job_docs` | `job_id` → `jobs` | `doc_id` → `docs` |
 | `job_env_vars` | `job_id` → `jobs` | `env_var_id` → `env_vars` |
 | `job_databases` | `job_id` → `jobs` | `database_id` → `databases` |
-
-## Job scripts
-
-### `job_scripts`
-Per-job script files the runner materializes to disk before running the job's
-`workflow_command` / `prerun_command` / `postrun_command`. Owned by the job (not a
-junction); the command strings reference these by bare `filename`.
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | uuid |
-| `job_id` | TEXT | NN, FK → `jobs` (CASCADE) | |
-| `filename` | TEXT | NN | bare name: 1–128 of `[A-Za-z0-9._-]`, no slashes, not `.`/`..` (validated in the query layer) |
-| `content` | TEXT | NN, default `''` | file body |
-| `executable` | INTEGER | NN, default 1 | 1 → runner writes mode `0o700`; 0 → `0o600` |
-| `created_at` / `updated_at` | INTEGER | NN | **no `DEFAULT`** — `createJobScript` supplies both; inserts that omit them violate NOT NULL |
-| | | U `(job_id, filename)` | one filename per job |
-
-Index: `idx_job_scripts_job(job_id)`.
 
 ## Settings
 

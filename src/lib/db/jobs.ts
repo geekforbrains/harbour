@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
+import type { Gate } from "../runtimes";
 import { getNextRunTime } from "../schedule";
 import { orgIdForProject } from "./access";
 import { deleteRunAttachmentsDir } from "./attachments";
@@ -16,8 +17,8 @@ export function createJob(
     description?: string;
     instructions?: string;
     schedule: string;
-    prerunCommand?: string;
-    postrunCommand?: string;
+    prerun?: Gate | null;
+    postrun?: Gate | null;
     postrunGates?: boolean;
     model?: string;
     thinking?: string;
@@ -37,8 +38,8 @@ export function createJob(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_command, postrun_command, postrun_gates, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       orgId,
@@ -48,8 +49,10 @@ export function createJob(
       data.description || null,
       data.instructions || null,
       data.schedule,
-      data.prerunCommand || null,
-      data.postrunCommand || null,
+      data.prerun?.runtime ?? null,
+      data.prerun?.content ?? null,
+      data.postrun?.runtime ?? null,
+      data.postrun?.content ?? null,
       data.postrunGates ? 1 : 0,
       data.model || null,
       data.thinking || null,
@@ -84,7 +87,7 @@ export function createWorkflow(
     name: string;
     description?: string;
     schedule: string;
-    command: string;
+    workflow: Gate;
     timeoutMinutes?: number;
     docIds?: string[];
     envVarIds?: string[];
@@ -98,8 +101,8 @@ export function createWorkflow(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_command, timeout_minutes, active, next_run_at)
-      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       orgId,
@@ -107,7 +110,8 @@ export function createWorkflow(
       data.name,
       data.description || null,
       data.schedule,
-      data.command,
+      data.workflow.runtime,
+      data.workflow.content,
       data.timeoutMinutes ?? 30,
       data.active !== false ? 1 : 0,
       nextRunAt,
@@ -231,10 +235,10 @@ export function updateJob(
     description?: string;
     instructions?: string;
     schedule?: string;
-    prerunCommand?: string;
-    postrunCommand?: string;
+    prerun?: Gate | null;
+    postrun?: Gate | null;
     postrunGates?: boolean;
-    command?: string;
+    workflow?: Gate | null;
     model?: string;
     thinking?: string;
     titleFormat?: string;
@@ -264,21 +268,21 @@ export function updateJob(
     fields.push("schedule = ?");
     values.push(data.schedule);
   }
-  if (data.prerunCommand !== undefined) {
-    fields.push("prerun_command = ?");
-    values.push(data.prerunCommand || null);
+  if (data.prerun !== undefined) {
+    fields.push("prerun_runtime = ?", "prerun_script = ?");
+    values.push(data.prerun?.runtime ?? null, data.prerun?.content ?? null);
   }
-  if (data.postrunCommand !== undefined) {
-    fields.push("postrun_command = ?");
-    values.push(data.postrunCommand || null);
+  if (data.postrun !== undefined) {
+    fields.push("postrun_runtime = ?", "postrun_script = ?");
+    values.push(data.postrun?.runtime ?? null, data.postrun?.content ?? null);
   }
   if (data.postrunGates !== undefined) {
     fields.push("postrun_gates = ?");
     values.push(data.postrunGates ? 1 : 0);
   }
-  if (data.command !== undefined) {
-    fields.push("workflow_command = ?");
-    values.push(data.command || null);
+  if (data.workflow !== undefined) {
+    fields.push("workflow_runtime = ?", "workflow_script = ?");
+    values.push(data.workflow?.runtime ?? null, data.workflow?.content ?? null);
   }
   if (data.model !== undefined) {
     fields.push("model = ?");

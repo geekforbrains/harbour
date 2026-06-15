@@ -116,7 +116,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
     const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
-      command: "echo sync",
+      workflow: { runtime: "bash", content: "echo sync" },
     })!;
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 40 * 60, updatedAt: NOW() - 1 });
@@ -132,7 +132,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
     const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
-      command: "echo sync",
+      workflow: { runtime: "bash", content: "echo sync" },
     })!;
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 60, updatedAt: NOW() - 40 * 60 });

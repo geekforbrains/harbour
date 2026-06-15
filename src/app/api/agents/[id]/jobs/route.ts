@@ -4,6 +4,7 @@ import { validateThinking } from "@/lib/cli-config";
 import { createJob, getAgentById, listJobsByAgent } from "@/lib/db/queries";
 import {
   optionalBoolean,
+  optionalGate,
   optionalString,
   optionalStringArray,
   readJson,
@@ -34,8 +35,8 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
     const name = requireNonEmptyString(body.name, "name");
     const description = optionalString(body.description, "description");
     const instructions = optionalString(body.instructions, "instructions");
-    const prerunCommand = optionalString(body.prerunCommand, "prerunCommand");
-    const postrunCommand = optionalString(body.postrunCommand, "postrunCommand");
+    const prerun = optionalGate(body.prerun, "prerun");
+    const postrun = optionalGate(body.postrun, "postrun");
     const postrunGates = optionalBoolean(body.postrunGates, "postrunGates");
     const model = optionalString(body.model, "model");
     const titleFormat = optionalString(body.titleFormat, "titleFormat");
@@ -65,8 +66,8 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
         description,
         instructions,
         schedule: normalized,
-        prerunCommand,
-        postrunCommand,
+        prerun,
+        postrun,
         postrunGates,
         model,
         thinking,

@@ -108,10 +108,10 @@ describe("schema drift detection", () => {
 
   it("detects a missing column left behind by CREATE TABLE IF NOT EXISTS", () => {
     const db = getDb();
-    db.exec(`ALTER TABLE jobs DROP COLUMN prerun_command`);
+    db.exec(`ALTER TABLE jobs DROP COLUMN prerun_script`);
     const drift = diffSchema(db);
-    expect(drift).toContain("table jobs: missing column prerun_command (TEXT)");
-    expect(() => verifySchema(db)).toThrow(/jobs: missing column prerun_command/);
+    expect(drift).toContain("table jobs: missing column prerun_script (TEXT)");
+    expect(() => verifySchema(db)).toThrow(/jobs: missing column prerun_script/);
     expect(() => verifySchema(db)).toThrow(/fresh database is the only supported path/);
   });
 
@@ -279,11 +279,11 @@ describe("workflows", () => {
     const workflow = createWorkflow(org.id, project.id, {
       name: "Health Check",
       schedule: '{"every":60}',
-      command: "bash check.sh",
+      workflow: { runtime: "bash", content: "bash check.sh" },
     })!;
     expect(workflow.agent_id).toBeNull();
     expect(workflow.kind).toBe("workflow");
-    expect(workflow.workflow_command).toBe("bash check.sh");
+    expect(workflow.workflow_script).toBe("bash check.sh");
     expect(workflow.project_id).toBe(project.id);
   });
 

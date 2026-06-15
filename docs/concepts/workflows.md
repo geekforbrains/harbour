@@ -1,20 +1,22 @@
 # Workflows
 
-Workflows are deterministic scheduled shell commands. They are for work that should run the same way every time, on a schedule, without an agent and without an LLM.
+Workflows are deterministic scheduled scripts. They are for work that should run the same way every time, on a schedule, without an agent and without an LLM.
 
-Agent prerun commands are related, but they are not workflows. A prerun command belongs to an agent job and only exists to decide whether the agent should spend tokens on a run.
+Agent prerun gates are related, but they are not workflows. A prerun gate belongs to an agent job and only exists to decide whether the agent should spend tokens on a run.
+
+A workflow's command and an agent job's prerun/postrun are each a **gate**: a `{ runtime, content }` gist. `runtime` is one of `bash`, `python`, or `node`; `content` is the script body, authored and stored in Harbour. There are no bare command strings, no separate helper files, and no files to hand-place — see [Gates](#gates).
 
 ## The Boundary
 
 | Feature | Own schedule | Own runner auth | Uses an agent | Uses an LLM | Purpose |
 |---|---:|---:|---:|---:|---|
 | Agent job | Yes | No | Yes | Yes | LLM-driven recurring work |
-| Agent prerun command | No | No | Yes | No | Cheap gate before the LLM |
+| Agent prerun gate | No | No | Yes | No | Cheap gate before the LLM |
 | Workflow | Yes | Yes | No | No | Deterministic recurring work |
 
-Use a workflow when the command itself can finish the job: poll an API, reconcile a local file, sync a dataset, send a webhook, run a health check, or maintain a table.
+Use a workflow when the script itself can finish the job: poll an API, reconcile a local file, sync a dataset, send a webhook, run a health check, or maintain a table.
 
-Use an agent job with a prerun command when the command is only deciding whether there is enough work for an agent to think about.
+Use an agent job with a prerun gate when the script is only deciding whether there is enough work for an agent to think about.
 
 ## Data Model
 
@@ -24,7 +26,8 @@ Workflow jobs are stored in `jobs`:
 |---|---|
 | `kind = 'workflow'` | This job is a deterministic workflow |
 | `agent_id = NULL` | No agent owns or runs it |
-| `workflow_command` | Shell command executed by the workflow runner |
+| `workflow_runtime` | The runtime the command is run with: `bash`, `python`, or `node` |
+| `workflow_script` | The command's script body, run by the workflow runner |
 | `timeout_minutes` | Maximum runtime before stale runs are failed |
 
 Agent jobs use the same table, but with a different shape:
@@ -33,12 +36,15 @@ Agent jobs use the same table, but with a different shape:
 |---|---|
 | `kind = 'agent'` | This job is agent-backed |
 | `agent_id` | Owning agent |
-| `prerun_command` | Optional gate before the LLM |
-| `postrun_command` | Optional hook after status finalization |
+| `prerun_runtime` / `prerun_script` | Optional prerun gate before the LLM |
+| `postrun_runtime` / `postrun_script` | Optional postrun hook after status finalization |
+| `postrun_gates` | `0` = informational postrun, `1` = enforcing |
 
-The command strings above reference script **files by bare name** (e.g.
-`python3 check_health.py`, `./prerun.sh`). The file contents themselves are
-stored per job in a separate table — see [Scripts](#scripts) below.
+Each `*_runtime` column is constrained by a CHECK to `bash`, `python`, or `node`,
+and the paired `*_script` column holds the body. Together they form a gate — a
+`{ runtime, content }` gist. The runner materializes the body to a file and runs
+it with the runtime's interpreter; nothing is referenced by bare filename. See
+[Gates](#gates) below.
 
 Workflow jobs are dual-tier, like docs, env vars, and databases: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
 
@@ -60,14 +66,16 @@ Content-Type: application/json
   "name": "Health Check",
   "description": "Check API health every hour",
   "schedule": "{\"every\":60}",
-  "command": "python3 check_health.py",
+  "command": { "runtime": "python", "content": "import json, sys\n..." },
   "timeoutMinutes": 10
 }
 ```
 
+`command` is the workflow gate and is required: an object `{ runtime, content }` where `runtime` is `bash` (the default if omitted), `python`, or `node`, and `content` is the script body. The `workflow` key is accepted as an alias for `command`. `content` is stored verbatim — never trimmed — so shebangs and leading blank lines survive.
+
 `projectId` is optional (query or body) — without it the workflow is **org-level**.
 
-`POST /api/jobs` only creates workflows. Agent jobs are created under an agent with `POST /api/agents/:id/jobs`.
+`POST /api/jobs` only creates workflows. Agent jobs are created under an agent with `POST /api/agents/:id/jobs`, whose body takes `prerun` and `postrun` as `{ runtime, content }` objects plus a `postrunGates` boolean.
 
 ## Workflow Runners
 
@@ -129,21 +137,21 @@ Agent API keys are rejected by `/api/workflows/next`. Workflow runner keys are d
 
 ## Execution Contract
 
-The workflow runner executes the command with:
+The workflow runner materializes the command gate to a file in the job's per-job scripts directory and runs it there (see [Gates](#gates)):
 
 | Item | Value |
 |---|---|
-| Working directory | The job's per-job scripts directory under `$HARBOUR_HOME/workflows` when the job has scripts; otherwise the flat `$HARBOUR_HOME/workflows` (default `~/.harbour/workflows`). See [Scripts](#scripts) |
+| Working directory | The job's per-job scripts directory, `$HARBOUR_HOME/workflows/<scripts_dir>` (default root `~/.harbour/workflows`). See [Gates](#gates) |
+| Interpreter | The gate's `runtime`: `bash` → `bash workflow.sh`, `python` → `python3 workflow.py`, `node` → `node workflow.js` |
 | stdin | Full run payload JSON |
 | stdout | Captured at process exit, posted as the final `workflow` activity entry |
 | stderr | Captured at process exit |
 | timeout | `job.timeout_minutes`, default 30 |
 | env | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY`, `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME` |
 
-Example script:
+Example command body (a `python` gate):
 
 ```python
-#!/usr/bin/env python3
 import json
 import sys
 
@@ -154,7 +162,7 @@ api_token = payload["env"].get("EXTERNAL_API_TOKEN")
 print(f"Checked external system for run {run_id}")
 ```
 
-The command should be idempotent. A retry starts the command fresh, not from a CLI session.
+The command should be idempotent. A retry starts it fresh, not from a CLI session.
 
 ## Live Progress Updates
 
@@ -198,12 +206,11 @@ The workflow receives the same composed run context as an agent run, minus the a
     "name": "Health Check",
     "instructions": null,
     "prerun": null,
-    "command": "python3 check_health.py",
-    "workflow": "python3 check_health.py",
+    "postrun": null,
+    "postrun_gates": false,
+    "command": { "runtime": "python", "content": "import json, sys\n..." },
+    "workflow": { "runtime": "python", "content": "import json, sys\n..." },
     "timeout_minutes": 30,
-    "scripts": [
-      { "filename": "check_health.py", "content": "#!/usr/bin/env python3\n...", "executable": true }
-    ],
     "scripts_dir": "acme/ops/health-check-1a2b3c4d"
   },
   "docs": [],
@@ -213,7 +220,7 @@ The workflow receives the same composed run context as an agent run, minus the a
 }
 ```
 
-`scripts` and `scripts_dir` are present on **every** run (agent and workflow). `scripts` is the job's stored script files; `scripts_dir` is the relative path under the runner's `$HARBOUR_HOME/workflows` where the runner materializes them before running the command. A job with no scripts gets `scripts: []` and runs from the flat workflows directory — see [Scripts](#scripts).
+`prerun`, `postrun`, `command`, and `workflow` are each a gate — a `{ runtime, content }` object — or `null` when unset. `command` and `workflow` alias the **same** workflow gate: both are set on a workflow run and both `null` on an agent run (where `prerun`/`postrun` carry the gates instead). `postrun_gates` is a boolean. `scripts_dir` is present on **every** run (agent and workflow): the **relative** path under the runner's `$HARBOUR_HOME/workflows` root where the runner materializes the gate's body before running it. It is `null` only for a malformed or unknown job, which the runner refuses to run — see [Gates](#gates).
 
 Linked docs, env vars, databases, and attachments are composed the same way as agent runs. Env vars are decrypted at request time and are plaintext inside the runner process, so treat workflow scripts as trusted code.
 
@@ -246,9 +253,9 @@ Workflow runs also have no message thread. The activity log on a workflow run is
 
 Retrying a workflow run requeues the same run as `scheduled` with an immediate `scheduled_for`, so the next workflow runner poll claims a fresh attempt of the command. There is no agent session to resume.
 
-## Agent Prerun Commands
+## Agent Prerun And Postrun Gates
 
-Agent jobs can define `prerun_command`. The agent runner executes it before invoking the LLM.
+Agent jobs can define a `prerun` gate. The agent runner materializes it and runs it before invoking the LLM.
 
 | Exit | Result |
 |---:|---|
@@ -256,45 +263,33 @@ Agent jobs can define `prerun_command`. The agent runner executes it before invo
 | `77` | Mark run `skipped`; no LLM is invoked |
 | other | Mark run `failed`; no LLM is invoked |
 
-Prerun commands run from the same working directory as the job's other commands — the job's per-job scripts directory when it has scripts, otherwise the flat `$HARBOUR_HOME/workflows` (see [Scripts](#scripts)) — and receive the same stdin payload shape, but they are not independently scheduled and do not use workflow-runner credentials.
+The prerun runs from the job's per-job scripts directory (`$HARBOUR_HOME/workflows/<scripts_dir>`, see [Gates](#gates)) and receives the same stdin payload shape, but it is not independently scheduled and does not use workflow-runner credentials.
 
-Agent jobs can also define `postrun_command`, a hook the agent runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun sees every script the prerun does). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
+Agent jobs can also define a `postrun` gate, a hook the agent runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun runs from the same place the prerun did). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
 
-## Scripts
+## Gates
 
-Script **contents** live in Harbour, owned per job (the `job_scripts` table). Add, edit, and delete a job's scripts from its detail page in the dashboard, or over the API (`GET`/`POST /api/jobs/:id/scripts`, `PUT`/`DELETE /api/jobs/:id/scripts/:scriptId`). Each script is a `{ filename, content, executable }` record:
+A job's prerun, postrun, and a workflow's command are each a **gate**: a `{ runtime, content }` gist authored and stored in Harbour. There are no helper files, no bare-filename references, and nothing to hand-place on the runner — Harbour is the source of truth for the body.
 
-- **filename** — a bare name only: 1–128 characters of `[A-Za-z0-9._-]`, no slashes, and not `.` or `..`. The command string references it by this bare name (`python3 check_health.py`, `./prerun.sh`). A name uniqueness constraint means one filename per job.
-- **content** — the file body, stored as text.
-- **executable** — when true the runner writes the file mode `0o700`; when false `0o600`. Defaults to true.
+Author a gate from the job's create dialog or its detail page in the dashboard — a runtime dropdown plus a body editor (the shared GateField). Agent jobs expose prerun and postrun; workflows expose the command. Over the API the gates are set on the create routes (`POST /api/jobs` `command`/`workflow`; `POST /api/agents/:id/jobs` `prerun`/`postrun`/`postrunGates`) and edited with `PUT /api/jobs/:id`, where `prerun`, `postrun`, and `command` are each `{ runtime, content }` or `null` — `null` clears a gate, and omitting the field leaves it unchanged.
 
-### How scripts reach the runner
+Each gate has two parts:
 
-Scripts travel in the `/next` run payload (on both agent and workflow runs):
+- **runtime** — one of `bash`, `python`, or `node`. Optional on input, defaulting to `bash`; any other value is a 400.
+- **content** — the script body, required and a non-empty string. Stored **verbatim** — never trimmed — so a shebang or leading blank line survives.
 
-- `job.scripts` — the array of `{ filename, content, executable }` records, or `[]` when the job has none.
-- `job.scripts_dir` — a **relative** path the server computes from immutable slugs, under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Tiers:
+### How a gate reaches the runner
+
+Gates travel in the `/next` run payload (on both agent and workflow runs) as `{ runtime, content }` objects (or `null`), alongside `job.scripts_dir`:
+
+- `job.scripts_dir` — a **relative** path the server computes from immutable slugs (`getJobScriptsDir`), under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Tiers:
   - agent job → `<org-slug>/<project-slug>/<agent-slug>/<job-leaf>`
   - project workflow → `<org-slug>/<project-slug>/<job-leaf>`
   - org-level workflow → `<org-slug>/<job-leaf>`
 
   where `<job-leaf>` is `<slugified-job-name>-<first-8-of-job-id>` — stable across renames and collision-free. `scripts_dir` is `null` only for a malformed or unknown job.
 
-Right before running a command, the runner `mkdir -p`s the per-job directory (`$HARBOUR_HOME/workflows/<scripts_dir>`), writes each script there with the mode its `executable` flag implies, then runs the command from that directory. So a command like `./prerun.sh` or `python3 check_health.py` finds the file in its cwd.
-
-### Jobs with no scripts (legacy behavior)
-
-A job with no scripts gets `scripts: []`, and the runner runs its command from the flat `$HARBOUR_HOME/workflows` directory — exactly as before per-job scripts existed. In that case you place the script files there yourself (and keep them in version control if more than one machine runs them):
-
-```text
-~/.harbour/
-  workflows/
-    check_health.py
-    sync_metrics.sh
-    reconcile_orders.ts
-```
-
-When a job *does* carry scripts, the runner materializes them per job and you don't hand-place anything — Harbour is the source of truth for the file contents.
+Right before running a gate, the runner `mkdir -p`s the per-job directory (`$HARBOUR_HOME/workflows/<scripts_dir>`), writes the gate's body to `<role>.<ext>` (mode `0o700`) — `role` is `prerun`, `postrun`, or `workflow`, and `<ext>` follows the runtime (`bash` → `sh`, `python` → `py`, `node` → `js`) — then runs it from that directory with the runtime's interpreter (`bash <file>`, `python3 <file>`, or `node <file>`). A job with no `scripts_dir` is malformed and **fails** rather than running from any fallback directory.
 
 ## Operational Notes
 

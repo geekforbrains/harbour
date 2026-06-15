@@ -2,6 +2,7 @@
 
 import { FileText, KeyRound, Pin, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { GateField } from "@/components/app/gate-field";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { parseSchedule, SchedulePicker, serializeSchedule } from "@/components/app/schedule-picker";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import type { Gate } from "@/lib/runtimes";
 
 // Sub-dialog for picking docs or env vars
 export function PickerDialog({
@@ -186,11 +188,13 @@ export function CreateDialog({
   const [showEnvVarPicker, setShowEnvVarPicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Job fields
+  // Job fields. Gates (prerun/postrun for agents, the command for workflows)
+  // are gist-style { runtime, content } scripts, null until set.
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
-  const [command, setCommand] = useState("");
-  const [postrunCommand, setPostrunCommand] = useState("");
+  const [workflowGate, setWorkflowGate] = useState<Gate | null>(null);
+  const [prerun, setPrerun] = useState<Gate | null>(null);
+  const [postrun, setPostrun] = useState<Gate | null>(null);
   const [postrunGates, setPostrunGates] = useState(false);
   const [titleFormat, setTitleFormat] = useState("");
   // Workflow-only: scope is fixed at creation. Agent jobs are always project-level.
@@ -228,8 +232,9 @@ export function CreateDialog({
     setSubmitting(false);
     setDescription("");
     setSchedule(parseSchedule(null));
-    setCommand("");
-    setPostrunCommand("");
+    setWorkflowGate(null);
+    setPrerun(null);
+    setPostrun(null);
     setPostrunGates(false);
     setTitleFormat("");
     setWorkflowScope("project");
@@ -247,7 +252,7 @@ export function CreateDialog({
   async function handleCreateJob(e: React.FormEvent) {
     e.preventDefault();
     const isWorkflow = kind === "workflow";
-    if (!name.trim() || (!isWorkflow && !agentId) || (isWorkflow && !command.trim()) || submitting)
+    if (!name.trim() || (!isWorkflow && !agentId) || (isWorkflow && !workflowGate) || submitting)
       return;
     setSubmitting(true);
 
@@ -263,10 +268,10 @@ export function CreateDialog({
       description: description || undefined,
       instructions: !isWorkflow ? instructions || undefined : undefined,
       schedule: serializeSchedule(schedule),
-      command: isWorkflow ? command : undefined,
-      prerunCommand: !isWorkflow && command ? command : undefined,
-      postrunCommand: !isWorkflow && postrunCommand ? postrunCommand : undefined,
-      postrunGates: !isWorkflow && postrunCommand ? postrunGates : undefined,
+      command: isWorkflow ? (workflowGate ?? undefined) : undefined,
+      prerun: !isWorkflow ? (prerun ?? undefined) : undefined,
+      postrun: !isWorkflow ? (postrun ?? undefined) : undefined,
+      postrunGates: !isWorkflow && postrun ? postrunGates : undefined,
       model: !isWorkflow ? model || undefined : undefined,
       thinking: !isWorkflow ? thinking || undefined : undefined,
       titleFormat: !isWorkflow ? titleFormat.trim() || undefined : undefined,
@@ -295,7 +300,7 @@ export function CreateDialog({
     setAgentId(id);
     setModel("");
     setThinking("");
-    setCommand("");
+    setPrerun(null);
   }
 
   const selectedAgent = agents.find((a) => a.id === agentId);
@@ -408,19 +413,16 @@ export function CreateDialog({
             </div>
 
             {kind === "workflow" && (
-              <div className="space-y-2">
-                <Label>Command</Label>
-                <Input
-                  value={command}
-                  onChange={(e) => setCommand(e.target.value)}
-                  placeholder="e.g. python3 check_health.py"
-                  className="font-mono text-xs"
-                  required
-                />
-                <p className="text-xs text-muted-foreground">
-                  Exit 0 = success, 77 = skip, other = fail.
-                </p>
-              </div>
+              <GateField
+                label="Command"
+                value={workflowGate}
+                onChange={setWorkflowGate}
+                required
+                description="The script this workflow runs. Pick a runtime and write the body."
+                placeholder={
+                  "#!/usr/bin/env bash\nset -euo pipefail\n# do the work, exit 77 to skip"
+                }
+              />
             )}
 
             {kind === "agent" && (
@@ -435,26 +437,22 @@ export function CreateDialog({
                     className="max-h-[25vh]"
                   />
                 </div>
+                <GateField
+                  label="Prerun"
+                  value={prerun}
+                  onChange={setPrerun}
+                  description="Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."
+                  placeholder={"#!/usr/bin/env bash\n# exit 77 if there's no work for the agent"}
+                />
                 <div className="space-y-2">
-                  <Label>Prerun Command</Label>
-                  <Input
-                    value={command}
-                    onChange={(e) => setCommand(e.target.value)}
-                    placeholder="Optional, e.g. python3 check_prs.py"
-                    className="font-mono text-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Optional gate before the LLM. Exit 0 continues, 77 skips, other fails.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Postrun Command</Label>
-                  <Textarea
-                    value={postrunCommand}
-                    onChange={(e) => setPostrunCommand(e.target.value)}
-                    placeholder="Optional, e.g. bash verify.sh"
-                    rows={2}
-                    className="font-mono text-xs max-h-[20vh]"
+                  <GateField
+                    label="Postrun"
+                    value={postrun}
+                    onChange={(g) => {
+                      setPostrun(g);
+                      if (!g) setPostrunGates(false);
+                    }}
+                    description="Optional hook after the run finishes. Receives the run payload on stdin."
                   />
                   <div className="flex items-center gap-2">
                     <button
@@ -462,7 +460,7 @@ export function CreateDialog({
                       role="switch"
                       aria-checked={postrunGates}
                       onClick={() => setPostrunGates((v) => !v)}
-                      disabled={!postrunCommand}
+                      disabled={!postrun}
                       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50 ${postrunGates ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
                     >
                       {postrunGates ? "Enforcing" : "Informational"}
@@ -473,9 +471,6 @@ export function CreateDialog({
                         : "Runs on any outcome; never changes status."}
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Optional hook after the run finishes. Receives the run payload on stdin.
-                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label>Title Format</Label>

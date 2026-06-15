@@ -175,7 +175,7 @@ describe("run payload workspace block", () => {
     const workflow = createWorkflow(org.id, project.id, {
       name: "Health Check",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(workflow.id, null)!;
     const payload = buildRunPayload(run.id)!;

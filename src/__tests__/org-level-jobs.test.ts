@@ -59,7 +59,7 @@ function orgWorkflow(orgId: string, extra: { docIds?: string[]; envVarIds?: stri
   return createWorkflow(orgId, null, {
     name: "OrgWF",
     schedule: SCHEDULE,
-    command: "echo org",
+    workflow: { runtime: "bash", content: "echo org" },
     ...extra,
   })!;
 }
@@ -68,7 +68,7 @@ function projectWorkflow(orgId: string, projectId: string, name = "ProjWF") {
   return createWorkflow(orgId, projectId, {
     name,
     schedule: SCHEDULE,
-    command: "echo proj",
+    workflow: { runtime: "bash", content: "echo proj" },
   })!;
 }
 
@@ -402,7 +402,11 @@ describe("org-level workflow routes", () => {
     const res = await jobsPOST(
       userReq(editor.id, `http://x/api/jobs?orgId=${org.id}`, {
         method: "POST",
-        body: JSON.stringify({ name: "OrgWF", schedule: SCHEDULE, command: "echo org" }),
+        body: JSON.stringify({
+          name: "OrgWF",
+          schedule: SCHEDULE,
+          command: { runtime: "bash", content: "echo org" },
+        }),
         headers: { "content-type": "application/json" },
       }),
       ctx({}),
@@ -422,7 +426,11 @@ describe("org-level workflow routes", () => {
     const res = await jobsPOST(
       userReq(editor.id, `http://x/api/jobs?orgId=${org.id}&projectId=${otherProject.id}`, {
         method: "POST",
-        body: JSON.stringify({ name: "WF", schedule: SCHEDULE, command: "echo hi" }),
+        body: JSON.stringify({
+          name: "WF",
+          schedule: SCHEDULE,
+          command: { runtime: "bash", content: "echo hi" },
+        }),
         headers: { "content-type": "application/json" },
       }),
       ctx({}),
@@ -441,7 +449,7 @@ describe("org-level workflow routes", () => {
         body: JSON.stringify({
           name: "OrgWF",
           schedule: SCHEDULE,
-          command: "echo org",
+          command: { runtime: "bash", content: "echo org" },
           docIds: [projDoc.id],
         }),
         headers: { "content-type": "application/json" },

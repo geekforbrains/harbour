@@ -108,8 +108,6 @@ There is **no** signup route.
 | POST / DELETE | `/api/jobs/:id/env-vars[/:envVarId]` | `withResourceAuth` job (editor) | Link / unlink a secret |
 | POST | `/api/jobs/:id/data` | `withAgentOrUser` (editor) | Link a database |
 | DELETE | `/api/jobs/:id/data/:dataId` | `withResourceAuth` job (editor) | Unlink a database |
-| GET / POST | `/api/jobs/:id/scripts` | `withResourceAuth` job (viewer / editor) | List / create the job's script files |
-| PUT / DELETE | `/api/jobs/:id/scripts/:scriptId` | `withResourceAuth` job (editor) | Update / delete a script file |
 
 `/api/jobs` is dual-tier like the shared-context lists: `GET` with `?projectId=`
 includes org-level jobs, and `POST` without a `projectId` (query or body)
@@ -118,15 +116,18 @@ are always project-level, and scope is fixed at creation. An org-level job may
 link only org-level docs / env vars / databases; the link routes (and create /
 update with `docIds` / `envVarIds`) return 400 otherwise.
 
-`/api/jobs/:id/scripts` manages the job's per-job script files (the `job_scripts`
-table). A script is `{ id, job_id, filename, content, executable (0|1), created_at,
-updated_at }`. `POST` takes `{ filename, content?, executable? }` (content defaults
-`""`, executable defaults `true`); `PUT` takes any of those, leaving omitted fields
-unchanged. `filename` must be a bare name — 1–128 of `[A-Za-z0-9._-]`, no slashes,
-not `.`/`..` — or the route returns 400. The item routes 404 (`Script not found`)
-when the script's `job_id` doesn't match `:id`, which blocks cross-job mutation.
-These files are delivered in the `/next` payload (`job.scripts` / `job.scripts_dir`)
-and materialized to disk by the runner — see [guide.md](../guide.md).
+A job's gates — `prerun` / `postrun` on an agent job, `command` on a workflow —
+are each a **gate**: `{ runtime, content }`, where `runtime` is one of `bash`,
+`python`, `node` (defaulting to `bash`) and `content` is the script body, stored
+verbatim (never trimmed, so shebangs and leading blank lines survive). `POST
+/api/agents/:id/jobs` takes `prerun?` / `postrun?` (and `postrunGates?`); `POST
+/api/jobs` takes `command` (or `workflow` — same gate, required). On `PUT
+/api/jobs/:id` each gate field is optional: omit it to leave the gate unchanged,
+pass `null` to clear it, or pass an object to set it. A malformed gate (missing
+or non-string `content`, an unknown `runtime`) is a 400. The gates are delivered
+in the `/next` payload (`job.prerun` / `job.postrun` / `job.command` /
+`job.scripts_dir`) and materialized to disk by the runner — see
+[guide.md](../guide.md).
 
 ## Runs
 

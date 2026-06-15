@@ -54,7 +54,7 @@ Harbour uses a single SQLite database:
 | Table | Purpose |
 |-------|---------|
 | agents | Agent configs (name, type, cli, model, thinking, api_key_hash) |
-| jobs | Recurring jobs (schedule, instructions, agent_id, workflow_command) |
+| jobs | Recurring jobs (schedule, instructions, agent_id, prerun/postrun/workflow runtime+script) |
 | runs | Job executions (status, timestamps, session_id) |
 | run_activity | Message log per run (agent/user/system messages) |
 | run_output | Streaming CLI output events per run |

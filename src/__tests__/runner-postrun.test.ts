@@ -33,8 +33,8 @@ describe("shouldRunPostrun", () => {
   it("never runs without a postrun command (zero tax)", () => {
     for (const gates of [false, true]) {
       for (const outcome of TERMINAL) {
+        // Production passes a { runtime, content } gate or null — never "".
         expect(shouldRunPostrun({ command: null, outcome, gates, agentRan: true })).toBe(false);
-        expect(shouldRunPostrun({ command: "", outcome, gates, agentRan: true })).toBe(false);
         expect(shouldRunPostrun({ command: undefined, outcome, gates, agentRan: true })).toBe(
           false,
         );
@@ -45,9 +45,14 @@ describe("shouldRunPostrun", () => {
   it("never runs when the agent turn did not execute (pure prerun-skip etc.)", () => {
     for (const gates of [false, true]) {
       for (const outcome of TERMINAL) {
-        expect(shouldRunPostrun({ command: "cleanup.sh", outcome, gates, agentRan: false })).toBe(
-          false,
-        );
+        expect(
+          shouldRunPostrun({
+            command: { runtime: "bash", content: "cleanup.sh" },
+            outcome,
+            gates,
+            agentRan: false,
+          }),
+        ).toBe(false);
       }
     }
   });
@@ -56,7 +61,12 @@ describe("shouldRunPostrun", () => {
     it("runs on ANY terminal outcome where the agent ran", () => {
       for (const outcome of TERMINAL) {
         expect(
-          shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true }),
+          shouldRunPostrun({
+            command: { runtime: "bash", content: "cleanup.sh" },
+            outcome,
+            gates: false,
+            agentRan: true,
+          }),
         ).toBe(true);
       }
     });
@@ -64,7 +74,12 @@ describe("shouldRunPostrun", () => {
     it("does NOT run on non-terminal / mid-run statuses", () => {
       for (const outcome of ["running", "waiting", "pending", "scheduled"]) {
         expect(
-          shouldRunPostrun({ command: "cleanup.sh", outcome, gates: false, agentRan: true }),
+          shouldRunPostrun({
+            command: { runtime: "bash", content: "cleanup.sh" },
+            outcome,
+            gates: false,
+            agentRan: true,
+          }),
         ).toBe(false);
       }
     });
@@ -73,14 +88,24 @@ describe("shouldRunPostrun", () => {
   describe("enforcing mode (gates on)", () => {
     it("runs after `done` only", () => {
       expect(
-        shouldRunPostrun({ command: "verify.sh", outcome: "done", gates: true, agentRan: true }),
+        shouldRunPostrun({
+          command: { runtime: "bash", content: "verify.sh" },
+          outcome: "done",
+          gates: true,
+          agentRan: true,
+        }),
       ).toBe(true);
     });
 
     it("does NOT run on any non-done terminal outcome", () => {
       for (const outcome of ["failed", "killed", "skipped"]) {
         expect(
-          shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true }),
+          shouldRunPostrun({
+            command: { runtime: "bash", content: "verify.sh" },
+            outcome,
+            gates: true,
+            agentRan: true,
+          }),
         ).toBe(false);
       }
     });
@@ -88,7 +113,12 @@ describe("shouldRunPostrun", () => {
     it("does NOT run on non-terminal statuses", () => {
       for (const outcome of ["running", "waiting", "pending"]) {
         expect(
-          shouldRunPostrun({ command: "verify.sh", outcome, gates: true, agentRan: true }),
+          shouldRunPostrun({
+            command: { runtime: "bash", content: "verify.sh" },
+            outcome,
+            gates: true,
+            agentRan: true,
+          }),
         ).toBe(false);
       }
     });
@@ -235,7 +265,11 @@ describe("runPostrun — kill during postrun (integration)", () => {
     it(`honors '${outcome}' when a kill lands mid-postrun (no illegal terminal -> killed)`, async () => {
       const readStatus = install(outcome, { killRequested: true });
       const resolved = await runPostrun({
-        job: { postrun: "sleep 1", postrun_gates: false },
+        job: {
+          postrun: { runtime: "bash", content: "sleep 1" },
+          postrun_gates: false,
+          scripts_dir: "postrun-test/job-leaf",
+        },
         outcome,
         agentRan: true,
         ...runner,
@@ -255,7 +289,11 @@ describe("runPostrun — kill during postrun (integration)", () => {
   it("treats a kill during a postrun on an already-killed run as an idempotent no-op", async () => {
     const readStatus = install("killed", { killRequested: true });
     const resolved = await runPostrun({
-      job: { postrun: "sleep 1", postrun_gates: false },
+      job: {
+        postrun: { runtime: "bash", content: "sleep 1" },
+        postrun_gates: false,
+        scripts_dir: "postrun-test/job-leaf",
+      },
       outcome: "killed",
       agentRan: true,
       ...runner,

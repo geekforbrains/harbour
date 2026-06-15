@@ -51,7 +51,6 @@ export const qk = {
     list: (scope?: Scope) => ["jobs", "list", scopeKey(scope)] as const,
     detail: (id: string) => ["jobs", "detail", id] as const,
     runs: (id: string) => ["jobs", "detail", id, "runs"] as const,
-    scripts: (id: string) => ["jobs", "detail", id, "scripts"] as const,
   },
 
   runs: {

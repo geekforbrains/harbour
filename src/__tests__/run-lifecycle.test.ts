@@ -75,7 +75,7 @@ function workflowSetup() {
   const wf = createWorkflow(org.id, project.id, {
     name: "Sync",
     schedule: '{"every":60}',
-    command: "echo sync",
+    workflow: { runtime: "bash", content: "echo sync" },
   })!;
   return { org, project, wf };
 }

@@ -10,7 +10,6 @@ export * from "./jobs";
 export * from "./orgs";
 export * from "./projects";
 export * from "./runs";
-export * from "./scripts";
 export * from "./set-password-tokens";
 export * from "./settings";
 export * from "./users";

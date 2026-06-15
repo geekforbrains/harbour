@@ -1,3 +1,5 @@
+import { DEFAULT_RUNTIME, type Gate, isRuntime, RUNTIMES } from "./runtimes";
+
 // Request parsing + input validation helpers shared by API route handlers.
 //
 // The convention: a handler validates its input and either succeeds or rejects
@@ -96,6 +98,47 @@ export function optionalStringArray(value: unknown, name: string): string[] | un
     badRequest(`${name} must be an array of strings`);
   }
   return value as string[];
+}
+
+/**
+ * Validate a job gate: `{ runtime?, content }`. `content` is required and must
+ * be a non-empty string (stored verbatim — never trimmed, so shebangs and
+ * leading blank lines survive). `runtime` is optional and defaults to
+ * {@link DEFAULT_RUNTIME}; when present it must be a supported runtime. Throws a
+ * 400 (via the auth wrapper) on anything malformed.
+ */
+export function parseGate(value: unknown, name: string): Gate {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    badRequest(`${name} must be an object with a runtime and content`);
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.content !== "string" || obj.content.trim() === "") {
+    badRequest(`${name}.content is required and must be a non-empty string`);
+  }
+  let runtime = DEFAULT_RUNTIME;
+  if (obj.runtime !== undefined && obj.runtime !== null) {
+    if (!isRuntime(obj.runtime)) {
+      badRequest(`${name}.runtime must be one of: ${RUNTIMES.join(", ")}`);
+    }
+    runtime = obj.runtime;
+  }
+  return { runtime, content: obj.content };
+}
+
+/** A required gate (missing/null → 400). */
+export function requireGate(value: unknown, name: string): Gate {
+  if (value === undefined || value === null) badRequest(`${name} is required`);
+  return parseGate(value, name);
+}
+
+/**
+ * An optional gate field. `undefined` → leave unchanged (`undefined`); `null` →
+ * clear the gate (`null`); any present value is validated by {@link parseGate}.
+ */
+export function optionalGate(value: unknown, name: string): Gate | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return parseGate(value, name);
 }
 
 /** Require a value drawn from a fixed set. */

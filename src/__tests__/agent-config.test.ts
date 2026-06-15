@@ -101,14 +101,14 @@ describe("/next payload carries live agent config", () => {
     const job = createWorkflow(org.id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(job.id, null)!;
     const payload = buildRunPayload(run.id)!;
     // No agent → no agent block. Workflow runs never spawn a CLI.
     expect(payload.agent).toBeUndefined();
     expect(payload.job.kind).toBe("workflow");
-    expect(payload.job.command).toBe("echo hi");
+    expect(payload.job.command).toEqual({ runtime: "bash", content: "echo hi" });
   });
 });
 

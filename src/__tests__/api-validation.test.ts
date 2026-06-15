@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 import { POST as databasesPOST } from "@/app/api/databases/route";
+import { PUT as jobPUT } from "@/app/api/jobs/[id]/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import {
   addMembership,
@@ -11,6 +12,8 @@ import {
   createProject,
   createSession,
   createUser,
+  createWorkflow,
+  getJobById,
 } from "@/lib/db/queries";
 import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
@@ -114,10 +117,60 @@ describe("POST /api/jobs (workflow) validation", () => {
     const req = userReq(
       editor.id,
       `http://localhost/api/jobs?orgId=${org.id}`,
-      JSON.stringify({ name: "W", schedule: '{"every":60}', command: "echo hi" }),
+      JSON.stringify({
+        name: "W",
+        schedule: '{"every":60}',
+        command: { runtime: "bash", content: "echo hi" },
+      }),
     );
     const res = await jobsPOST(req, ctx({}));
     expect(res.status).toBeLessThan(300);
+  });
+});
+
+describe("PUT /api/jobs/:id gate clearing", () => {
+  function putReq(userId: string, id: string, body: unknown): NextRequest {
+    const sessionId = createSession(userId);
+    const headers = new Headers();
+    headers.set("cookie", `harbour_session=${sessionId}`);
+    return new NextRequest(`http://localhost/api/jobs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      headers,
+    });
+  }
+
+  it("clears a gate when the alias key is sent as null (not a silent no-op)", async () => {
+    const { org, project, editor } = fixture();
+    const wf = createWorkflow(org.id, project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      workflow: { runtime: "node", content: "console.log(1)" },
+    })!;
+    // Sanity: the gate is stored.
+    expect(getJobById(wf.id).workflow_script).toBe("console.log(1)");
+
+    // command:null must clear it — the bug was `command ?? workflow` collapsing
+    // null to undefined and leaving the gate unchanged.
+    const res = await jobPUT(putReq(editor.id, wf.id, { command: null }), ctx({ id: wf.id }));
+    expect(res.status).toBeLessThan(300);
+    const after = getJobById(wf.id);
+    expect(after.workflow_script).toBeNull();
+    expect(after.workflow_runtime).toBeNull();
+  });
+
+  it("rejects a malformed gate with 400", async () => {
+    const { org, project, editor } = fixture();
+    const wf = createWorkflow(org.id, project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      workflow: { runtime: "bash", content: "echo hi" },
+    })!;
+    const res = await jobPUT(
+      putReq(editor.id, wf.id, { command: { runtime: "ruby", content: "x" } }),
+      ctx({ id: wf.id }),
+    );
+    expect(res.status).toBe(400);
   });
 });
 

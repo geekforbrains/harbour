@@ -5,11 +5,9 @@ import {
   CalendarClock,
   Cpu,
   Database,
-  FileCode,
   FileText,
   KeyRound,
   Pause,
-  Pencil,
   Pin,
   Play,
   Plus,
@@ -26,6 +24,7 @@ import { useApp } from "@/components/app/app-context";
 import { BackLink } from "@/components/app/back-link";
 import { PickerDialog, SelectedItems } from "@/components/app/create-dialog";
 import { EmptyState } from "@/components/app/empty-state";
+import { GateField } from "@/components/app/gate-field";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { OrgBadge } from "@/components/app/org-badge";
 import { PageLoading } from "@/components/app/page-header";
@@ -63,13 +62,7 @@ import {
   useJobRuns,
   useUpdateJob,
 } from "@/lib/hooks/use-jobs";
-import {
-  type JobScript,
-  useCreateJobScript,
-  useDeleteJobScript,
-  useJobScripts,
-  useUpdateJobScript,
-} from "@/lib/hooks/use-scripts";
+import { DEFAULT_RUNTIME, type Gate, isRuntime, RUNTIME_META } from "@/lib/runtimes";
 import { formatTimestamp, timeAgo } from "@/lib/time";
 
 type Job = {
@@ -85,10 +78,13 @@ type Job = {
   description: string | null;
   instructions: string | null;
   schedule: string;
-  prerun_command: string | null;
-  postrun_command: string | null;
+  prerun_runtime: string | null;
+  prerun_script: string | null;
+  postrun_runtime: string | null;
+  postrun_script: string | null;
   postrun_gates: number;
-  workflow_command: string | null;
+  workflow_runtime: string | null;
+  workflow_script: string | null;
   timeout_minutes: number;
   model: string | null;
   thinking: string | null;
@@ -101,6 +97,12 @@ type Job = {
   envVars: { id: string; name: string }[];
 };
 const INSTRUCTIONS_CHAR_LIMIT = 400;
+
+/** Rebuild a gate from a job's stored runtime+script columns, null when unset. */
+function toGate(runtime: string | null, script: string | null): Gate | null {
+  if (!script) return null;
+  return { runtime: isRuntime(runtime) ? runtime : DEFAULT_RUNTIME, content: script };
+}
 
 function InstructionsBlock({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -150,11 +152,6 @@ export default function JobDetailPage() {
   const deleteJob = useDeleteJob();
   const linkMutations = useJobLinkMutations(id);
 
-  const { data: scripts = [] } = useJobScripts(id);
-  const createScript = useCreateJobScript(id);
-  const updateScript = useUpdateJobScript(id);
-  const deleteScript = useDeleteJobScript(id);
-
   const specificRuns = Array.isArray(jobRunsData) ? jobRunsData : [];
 
   const [showEdit, setShowEdit] = useState(false);
@@ -164,8 +161,10 @@ export default function JobDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
-  const [editWorkflowCommand, setEditWorkflowCommand] = useState("");
-  const [editPostrunCommand, setEditPostrunCommand] = useState("");
+  // Gates: workflow command (workflow jobs), prerun + postrun (agent jobs).
+  const [editWorkflow, setEditWorkflow] = useState<Gate | null>(null);
+  const [editPrerun, setEditPrerun] = useState<Gate | null>(null);
+  const [editPostrun, setEditPostrun] = useState<Gate | null>(null);
   const [editPostrunGates, setEditPostrunGates] = useState(false);
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
@@ -175,70 +174,6 @@ export default function JobDetailPage() {
   const [editEnvVarIds, setEditEnvVarIds] = useState<string[]>([]);
   const [showEditDocPicker, setShowEditDocPicker] = useState(false);
   const [showEditEnvVarPicker, setShowEditEnvVarPicker] = useState(false);
-
-  // Script editor: null = closed, an empty draft = add, an existing script = edit.
-  const [scriptEditor, setScriptEditor] = useState<JobScript | null>(null);
-  const [scriptDraftFilename, setScriptDraftFilename] = useState("");
-  const [scriptDraftContent, setScriptDraftContent] = useState("");
-  const [scriptDraftExecutable, setScriptDraftExecutable] = useState(true);
-
-  function openAddScript() {
-    setScriptEditor({
-      id: "",
-      job_id: id,
-      filename: "",
-      content: "",
-      executable: 1,
-      created_at: 0,
-      updated_at: 0,
-    });
-    setScriptDraftFilename("");
-    setScriptDraftContent("");
-    setScriptDraftExecutable(true);
-  }
-
-  function openEditScript(script: JobScript) {
-    setScriptEditor(script);
-    setScriptDraftFilename(script.filename);
-    setScriptDraftContent(script.content);
-    setScriptDraftExecutable(!!script.executable);
-  }
-
-  async function handleSaveScript(e: React.FormEvent) {
-    e.preventDefault();
-    if (!scriptEditor) return;
-    try {
-      if (scriptEditor.id) {
-        await updateScript.mutateAsync({
-          scriptId: scriptEditor.id,
-          body: {
-            filename: scriptDraftFilename,
-            content: scriptDraftContent,
-            executable: scriptDraftExecutable,
-          },
-        });
-      } else {
-        await createScript.mutateAsync({
-          filename: scriptDraftFilename,
-          content: scriptDraftContent,
-          executable: scriptDraftExecutable,
-        });
-      }
-    } catch (err) {
-      alert(err instanceof ApiError ? err.errorMessage : "Failed to save script");
-      return;
-    }
-    setScriptEditor(null);
-  }
-
-  async function handleDeleteScript(script: JobScript) {
-    if (!confirm(`Delete "${script.filename}"?`)) return;
-    try {
-      await deleteScript.mutateAsync(script.id);
-    } catch {
-      alert("Failed to delete script");
-    }
-  }
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -251,9 +186,11 @@ export default function JobDetailPage() {
           description: editDesc,
           instructions: editingWorkflow ? "" : editInstructions,
           schedule: serializeSchedule(editSchedule),
-          command: editingWorkflow ? editWorkflowCommand : undefined,
-          prerunCommand: editingWorkflow ? undefined : editWorkflowCommand,
-          postrunCommand: editingWorkflow ? undefined : editPostrunCommand,
+          // Gates: workflow sends `command`; agents send prerun/postrun (null
+          // clears). command/prerun/postrun are { runtime, content } | null.
+          command: editingWorkflow ? editWorkflow : undefined,
+          prerun: editingWorkflow ? undefined : editPrerun,
+          postrun: editingWorkflow ? undefined : editPostrun,
           postrunGates: editingWorkflow ? undefined : editPostrunGates,
           timeoutMinutes: editTimeout,
           model: editingWorkflow ? "" : editModel || "",
@@ -331,6 +268,11 @@ export default function JobDetailPage() {
     return <div className="text-sm text-muted-foreground py-12 text-center">Job not found.</div>;
 
   const isWorkflow = job.kind === "workflow";
+  const prerunGate = toGate(job.prerun_runtime, job.prerun_script);
+  const postrunGate = toGate(job.postrun_runtime, job.postrun_script);
+  const workflowGate = toGate(job.workflow_runtime, job.workflow_script);
+  // The primary gate shown up top: a workflow's command, or an agent's prerun.
+  const primaryGate = isWorkflow ? workflowGate : prerunGate;
   const isOrgLevel = job.project_id === null;
   // Org-level workflows may link only org-level resources; the server 400s
   // anything project-scoped, so don't offer it.
@@ -386,10 +328,9 @@ export default function JobDetailPage() {
                 setEditDesc(job.description || "");
                 setEditInstructions(job.instructions || "");
                 setEditSchedule(parseSchedule(job.schedule));
-                setEditWorkflowCommand(
-                  job.kind === "workflow" ? job.workflow_command || "" : job.prerun_command || "",
-                );
-                setEditPostrunCommand(job.postrun_command || "");
+                setEditWorkflow(toGate(job.workflow_runtime, job.workflow_script));
+                setEditPrerun(toGate(job.prerun_runtime, job.prerun_script));
+                setEditPostrun(toGate(job.postrun_runtime, job.postrun_script));
                 setEditPostrunGates(!!job.postrun_gates);
                 setEditTimeout(job.timeout_minutes ?? 30);
                 setEditModel(job.model || "");
@@ -456,38 +397,38 @@ export default function JobDetailPage() {
 
       {!isWorkflow && job.instructions && <InstructionsBlock text={job.instructions} />}
 
-      {(isWorkflow ? job.workflow_command : job.prerun_command) && (
+      {primaryGate && (
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">
               {isWorkflow ? "Workflow" : "Prerun"}
             </p>
-            {isWorkflow ? (
-              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                Deterministic
-              </span>
-            ) : (
-              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                Agent Gate
-              </span>
-            )}
+            <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+              {isWorkflow ? "Deterministic" : "Agent Gate"}
+            </span>
+            <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground">
+              {RUNTIME_META[primaryGate.runtime].label}
+            </span>
           </div>
-          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">
-            {isWorkflow ? job.workflow_command : job.prerun_command}
+          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words">
+            {primaryGate.content}
           </code>
         </div>
       )}
 
-      {!isWorkflow && job.postrun_command && (
+      {!isWorkflow && postrunGate && (
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Postrun</p>
             <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
               {job.postrun_gates ? "Enforcing Gate" : "Informational"}
             </span>
+            <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground">
+              {RUNTIME_META[postrunGate.runtime].label}
+            </span>
           </div>
           <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words">
-            {job.postrun_command}
+            {postrunGate.content}
           </code>
         </div>
       )}
@@ -574,62 +515,6 @@ export default function JobDetailPage() {
                   onClick={() => handleUnlinkEnvVar(ev.id)}
                   className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
                   title="Remove"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Scripts */}
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <SectionHeader>Scripts</SectionHeader>
-          <Button variant="outline" size="sm" onClick={openAddScript}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> Add
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-2">
-          Files written into the run's working directory before the command runs. Reference each by
-          bare name (e.g. <code className="font-mono">./prerun.sh</code> or{" "}
-          <code className="font-mono">python3 check_health.py</code>).
-        </p>
-        {scripts.length === 0 ? (
-          <EmptyState>No scripts for this job.</EmptyState>
-        ) : (
-          <div className="space-y-2">
-            {scripts.map((s) => (
-              <div key={s.id} className="flex items-center gap-3 rounded-lg border p-3 group">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  <FileCode className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => openEditScript(s)}
-                  className="text-sm font-mono font-medium flex-1 min-w-0 truncate text-left hover:text-primary transition-colors"
-                >
-                  {s.filename}
-                </button>
-                {!s.executable && (
-                  <Badge variant="secondary" className="shrink-0">
-                    Not executable
-                  </Badge>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openEditScript(s)}
-                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Edit"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteScript(s)}
-                  className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Delete"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -807,29 +692,32 @@ export default function JobDetailPage() {
               <Label>Schedule</Label>
               <SchedulePicker schedule={editSchedule} onChange={setEditSchedule} />
             </div>
-            <div className="space-y-2">
-              <Label>{isWorkflow ? "Command" : "Prerun Command"}</Label>
-              <Input
-                value={editWorkflowCommand}
-                onChange={(e) => setEditWorkflowCommand(e.target.value)}
-                placeholder="e.g. python3 check_prs.py"
-                className="font-mono text-xs"
+            {isWorkflow ? (
+              <GateField
+                label="Command"
+                value={editWorkflow}
+                onChange={setEditWorkflow}
+                required
+                description="The script this workflow runs. Exit 0 = done, 77 = skip, other = fail."
               />
-              <p className="text-xs text-muted-foreground">
-                {isWorkflow
-                  ? "Exit 0 = done, 77 = skip, other = fail."
-                  : "Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."}
-              </p>
-            </div>
+            ) : (
+              <GateField
+                label="Prerun"
+                value={editPrerun}
+                onChange={setEditPrerun}
+                description="Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."
+              />
+            )}
             {!isWorkflow && (
               <div className="space-y-2">
-                <Label>Postrun Command</Label>
-                <Textarea
-                  value={editPostrunCommand}
-                  onChange={(e) => setEditPostrunCommand(e.target.value)}
-                  placeholder="e.g. bash verify.sh"
-                  rows={2}
-                  className="font-mono text-xs max-h-[20vh]"
+                <GateField
+                  label="Postrun"
+                  value={editPostrun}
+                  onChange={(g) => {
+                    setEditPostrun(g);
+                    if (!g) setEditPostrunGates(false);
+                  }}
+                  description="Optional hook after the run finishes. Receives the run payload on stdin."
                 />
                 <div className="flex items-center gap-2">
                   <button
@@ -837,7 +725,7 @@ export default function JobDetailPage() {
                     role="switch"
                     aria-checked={editPostrunGates}
                     onClick={() => setEditPostrunGates((v) => !v)}
-                    disabled={!editPostrunCommand}
+                    disabled={!editPostrun}
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50 ${editPostrunGates ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
                   >
                     {editPostrunGates ? "Enforcing" : "Informational"}
@@ -848,9 +736,6 @@ export default function JobDetailPage() {
                       : "Runs on any outcome; never changes status."}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Optional hook after the run finishes. Receives the run payload on stdin.
-                </p>
               </div>
             )}
             <div className="space-y-2">
@@ -936,63 +821,6 @@ export default function JobDetailPage() {
         icon={KeyRound}
         nameClass="font-mono"
       />
-
-      {/* Script Editor Dialog */}
-      <Dialog open={!!scriptEditor} onOpenChange={(open) => !open && setScriptEditor(null)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overflow-x-hidden">
-          <DialogHeader>
-            <DialogTitle>{scriptEditor?.id ? "Edit Script" : "Add Script"}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSaveScript} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Filename</Label>
-              <Input
-                value={scriptDraftFilename}
-                onChange={(e) => setScriptDraftFilename(e.target.value)}
-                placeholder="e.g. prerun.sh"
-                className="font-mono text-xs"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                Bare filename only — no slashes. Reference it from the command by name (e.g.{" "}
-                <code className="font-mono">./prerun.sh</code>).
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Content</Label>
-              <Textarea
-                value={scriptDraftContent}
-                onChange={(e) => setScriptDraftContent(e.target.value)}
-                rows={12}
-                className="font-mono text-xs max-h-[40vh]"
-                placeholder="#!/usr/bin/env bash&#10;set -euo pipefail"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={scriptDraftExecutable}
-                onClick={() => setScriptDraftExecutable((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${scriptDraftExecutable ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-              >
-                {scriptDraftExecutable ? "Executable" : "Not executable"}
-              </button>
-              <span className="text-xs text-muted-foreground">
-                {scriptDraftExecutable
-                  ? "Written with the +x bit so it can be run directly."
-                  : "Written without the +x bit."}
-              </span>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setScriptEditor(null)}>
-                Cancel
-              </Button>
-              <Button type="submit">Save</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {/* Trigger Dialog */}
       <TriggerDialog

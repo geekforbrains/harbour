@@ -169,7 +169,7 @@ Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac
 Two operational notes:
 
 - **Reachability.** The remote machine has to reach the harbour URL embedded in the blob. Tailscale or any private mesh is the common pattern.
-- **Prerun scripts are local to the runner.** A prerun command is a shell command that the agent runner executes before the LLM; the runner only knows about its own filesystem. Scripts under `~/.harbour/workflows/` need to exist on the remote machine, not on the harbour server. See [Workflows](workflows.md).
+- **Gate runtimes must be installed on the runner.** A prerun/postrun gate is a `{ runtime, content }` script stored in Harbour; the agent runner materializes its body and runs it via the runtime's interpreter before/after the LLM. Nothing is hand-placed — but the runtime the gate names (`bash`, `python3`, or `node`) must be installed on the runner's machine. See [Workflows](workflows.md).
 
 Deterministic workflows use separate workflow runners and are not polled by agent runners.
 

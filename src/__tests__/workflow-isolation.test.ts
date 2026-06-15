@@ -95,7 +95,7 @@ function fixture() {
   const wfJob = createWorkflow(org.id, project.id, {
     name: "WF",
     schedule: '{"every":60}',
-    command: "echo hi",
+    workflow: { runtime: "bash", content: "echo hi" },
   })!;
   const wfRun = createRun(wfJob.id, null)!;
   const runner = createWorkflowRunner(org.id, "Server")!;
@@ -139,7 +139,7 @@ describe("workflow run status isolation", () => {
       const job = createWorkflow(project.org_id, project.id, {
         name: `WF-${status}`,
         schedule: '{"every":60}',
-        command: "echo hi",
+        workflow: { runtime: "bash", content: "echo hi" },
       })!;
       const run = createRun(job.id, null)!;
       const res = await runStatusPUT(

@@ -18,7 +18,7 @@ Jobs come in two flavors:
 - **Agent jobs** — `agent_id` is set. Always project-level. The owning agent picks them up via `/api/agents/:id/next`.
 - **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Project-level or org-level (`project_id IS NULL`). Workflow runners pick these up via `/api/workflows/next`. See [Workflows](workflows.md).
 
-Agent jobs can also define a `prerun_command`, a gate that runs before the LLM and can skip the run.
+Agent jobs can also define a prerun gate — a `{ runtime, content }` script (bash/python/node) that runs before the LLM and can skip the run.
 
 ## Triggers
 

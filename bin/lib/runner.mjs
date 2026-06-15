@@ -346,60 +346,71 @@ function buildPrompt(payload, apiKey, isResume) {
 }
 
 /**
- * Resolve the absolute cwd a job's command runs from, given its DB-delivered
- * scripts metadata. Pure (no I/O) so the path logic is unit-testable.
- *
- *   - has scripts + a server-computed scripts_dir → the per-job directory
- *     `$HARBOUR_HOME/workflows/<scripts_dir>` the scripts get materialized into.
- *   - otherwise → the legacy flat `$HARBOUR_HOME/workflows` cwd (a job with no
- *     scripts behaves exactly as it did before job_scripts existed).
- *
- * scripts_dir is a RELATIVE path computed server-side (getJobScriptsDir) from
- * already-validated slugs, so the runner never derives paths from untrusted
- * data. harbourHome defaults to $HARBOUR_HOME (then ~/.harbour).
+ * How each gate runtime is executed and the extension of its materialized file.
+ * Mirrors src/lib/runtimes.ts — the web side validates which runtimes are
+ * allowed; this is how the runner actually runs one: `bash`→`bash file`,
+ * `python`→`python3 file`, `node`→`node file`.
+ */
+export const RUNTIME_EXEC = { bash: "bash", python: "python3", node: "node" };
+export const RUNTIME_EXT = { bash: "sh", python: "py", node: "js" };
+const DEFAULT_RUNTIME = "bash";
+
+/**
+ * Absolute per-job directory a gate script runs from:
+ * `$HARBOUR_HOME/workflows/<scriptsDir>`. Pure (no I/O) so the path logic is
+ * unit-testable. scriptsDir is a RELATIVE path computed server-side
+ * (getJobScriptsDir) from already-validated slugs, so the runner never derives
+ * paths from untrusted data. harbourHome defaults to $HARBOUR_HOME (then
+ * ~/.harbour). Throws when scriptsDir is missing — a gate can't run without a
+ * server-assigned home, and only a malformed/unknown job lacks one.
  *
  * @param {object} args
  * @param {string} [args.harbourHome] - HARBOUR_HOME root (defaults to env/~)
  * @param {string|null} [args.scriptsDir] - payload.job.scripts_dir (relative)
- * @param {boolean} args.hasScripts - payload.job.scripts.length > 0
  * @returns {string} absolute cwd
  */
-export function resolveScriptsCwd({
+export function resolveJobDir({
   harbourHome = process.env.HARBOUR_HOME || join(homedir(), ".harbour"),
   scriptsDir,
-  hasScripts,
 } = {}) {
-  const workflows = join(harbourHome, "workflows");
-  if (hasScripts && scriptsDir) return join(workflows, scriptsDir);
-  return workflows;
-}
-
-/**
- * Materialize a job's DB-delivered scripts into `cwd` right before its command
- * runs. mkdir -p's cwd, then writes each `{ filename, content, executable }`
- * file with mode 0o700 (executable) or 0o600 (data). Filenames are already
- * server-validated to be bare names with no path separators
- * (validateScriptFilename); we still `join(cwd, filename)` so the write is
- * scoped to the job dir. A no-op when there are no scripts (cwd is the legacy
- * flat workflows dir in that case).
- *
- * @param {string} cwd - absolute per-job dir (from resolveScriptsCwd)
- * @param {{ filename: string, content: string, executable: boolean }[]} scripts
- */
-export function materializeScripts(cwd, scripts) {
-  mkdirSync(cwd, { recursive: true });
-  for (const s of scripts || []) {
-    const path = join(cwd, s.filename);
-    writeFileSync(path, s.content ?? "");
-    chmodSync(path, s.executable ? 0o700 : 0o600);
+  if (!scriptsDir) {
+    throw new Error("Cannot run a gate script without a server-assigned scripts_dir");
   }
+  return join(harbourHome, "workflows", scriptsDir);
 }
 
 /**
- * Run a workflow command. Pipes the full payload JSON to stdin.
- * Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
+ * Materialize a gate's body into `cwd` and return how to run it. mkdir -p's cwd,
+ * writes `<role>.<ext>` (ext from the runtime) with mode 0o700, and returns the
+ * spawn argv pieces — e.g. a `python` prerun yields
+ * `{ binary: "python3", args: ["prerun.py"] }`, run from cwd. An unknown runtime
+ * falls back to bash so a stale payload can never crash the runner. The only I/O
+ * is the mkdir + single file write inside the job's own dir.
+ *
+ * @param {string} cwd - absolute per-job dir (from resolveJobDir)
+ * @param {{ runtime: string, content: string }} gate
+ * @param {string} role - "prerun" | "postrun" | "workflow" (the file's base name)
+ * @returns {{ binary: string, args: string[], file: string }}
+ */
+export function materializeGate(cwd, gate, role) {
+  const runtime = gate && RUNTIME_EXEC[gate.runtime] ? gate.runtime : DEFAULT_RUNTIME;
+  const file = `${role}.${RUNTIME_EXT[runtime]}`;
+  mkdirSync(cwd, { recursive: true });
+  const path = join(cwd, file);
+  writeFileSync(path, gate?.content ?? "");
+  chmodSync(path, 0o700);
+  return { binary: RUNTIME_EXEC[runtime], args: [file], file };
+}
+
+/**
+ * Spawn a materialized gate/workflow script. Pipes the full payload JSON to
+ * stdin. Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
  * Returns { code, stdout, stderr }.
  *
+ * @param {string[]} argv - [binary, ...args] from materializeGate, e.g.
+ *   `["python3", "prerun.py"]`; run from `cwd` where the file was written.
+ * @param {string} payloadJson - run payload + activity, piped to stdin
+ * @param {string} cwd - the job's materialized scripts dir
  * @param {object} opts
  * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
@@ -408,10 +419,10 @@ export function materializeScripts(cwd, scripts) {
  *   child's environment (job-linked secrets + HARBOUR_* run credentials), so a
  *   script can expand `$VAR` and post live progress updates to its run.
  */
-export function runWorkflow(command, payloadJson, cwd, opts = {}) {
+export function runWorkflow(argv, payloadJson, cwd, opts = {}) {
   const { timeoutMs = 30_000, signal, extraEnv, killGraceMs = 3000 } = opts;
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-c", command], {
+    const child = spawn(argv[0], argv.slice(1), {
       cwd,
       env: { ...process.env, ...(extraEnv || {}) },
       stdio: ["pipe", "pipe", "pipe"],
@@ -498,44 +509,41 @@ export function runWorkflow(command, payloadJson, cwd, opts = {}) {
  * Extracted so prerun and postrun share one implementation rather than two
  * copies of the kill-poll/timeout dance.
  *
- * The gate runs from the job's per-job scripts dir (resolveScriptsCwd) with its
- * DB-delivered scripts materialized there first (materializeScripts), so a
- * command like `./prerun.sh` finds the file. A job with no scripts falls back
- * to the legacy flat `$HARBOUR_HOME/workflows` cwd. Both gates of one job share
- * the same scripts_dir, so postrun sees every script prerun does.
+ * The gate's body is materialized into the job's per-job scripts dir
+ * (resolveJobDir + materializeGate) and run there via its runtime's interpreter,
+ * so `prerun.py` / `workflow.sh` sit beside any sibling gate. Both gates of one
+ * job share the same scripts_dir, so postrun runs from the same place prerun did.
  *
  * @param {object} args
- * @param {string} args.command       - the shell command to run
+ * @param {{ runtime: string, content: string }} args.gate - the gate to run
+ * @param {string} args.role          - "prerun" | "postrun" (the file's base name)
+ * @param {string|null} args.scriptsDir - payload.job.scripts_dir (relative)
  * @param {string} args.payloadJson   - run payload + activity, piped to stdin
  * @param {string} args.url           - harbour base url (for kill polling)
  * @param {string} args.apiKey
  * @param {string} args.runId
  * @param {string} args.agentName     - for log lines
  * @param {string} args.label         - "Prerun" | "Postrun" (log prefix)
- * @param {{ filename: string, content: string, executable: boolean }[]} [args.scripts]
- *   - payload.job.scripts (DB-delivered files to materialize)
- * @param {string|null} [args.scriptsDir] - payload.job.scripts_dir (relative)
  * @param {number} [args.timeoutMs]   - gate timeout (default 30s)
  * @param {number} [args.killPollIntervalMs]
  * @param {Record<string,string>} [args.extraEnv]
  */
 async function runGateCommand({
-  command,
+  gate,
+  role,
+  scriptsDir,
   payloadJson,
   url,
   apiKey,
   runId,
   agentName,
   label,
-  scripts,
-  scriptsDir,
   timeoutMs = 30_000,
   killPollIntervalMs = KILL_POLL_INTERVAL_MS,
   extraEnv,
 }) {
-  const scriptList = scripts || [];
-  const dir = resolveScriptsCwd({ scriptsDir, hasScripts: scriptList.length > 0 });
-  materializeScripts(dir, scriptList);
+  const dir = resolveJobDir({ scriptsDir });
+  const { binary, args } = materializeGate(dir, gate, role);
 
   const killController = new AbortController();
   let killed = false;
@@ -554,7 +562,7 @@ async function runGateCommand({
   }, killPollIntervalMs);
 
   try {
-    const wfResult = await runWorkflow(command, payloadJson, dir, {
+    const wfResult = await runWorkflow([binary, ...args], payloadJson, dir, {
       timeoutMs,
       signal: killController.signal,
       extraEnv,
@@ -619,7 +627,7 @@ const POSTRUN_INFORMATIONAL_OUTCOMES = Object.freeze(["done", "failed", "killed"
  * is unit-testable apart from the CLI/shell plumbing.
  *
  * @param {object} args
- * @param {string|null|undefined} args.command - the job's postrun_command
+ * @param {{runtime: string, content: string}|null|undefined} args.command - the job's postrun gate
  * @param {string} args.outcome - the run's finalized terminal status
  * @param {boolean} args.gates - postrun_gates flag (true = enforcing)
  * @param {boolean} args.agentRan - did the agent work turn actually execute?
@@ -958,15 +966,15 @@ async function processNextRun(runner) {
   if (!isResume && payload.job?.prerun) {
     try {
       const wfResult = await runGateCommand({
-        command: payload.job.prerun,
+        gate: payload.job.prerun,
+        role: "prerun",
+        scriptsDir: payload.job.scripts_dir,
         payloadJson: JSON.stringify(payload),
         url,
         apiKey,
         runId,
         agentName,
         label: "Prerun",
-        scripts: payload.job.scripts,
-        scriptsDir: payload.job.scripts_dir,
       });
 
       if (wfResult.killed) {
@@ -1427,10 +1435,10 @@ export async function runPostrun({
   payloadJson,
   killPollIntervalMs,
 }) {
-  const command = job?.postrun;
+  const gate = job?.postrun;
   const gates = !!job?.postrun_gates;
 
-  if (!shouldRunPostrun({ command, outcome, gates, agentRan })) return outcome;
+  if (!shouldRunPostrun({ command: gate, outcome, gates, agentRan })) return outcome;
 
   const mode = gates ? "enforcing" : "informational";
   console.log(`  [${agentName}] Postrun (${mode}) — running for run ${runId} [${outcome}]`);
@@ -1438,15 +1446,15 @@ export async function runPostrun({
   let wfResult;
   try {
     wfResult = await runGateCommand({
-      command,
+      gate,
+      role: "postrun",
+      scriptsDir: job?.scripts_dir,
       payloadJson,
       url,
       apiKey,
       runId,
       agentName,
       label: "Postrun",
-      scripts: job?.scripts,
-      scriptsDir: job?.scripts_dir,
       extraEnv: env,
       killPollIntervalMs,
     });
@@ -1616,9 +1624,9 @@ export async function processNextWorkflow(runner, opts = {}) {
   const runId = payload.run.id;
   console.log(`  [${name}] Starting workflow run ${runId} (${payload.job?.name || "unnamed"})`);
 
-  const command = payload.job?.command || payload.job?.workflow;
-  if (!command) {
-    console.error(`  [${name}] No workflow command — failing`);
+  const gate = payload.job?.command || payload.job?.workflow;
+  if (!gate?.content) {
+    console.error(`  [${name}] No workflow script — failing`);
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch {
@@ -1627,14 +1635,26 @@ export async function processNextWorkflow(runner, opts = {}) {
     return { outcome: "failed" };
   }
 
-  // Materialize the job's DB-delivered scripts into its per-job dir and run from
-  // there; a job with no scripts falls back to the legacy flat workflows cwd.
-  const workflowScripts = payload.job?.scripts || [];
-  const workflowDir = resolveScriptsCwd({
-    scriptsDir: payload.job?.scripts_dir,
-    hasScripts: workflowScripts.length > 0,
-  });
-  materializeScripts(workflowDir, workflowScripts);
+  // Materialize the workflow gate into its per-job dir and run it there via the
+  // runtime's interpreter (bash/python3/node). A malformed/unknown job has no
+  // scripts_dir, so resolveJobDir throws — fail the run rather than letting the
+  // throw escape and leave it dangling 'running' (mirrors the prerun/postrun
+  // guards, which catch the same throw inside their gate runners).
+  let workflowDir;
+  let binary;
+  let args;
+  try {
+    workflowDir = resolveJobDir({ scriptsDir: payload.job?.scripts_dir });
+    ({ binary, args } = materializeGate(workflowDir, gate, "workflow"));
+  } catch (err) {
+    console.error(`  [${name}] Cannot stage workflow script — failing: ${err.message}`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch {
+      /* best effort */
+    }
+    return { outcome: "failed" };
+  }
 
   const workflowTimeoutMs = (payload.job.timeout_minutes || 30) * 60 * 1000;
 
@@ -1670,7 +1690,7 @@ export async function processNextWorkflow(runner, opts = {}) {
   };
 
   try {
-    const wfResult = await runWorkflow(command, JSON.stringify(payload), workflowDir, {
+    const wfResult = await runWorkflow([binary, ...args], JSON.stringify(payload), workflowDir, {
       timeoutMs: workflowTimeoutMs,
       signal: killController.signal,
       extraEnv,

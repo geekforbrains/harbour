@@ -174,10 +174,16 @@ export function initializeSchema(db: Database.Database) {
       description TEXT,
       instructions TEXT,
       schedule TEXT NOT NULL,
-      prerun_command TEXT,                  -- agent job gate: exit 0 continues, 77 skips, other fails
-      postrun_command TEXT,                 -- post-agent hook (#29): runs after status finalization
+      -- Gate scripts. Each gate is a gist — a runtime plus a body the runner
+      -- materializes to a per-job file and runs via the runtime's interpreter
+      -- (bash/python/node). The *_runtime is NULL exactly when its *_script is.
+      prerun_runtime TEXT CHECK(prerun_runtime IS NULL OR prerun_runtime IN ('bash','python','node')),
+      prerun_script TEXT,                   -- agent job gate: exit 0 continues, 77 skips, other fails
+      postrun_runtime TEXT CHECK(postrun_runtime IS NULL OR postrun_runtime IN ('bash','python','node')),
+      postrun_script TEXT,                  -- post-agent hook (#29): runs after status finalization
       postrun_gates INTEGER NOT NULL DEFAULT 0, -- 0 = informational (never changes status), 1 = enforcing (nonzero overrides done->failed)
-      workflow_command TEXT,                -- workflow job command: no agent/LLM involved
+      workflow_runtime TEXT CHECK(workflow_runtime IS NULL OR workflow_runtime IN ('bash','python','node')),
+      workflow_script TEXT,                 -- workflow job command: no agent/LLM involved
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       model TEXT,
       thinking TEXT,
@@ -337,20 +343,6 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, database_id)
     );
 
-    -- ── Per-job script files (content lives in SQLite, materialized by the
-    --    runner into the job's scripts_dir before the command runs) ─────────
-
-    CREATE TABLE IF NOT EXISTS job_scripts (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-      filename TEXT NOT NULL,
-      content TEXT NOT NULL DEFAULT '',
-      executable INTEGER NOT NULL DEFAULT 1,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(job_id, filename)
-    );
-
     -- ── Instance settings (true instance-global KV only) ─────────────────
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -410,7 +402,6 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(kind, agent_id, active, next_run_at);
-    CREATE INDEX IF NOT EXISTS idx_job_scripts_job ON job_scripts(job_id);
 
     CREATE INDEX IF NOT EXISTS idx_runs_org ON runs(org_id);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);

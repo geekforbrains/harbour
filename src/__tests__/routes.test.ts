@@ -267,7 +267,7 @@ describe("cross-org isolation (negative tests)", () => {
     const wfJobId = createWorkflow(other.org.id, other.project.id, {
       name: "wf",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!.id;
     db.prepare(`UPDATE jobs SET next_run_at = 1 WHERE id = ?`).run(wfJobId);
 
@@ -418,14 +418,18 @@ describe("job creation: workflows vs agent prerun gates", () => {
     const { org, project, editor } = fixture();
     const req = userReq(editor.id, `http://x/api/jobs?orgId=${org.id}&projectId=${project.id}`, {
       method: "POST",
-      body: JSON.stringify({ name: "X", schedule: '{"every":60}', command: "echo hi" }),
+      body: JSON.stringify({
+        name: "X",
+        schedule: '{"every":60}',
+        command: { runtime: "bash", content: "echo hi" },
+      }),
       headers: { "content-type": "application/json" },
     });
     const res = await jobsPOST(req, ctx({}));
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.kind).toBe("workflow");
-    expect(body.workflow_command).toBe("echo hi");
+    expect(body.workflow_script).toBe("echo hi");
   });
 
   it("POST /api/jobs rejects an agentId (agent jobs use the agent endpoint)", async () => {
@@ -435,7 +439,7 @@ describe("job creation: workflows vs agent prerun gates", () => {
       body: JSON.stringify({
         name: "X",
         schedule: '{"every":60}',
-        command: "echo hi",
+        command: { runtime: "bash", content: "echo hi" },
         agentId: agent.id,
       }),
       headers: { "content-type": "application/json" },
@@ -451,7 +455,7 @@ describe("job creation: workflows vs agent prerun gates", () => {
       body: JSON.stringify({
         name: "Combined",
         schedule: '{"every":60}',
-        prerunCommand: "exit 77",
+        prerun: { runtime: "bash", content: "exit 77" },
       }),
       headers: { "content-type": "application/json" },
     });
@@ -460,7 +464,7 @@ describe("job creation: workflows vs agent prerun gates", () => {
     const job = await res.json();
     expect(job.agent_id).toBe(agent.id);
     expect(job.kind).toBe("agent");
-    expect(job.prerun_command).toBe("exit 77");
+    expect(job.prerun_script).toBe("exit 77");
   });
 });
 
@@ -472,7 +476,7 @@ describe("workflow run reporting", () => {
     const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(wfJob.id, null)!;
     const runner = createWorkflowRunner(project.org_id, "Server")!;
@@ -503,7 +507,7 @@ describe("workflow run reporting", () => {
     const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(wfJob.id, null)!;
     const putReq = agentReq(agent.apiKey, "http://x/", {
@@ -520,7 +524,7 @@ describe("workflow run reporting", () => {
     const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
-      command: "echo hi",
+      workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(wfJob.id, null)!;
     const other = otherOrgFixture();

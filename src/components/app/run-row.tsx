@@ -24,8 +24,8 @@ export type RunRowData = {
   job_active?: number;
   agent_name?: string | null;
   agent_color?: string | null;
-  job_prerun_command?: string | null;
-  job_workflow_command?: string | null;
+  job_prerun_script?: string | null;
+  job_workflow_script?: string | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;

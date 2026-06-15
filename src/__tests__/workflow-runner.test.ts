@@ -38,7 +38,7 @@ describe("workflowOutcome", () => {
 describe("runWorkflow kill + stdin robustness", () => {
   it("force-kills a child that traps/ignores SIGTERM (SIGKILL escalation)", async () => {
     const ac = new AbortController();
-    const p = runWorkflow("trap '' TERM; sleep 5; exit 0", "{}", process.cwd(), {
+    const p = runWorkflow(["bash", "-c", "trap '' TERM; sleep 5; exit 0"], "{}", process.cwd(), {
       signal: ac.signal,
       killGraceMs: 200,
     });
@@ -53,7 +53,7 @@ describe("runWorkflow kill + stdin robustness", () => {
 
   it("resolves cleanly when the command never reads stdin (no unhandled EPIPE)", async () => {
     const bigPayload = JSON.stringify({ blob: "x".repeat(500_000) });
-    const res = await runWorkflow("true", bigPayload, process.cwd(), {});
+    const res = await runWorkflow(["bash", "-c", "true"], bigPayload, process.cwd(), {});
     expect(res.code).toBe(0);
   });
 });
@@ -107,9 +107,14 @@ describe("processNextWorkflow orchestration", () => {
     vi.stubGlobal("fetch", fetchMock);
   }
 
-  const payloadFor = (command: string) => ({
+  const payloadFor = (content: string) => ({
     run: { id: "wf1" },
-    job: { name: "t", command, timeout_minutes: 1 },
+    job: {
+      name: "t",
+      command: { runtime: "bash", content },
+      scripts_dir: "org/proj/job",
+      timeout_minutes: 1,
+    },
   });
 
   it("exit 0 -> done", async () => {

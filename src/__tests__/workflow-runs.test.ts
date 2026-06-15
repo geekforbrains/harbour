@@ -52,7 +52,7 @@ function workflowJob(active = true) {
   const wf = createWorkflow(org.id, project.id, {
     name: "Sync",
     schedule: '{"every":60}',
-    command: "echo sync",
+    workflow: { runtime: "bash", content: "echo sync" },
     active,
   })!;
   return { org, project, wf };
@@ -81,7 +81,7 @@ describe("getNextWorkflowRun: recurring workflow job materialization", () => {
     const payload = getNextWorkflowRun(org.id)!;
     expect(payload).toBeTruthy();
     expect(payload.job.kind).toBe("workflow");
-    expect(payload.job.command).toBe("echo sync");
+    expect(payload.job.command).toEqual({ runtime: "bash", content: "echo sync" });
 
     // A single run was materialized and claimed as running.
     const runs = runsForJob(wf.id);
@@ -193,7 +193,7 @@ describe("buildRunPayload: workflow run shape", () => {
     const wf = createWorkflow(org.id, project.id, {
       name: "Sync",
       schedule: '{"every":60}',
-      command: "echo sync",
+      workflow: { runtime: "bash", content: "echo sync" },
       docIds: [doc.id],
       envVarIds: [env.id],
     })!;
@@ -207,8 +207,8 @@ describe("buildRunPayload: workflow run shape", () => {
 
     // Workflow identity + command
     expect(payload.job.kind).toBe("workflow");
-    expect(payload.job.command).toBe("echo sync");
-    expect(payload.job.workflow).toBe("echo sync");
+    expect(payload.job.command).toEqual({ runtime: "bash", content: "echo sync" });
+    expect(payload.job.workflow).toEqual({ runtime: "bash", content: "echo sync" });
 
     // No agent block, and no agent-only title preamble injected into instructions
     expect(payload.agent).toBeUndefined();

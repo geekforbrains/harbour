@@ -117,7 +117,7 @@ The split is straightforward but worth being explicit about.
 - The runner process itself.
 - The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever you picked.
 - Working directories at `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
-- **Prerun scripts.** If a job uses a prerun command (a shell command that runs as a gate before the LLM), the script must exist at `~/.harbour/workflows/` on the **remote**, not on the harbour server. The runner cd's into that directory and runs the command there. Recommendation: keep `~/.harbour/workflows/` in a git repo and sync it across machines like any other dotfile.
+- **Gate runtimes.** Prerun/postrun gate scripts are `{ runtime, content }` gists stored in Harbour; the runner materializes each body into `~/.harbour/workflows/<scripts_dir>` from the `/next` payload and runs it there — nothing to hand-place or sync. You only need the gate's **runtime** installed on the remote: `bash`, `python3`, or `node`, depending on which the gate uses.
 - Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the `/next` payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
 
 **On the harbour server:**

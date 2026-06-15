@@ -32,7 +32,7 @@ type Job = {
   waiting_runs: number;
   pending_runs: number;
   last_run_at: number | null;
-  prerun_command: string | null;
+  prerun_script: string | null;
 };
 
 export default function JobsPage() {
@@ -126,7 +126,7 @@ export default function JobsPage() {
                     <span className="flex items-center gap-1">
                       <Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}
                     </span>
-                    {job.prerun_command && (
+                    {job.prerun_script && (
                       <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>
                     )}
                     {(job.total_runs > 0 || job.skipped_runs > 0) && (

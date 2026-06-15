@@ -7,6 +7,7 @@ import {
   optionalString,
   optionalStringArray,
   readJson,
+  requireGate,
   requireNonEmptyString,
 } from "@/lib/http";
 import { normalizeSchedule } from "@/lib/schedule";
@@ -32,14 +33,15 @@ export const POST = withOrgAuth(
         { status: 400 },
       );
     }
-    if (!body.name || !body.schedule || !body.command) {
+    if (!body.name || !body.schedule || !(body.command ?? body.workflow)) {
       return NextResponse.json(
         { error: "name, schedule, and command are required" },
         { status: 400 },
       );
     }
     const name = requireNonEmptyString(body.name, "name");
-    const command = requireNonEmptyString(body.command, "command");
+    // The workflow command is a gate: { runtime, content }. Accept either key.
+    const workflow = requireGate(body.command ?? body.workflow, "command");
     const description = optionalString(body.description, "description");
     const docIds = optionalStringArray(body.docIds, "docIds");
     const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
@@ -71,7 +73,7 @@ export const POST = withOrgAuth(
         name,
         description,
         schedule: normalized,
-        command,
+        workflow,
         timeoutMinutes,
         docIds,
         envVarIds,

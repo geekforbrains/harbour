@@ -10,7 +10,7 @@ Key concepts:
 - **Orgs** — top-level tenants. Every project belongs to an org; resources never cross org lines.
 - **Projects** — containers inside an org. Every agent lives in exactly one project. Docs, databases, env vars — and workflow jobs — are either project-level or org-level (shared across the org's projects); agent jobs are always project-level.
 - **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
-- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun commands. Workflow jobs run shell commands with no agent or LLM.
+- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into runs automatically.
 - **Databases** — SQLite tables agents create and manage, injected into runs.
@@ -152,7 +152,18 @@ Content-Type: application/json
 
 Only `name` and `schedule` are required — `instructions` is optional. `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"` (full rules under **Schedule Format** below).
 
-Optional fields: `instructions`, `prerunCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrunCommand` (shell command run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level, validated against the agent's `cli` — same per-CLI values as agent create), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `instructions`, `prerun` (a **gate** run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrun` (a gate run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level, validated against the agent's `cli` — same per-CLI values as agent create), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`. The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+
+A gate is an object `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }` — the runtime selects the interpreter (`bash`, `python3`, or `node`) and `content` is the full script source, stored verbatim. `runtime` is optional and defaults to `"bash"`; `content` is required and non-empty (else 400). The runner materializes each gate's body to its own file and executes it — there are no separate script files or bare-filename references.
+
+```json
+{
+  "name": "Triage Issues",
+  "instructions": "Triage new GitHub issues...",
+  "schedule": "{\"every\":60}",
+  "prerun": { "runtime": "python", "content": "import sys\n# exit 77 to skip when there's no work\nsys.exit(77)\n" }
+}
+```
 
 ### Create a Workflow (No Agent)
 ```
@@ -163,11 +174,11 @@ Content-Type: application/json
   "name": "Health Check",
   "description": "Check API health every hour",
   "schedule": "{\"every\":60}",
-  "command": "python3 check_health.py"
+  "command": { "runtime": "python", "content": "import urllib.request\nurllib.request.urlopen('https://example.com/health')\n" }
 }
 ```
 
-`name`, `schedule`, and `command` are all required. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
+`name`, `schedule`, and `command` are all required. `command` is a **gate** — `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }`, same shape as an agent job's prerun/postrun (`runtime` optional, defaults to `"bash"`; `content` required and non-empty). `workflow` is accepted as an alias for `command`. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner materializes the command's body to a file under `~/.harbour/workflows/` and runs it with the runtime's interpreter, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
 
 ### Schedule Format
 
@@ -205,7 +216,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerunCommand`/`postrunCommand`/`postrunGates` (agent jobs), `command` (workflows), `model`, `thinking` (agent jobs only, validated against the agent's `cli`), `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. Scope is not updatable — a job can't move between org-level and project-level. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerun`/`postrun`/`postrunGates` (agent jobs), `command` (workflows; `workflow` alias accepted), `model`, `thinking` (agent jobs only, validated against the agent's `cli`), `titleFormat`, `timeoutMinutes` (camelCase), `docIds`, `envVarIds`, `active`, `nextRunAt`. `prerun`, `postrun`, and `command` are each a gate object `{ runtime, content }` or `null` — passing the gate object replaces it, `null` clears it, and omitting the field leaves it unchanged. Scope is not updatable — a job can't move between org-level and project-level. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```
@@ -231,15 +242,6 @@ Each POST returns `{ "ok": true }` (the `docs` and `data` routes use status 201;
 Two distinct rejections, by cause:
 - A resource in a **different org** than the job → **404** (it's treated as not found, never leaking cross-tenant existence).
 - A tier violation — an **org-level job linking a project-level resource** → **400** with a message like "Org-level jobs can only link org-level …". An org-level (workflow) job may link only org-level docs/env vars/databases.
-
-### Manage a Job's Scripts
-```
-GET    /api/jobs/:id/scripts
-POST   /api/jobs/:id/scripts             { "filename": "check_health.py", "content": "...", "executable": true }
-PUT    /api/jobs/:id/scripts/:scriptId   { "filename": "...", "content": "...", "executable": true }
-DELETE /api/jobs/:id/scripts/:scriptId
-```
-Scripts hold the file contents the runner materializes before running the job's `command`/`prerunCommand`/`postrunCommand` — referenced by bare filename (e.g. `python3 check_health.py`, `./prerun.sh`). `filename` is required on `POST` and must be a bare name: 1–128 of `[A-Za-z0-9._-]`, no slashes, not `.`/`..` (otherwise 400). `content` defaults to `""` and `executable` to `true` (true → file written executable). `PUT` updates any subset of the three (an omitted field is left unchanged) and returns the updated record. `GET` returns the list ordered by filename; each record is `{ id, job_id, filename, content, executable (0|1), created_at, updated_at }`. `POST` returns the created record with status 201; `DELETE` returns `{ "ok": true }`. The `:scriptId` routes 404 (`Script not found`) when the script doesn't belong to `:id`, blocking cross-job edits. The script files are delivered in the run payload (`job.scripts` / `job.scripts_dir`) and written to disk per job by the runner.
 
 ### List a Job's Runs
 ```
@@ -581,10 +583,9 @@ DELETE /api/admin-api-keys/:id
 8. Give the worker agent its API key and the Harbour URL
 
 ### Set up a workflow (no agent)
-1. `POST /api/jobs?orgId=<id>` — create the workflow with `command` and schedule (add `projectId` for project-level)
+1. `POST /api/jobs?orgId=<id>` — create the workflow with `command` (a `{ runtime, content }` gate) and schedule (add `projectId` for project-level)
 2. `POST /api/workflow-runners?orgId=<id>` — mint runner credentials; run the returned `workflow connect` command on the runner host
-3. Place the script in `~/.harbour/workflows/` on the runner host
-4. Optionally link docs/env vars for context (passed via stdin JSON)
+3. Optionally link docs/env vars for context (passed via stdin JSON)
 
 ### Respond to a waiting run
 1. `GET /api/runs?orgId=<id>&filter=waiting` — find runs needing input
