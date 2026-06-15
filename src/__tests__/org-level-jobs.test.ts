@@ -237,53 +237,83 @@ describe("org-level job link guard", () => {
 });
 
 // ===========================================================================
-// Composition — org-level jobs compose org tier + linked only (no project tier)
+// Injection — attachment-driven: only resources linked to the job are injected,
+// regardless of tier. Unlinked org/project resources never reach a run.
 // ===========================================================================
 
-describe("org-level job composition", () => {
+describe("attachment-driven injection", () => {
   function seededScopes() {
     const { org, project } = fixture();
     const orgDoc = createDoc(org.id, null, "Org Doc", "org-content")!;
     const projDoc = createDoc(org.id, project.id, "Proj Doc", "proj-content")!;
-    createEnvVar(org.id, null, "ORG_VAR", "org-value");
-    createEnvVar(org.id, project.id, "PROJ_VAR", "proj-value");
-    // Same name in both tiers: a project-level value must never reach an
-    // org-level job (no project tier to override from).
-    createEnvVar(org.id, null, "SHARED", "org-shared");
-    createEnvVar(org.id, project.id, "SHARED", "proj-shared");
+    const orgVar = createEnvVar(org.id, null, "ORG_VAR", "org-value")!;
+    const projVar = createEnvVar(org.id, project.id, "PROJ_VAR", "proj-value")!;
     const orgDb = createDatabase(org.id, null, "orgdb", [{ name: "v", type: "TEXT" }]);
     const projDb = createDatabase(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
-    return { org, project, orgDoc, projDoc, orgDb, projDb };
+    return { org, project, orgDoc, projDoc, orgVar, projVar, orgDb, projDb };
   }
 
-  it("composes org-tier docs/env/data only for an org-level job", () => {
-    const { org, orgDoc, projDoc, orgDb, projDb } = seededScopes();
+  it("injects nothing into an org-level job with no attachments", () => {
+    const { org } = seededScopes();
     const wf = orgWorkflow(org.id);
 
+    expect(getComposedDocsForJob(wf.id)).toEqual([]);
+    expect(getDecryptedEnvVarsForJob(wf.id)).toEqual({});
+    expect(getComposedDatabasesForJob(wf.id)).toEqual([]);
+  });
+
+  it("injects only explicitly linked resources for an org-level job", () => {
+    const { org, orgDoc, projDoc, orgVar, orgDb, projDb } = seededScopes();
+    // Link via createWorkflow's docIds/envVarIds and explicit linkers (the link
+    // guard permits org-level resources only — project resources can't attach).
+    const wf = orgWorkflow(org.id, { docIds: [orgDoc.id], envVarIds: [orgVar.id] });
+    linkDatabaseToJob(wf.id, orgDb.id);
+
     const docIds = getComposedDocsForJob(wf.id).map((d) => d.id);
-    expect(docIds).toContain(orgDoc.id);
+    expect(docIds).toEqual([orgDoc.id]);
     expect(docIds).not.toContain(projDoc.id);
 
     const env = getDecryptedEnvVarsForJob(wf.id);
     expect(env.ORG_VAR).toBe("org-value");
     expect(env.PROJ_VAR).toBeUndefined();
-    expect(env.SHARED).toBe("org-shared");
 
     const dataIds = getComposedDatabasesForJob(wf.id).map((d) => d.id);
-    expect(dataIds).toContain(orgDb.id);
+    expect(dataIds).toEqual([orgDb.id]);
     expect(dataIds).not.toContain(projDb.id);
   });
 
-  it("still composes both tiers for a project-level job (regression)", () => {
-    const { org, project, orgDoc, projDoc } = seededScopes();
+  it("injects only linked resources for a project-level job — unlinked project resources are excluded", () => {
+    const { org, project, orgDoc, projDoc, orgVar, projVar } = seededScopes();
     const wf = projectWorkflow(org.id, project.id);
+
+    // Nothing linked → nothing injected, even though both tiers have resources.
+    expect(getComposedDocsForJob(wf.id)).toEqual([]);
+    expect(getDecryptedEnvVarsForJob(wf.id)).toEqual({});
+
+    // Link one org-level and one project-level resource of each kind.
+    linkDocToJob(wf.id, orgDoc.id);
+    linkDocToJob(wf.id, projDoc.id);
+    linkEnvVarToJob(wf.id, orgVar.id);
+    linkEnvVarToJob(wf.id, projVar.id);
 
     const docIds = getComposedDocsForJob(wf.id).map((d) => d.id);
     expect(docIds).toContain(orgDoc.id);
     expect(docIds).toContain(projDoc.id);
 
     const env = getDecryptedEnvVarsForJob(wf.id);
-    expect(env.SHARED).toBe("proj-shared"); // project tier overrides org tier
+    expect(env.ORG_VAR).toBe("org-value");
+    expect(env.PROJ_VAR).toBe("proj-value");
+  });
+
+  it("unlinking a resource stops it being injected", () => {
+    const { org, project, projDoc } = seededScopes();
+    const wf = projectWorkflow(org.id, project.id);
+
+    linkDocToJob(wf.id, projDoc.id);
+    expect(getComposedDocsForJob(wf.id).map((d) => d.id)).toEqual([projDoc.id]);
+
+    updateJob(wf.id, { docIds: [] });
+    expect(getComposedDocsForJob(wf.id)).toEqual([]);
   });
 });
 

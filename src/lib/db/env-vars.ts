@@ -167,51 +167,23 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
 }
 
 /**
- * Decrypt the composed env vars for a job (used by the /next payload).
+ * Decrypt the env vars injected into a job's run payload (used by /next).
  *
- * Composition (per the v2 resource model) = all org-level vars of the job's org
- * + all project-level vars of the job's project + the job's explicitly linked
- * vars. Name collisions resolve by precedence:
+ * Injection is attachment-driven: only vars explicitly linked to the job via
+ * `job_env_vars` are returned — never the org/project tiers at large. Org-level
+ * and pinned vars reach a job by being auto-attached at job create (see
+ * `listPinnedEnvVarIds`), which makes them real, removable links here. With a
+ * single tier there is no precedence to resolve.
  *
- *     job-linked  >  project-level  >  org-level   (more specific wins)
- *
- * An org-level job (project_id NULL) has no project tier — the tier-2 query's
- * `project_id = NULL` matches nothing — so it composes org-tier + job-linked.
- *
- * Returns the final decrypted name→value map.
+ * Returns the decrypted name→value map. (Values stay in the payload; the runner
+ * delivers them as real process env vars and lists names-only in the prompt.)
  */
 export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string> {
   const db = getDb();
 
-  // Resolve the job's scope directly from the denormalized columns.
-  const scope = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { org_id: string; project_id: string | null }
-    | undefined;
-  if (!scope) return {};
-
   type Row = { name: string; encrypted_value: string };
   const env: Record<string, string> = {};
 
-  // Tier 1 — org-level (project_id IS NULL). Lowest precedence.
-  const orgRows = db
-    .prepare(`
-    SELECT name, encrypted_value FROM env_vars
-    WHERE org_id = ? AND project_id IS NULL
-  `)
-    .all(scope.org_id) as Row[];
-  for (const r of orgRows) env[r.name] = decrypt(r.encrypted_value);
-
-  // Tier 2 — project-level. Overrides org-level on name collision.
-  const projectRows = db
-    .prepare(`
-    SELECT name, encrypted_value FROM env_vars
-    WHERE org_id = ? AND project_id = ?
-  `)
-    .all(scope.org_id, scope.project_id) as Row[];
-  for (const r of projectRows) env[r.name] = decrypt(r.encrypted_value);
-
-  // Tier 3 — job-linked explicit attachments. Highest precedence: overrides
-  // both org- and project-level on name collision.
   const linkedRows = db
     .prepare(`
     SELECT ev.name, ev.encrypted_value

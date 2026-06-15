@@ -48,7 +48,7 @@ it with the runtime's interpreter; nothing is referenced by bare filename. See
 
 Workflow jobs are dual-tier, like docs, env vars, and databases: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
 
-An org-level workflow may link only **org-level** docs, env vars, and databases — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Its composed context is the org tier plus its own job links; there is no project tier.
+An org-level workflow may link only **org-level** docs, env vars, and databases — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Injection is attachment-driven (like every job): the run carries only the resources the workflow is actually linked to, never the org tier at large.
 
 Workflow runner credentials live in `workflow_runners`. They are org-scoped, enabled or disabled independently, and authenticate only workflow polling plus allowed workflow-run reporting endpoints. A runner claims every due workflow in its org, org-level and project-level alike.
 

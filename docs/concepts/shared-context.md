@@ -4,10 +4,10 @@ Three top-level entities — markdown documents, agent-managed SQLite tables, an
 
 - They belong to an **org** (`org_id`), optionally narrowed to a **project** (`project_id` is nullable — `NULL` means org-level, usable by every project in the org). See [Orgs & projects](projects.md).
 - They're **linked to a job** via three identical junction tables: `job_docs`, `job_databases`, `job_env_vars`.
-- They're **injected into `/next`** when an agent polls — docs as content, databases as recent rows, secrets as a decrypted map.
+- They're **injected into `/next`** when an agent polls — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, databases as a name+id read reference, secrets as a decrypted map.
 - Two of them (docs and secrets) support **pinning** for "auto-attach to all new jobs."
 
-The differences are in *what* gets injected. Docs are full text. Databases are the last 100 rows of each linked table. Secrets are decrypted only at the moment of polling and never stored in plaintext.
+The differences are in *what* gets injected. Docs are full text. Databases inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
 
 (The UI labels env vars **Secrets**; the table is still `env_vars`.)
 
@@ -32,7 +32,7 @@ The agent polls `GET /api/agents/<id>/next`. The response bundles:
     { "title": "Style guide", "content": "...full markdown..." }
   ],
   "data": {
-    "marketing_calendar": [ /* up to 100 most recent rows */ ]
+    "marketing_calendar": { "id": "db-uuid" }
   },
   "env": {
     "BUFFER_API_KEY": "decrypted-secret-here"
@@ -41,7 +41,7 @@ The agent polls `GET /api/agents/<id>/next`. The response bundles:
 }
 ```
 
-The agent writes a draft, posts it to Buffer using the env var, inserts a row into `marketing_calendar`, sets status to `done`. Tomorrow's run sees the new row in `data.marketing_calendar` because the table is the same one the agent just wrote to — the latest 100 always come back on the next poll.
+The agent writes a draft, posts it to Buffer using the env var, then reads `marketing_calendar` via `GET /api/databases/db-uuid/rows` to check what's already scheduled, inserts a row, and sets status to `done`. The database arrives as a reference (`id` only), not inlined rows — the agent pulls exactly the slice it needs on demand.
 
 ## Pinning
 
@@ -82,7 +82,7 @@ Two tables track the metadata:
 
 Every schema change (CREATE, ALTER) records a `database_migrations` row, so the dashboard can show the schema's history.
 
-The injection rule for `/next`: for each linked database, harbour runs `SELECT * FROM "<table>" ORDER BY rowid DESC LIMIT 100` and stuffs the result into `data.<name>`. That's intentionally simple — agents that need older data or filtered views call `GET /api/databases/:id/rows` directly with `?limit=` and `?offset=`.
+The injection rule for `/next`: for each **linked** database, harbour puts `{ id }` into `data.<name>` — no rows, no columns. A database is a read reference, not inlined content; the agent calls `GET /api/databases/:id/rows` (with `?limit=`/`?offset=`/`?orderBy=`) to read exactly the slice it needs and `POST /api/databases/:id/rows` to write. Org/project membership alone does not inject a database — only an entry in `job_databases` does.
 
 Reserved-word and SQL-injection guards: column names are sanitized identically (lowercase, `[a-z0-9_]`, no `_id`), and a list of SQLite reserved words is rejected outright. Inserts validate the keys against `PRAGMA table_info` before running. Don't trust an agent's input to be safe; the helpers in `src/lib/db/database.ts` enforce the rules.
 
@@ -131,6 +131,6 @@ If you're hunting in code:
 - `src/lib/db/database.ts` — `createDatabase`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
 - `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob`, `listPinnedEnvVarIds`.
 - `src/lib/db/jobs.ts` — `createJob` and `createOneOffRun` are where the pinned ids get merged into the junction inserts.
-- `src/lib/db/runs.ts` — `buildRunPayload` (the `/next` payload assembly): docs query, the `LIMIT 100` per-table database query, env decryption.
+- `src/lib/db/runs.ts` — `buildRunPayload` (the `/next` payload assembly): attachment-driven docs/databases/env queries (`getComposedDocsForJob`, `getComposedDatabasesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
 - `src/lib/encryption.ts` — AES-256-GCM helpers, key loading.
 - `src/lib/db/schema.ts` — `docs`, `doc_revisions`, `databases`, `database_migrations`, `env_vars`, and the three `job_*` junction tables.

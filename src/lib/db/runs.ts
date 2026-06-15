@@ -4,7 +4,7 @@ import { DEFAULT_RUNTIME, type Gate, isRuntime } from "../runtimes";
 import { slugify } from "../slug";
 import { getAgentWorkspace } from "./agents";
 import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
-import { getComposedDatabasesForJob, getDatabaseById } from "./database";
+import { getComposedDatabasesForJob } from "./database";
 import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
@@ -952,29 +952,18 @@ export function buildRunPayload(runId: string) {
 
   const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(run.job_id) as any;
 
-  // Composed docs = org-level + project-level + job-linked (de-duped by id).
+  // Docs injected from the job's attachments (job_docs), each with its content.
   const docs = getComposedDocsForJob(run.job_id);
 
-  // Composed databases = org-level + project-level + job-linked, with the
-  // recent rows of each (name collisions resolved project-over-org / linked-wins).
-  // Each entry carries id + columns + rows so an agent can actually write back
-  // (target insert_rows/read_rows by id, with valid column names) — not just
-  // read the injected rows. `data` is keyed by logical name.
-  const composedDbs = getComposedDatabasesForJob(run.job_id);
-  const data: Record<
-    string,
-    { id: string; columns: { name: string; type: string }[]; rows: any[] }
-  > = {};
-  for (const d of composedDbs) {
-    const meta = getDatabaseById(d.id);
-    data[d.name] = {
-      id: d.id,
-      columns: (meta?.columns ?? []).map((c) => ({ name: c.name, type: c.type })),
-      rows: db.prepare(`SELECT * FROM "${d.table_name}" ORDER BY rowid DESC LIMIT 100`).all(),
-    };
-  }
+  // Databases injected from the job's attachments (job_databases). A database is
+  // a read reference: the payload carries only id + name, keyed by logical name.
+  // The agent reads rows on demand via read_rows and writes via insert_rows,
+  // both targeted by id — no columns or rows are inlined here.
+  const databases = getComposedDatabasesForJob(run.job_id);
+  const data: Record<string, { id: string }> = {};
+  for (const d of databases) data[d.name] = { id: d.id };
 
-  // Composed env vars = org-level + project-level + job-linked (job > project > org).
+  // Env vars injected from the job's attachments (job_env_vars), decrypted.
   const env = getDecryptedEnvVarsForJob(run.job_id);
 
   // Run attachments (raw rows; the route serializer adds absolute URLs)

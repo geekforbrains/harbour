@@ -494,69 +494,27 @@ export function deleteRow(databaseId: string, rowId: number) {
 }
 
 /**
- * Composed databases for a job's run payload (used by /next).
+ * Databases injected into a job's run payload (used by /next).
  *
- * Composition (per the v2 resource model) = all org-level databases of the
- * job's org + all project-level databases of the job's project + the job's
- * explicitly linked databases, de-duplicated by id. The payload `data` map is
- * keyed by the logical database name, so on a name collision the more-specific
- * tier wins: job-linked > project-level > org-level. An org-level job
- * (project_id NULL) has no project tier — the project-tier branch's
- * `project_id = NULL` matches nothing — so it composes org-tier + job-linked.
- * Returns the winning `{ name, table_name }` per logical name.
+ * Injection is attachment-driven: only databases explicitly linked to the job
+ * via `job_databases` are returned — never the org/project tiers at large.
+ * Databases have no `pinned` column and no auto-attach; they are manually added
+ * as read references. The payload exposes only `name` + `id` (no columns, no
+ * rows) — the agent reads/writes contents on demand via the database API using
+ * the id. Returns `{ id, name }` per linked database, sorted by name.
  */
-export function getComposedDatabasesForJob(
-  jobId: string,
-): { id: string; name: string; table_name: string }[] {
+export function getComposedDatabasesForJob(jobId: string): { id: string; name: string }[] {
   const db = getDb();
 
-  const scope = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { org_id: string; project_id: string | null }
-    | undefined;
-  if (!scope) return [];
-
-  type Row = {
-    id: string;
-    name: string;
-    table_name: string;
-    project_id: string | null;
-    linked: number;
-  };
-
-  // Collect every candidate database across the three tiers. `linked` flags a
-  // job-linked row; `project_id` distinguishes org- vs project-level. DISTINCT
-  // de-dups the same database appearing in multiple tiers (e.g. project-level
-  // AND job-linked).
-  const rows = db
+  return db
     .prepare(`
-    SELECT id, name, table_name, project_id,
-           MAX(CASE WHEN src = 'linked' THEN 1 ELSE 0 END) as linked
-    FROM (
-      SELECT id, name, table_name, project_id, 'tier' as src
-        FROM databases WHERE org_id = ? AND project_id IS NULL
-      UNION ALL
-      SELECT id, name, table_name, project_id, 'tier' as src
-        FROM databases WHERE org_id = ? AND project_id = ?
-      UNION ALL
-      SELECT d.id, d.name, d.table_name, d.project_id, 'linked' as src
-        FROM job_databases jd JOIN databases d ON jd.database_id = d.id
-        WHERE jd.job_id = ?
-    )
-    GROUP BY id
+    SELECT d.id, d.name
+    FROM job_databases jd
+    JOIN databases d ON d.id = jd.database_id
+    WHERE jd.job_id = ?
+    ORDER BY d.name ASC
   `)
-    .all(scope.org_id, scope.org_id, scope.project_id, jobId) as Row[];
-
-  // Resolve name collisions by precedence: job-linked > project-level >
-  // org-level. Rank each row, then keep the highest rank per logical name.
-  const rank = (r: Row) => (r.linked ? 2 : r.project_id ? 1 : 0);
-  const byName = new Map<string, Row>();
-  for (const r of rows) {
-    const existing = byName.get(r.name);
-    if (!existing || rank(r) > rank(existing)) byName.set(r.name, r);
-  }
-  return [...byName.values()]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((r) => ({ id: r.id, name: r.name, table_name: r.table_name }));
+    .all(jobId) as { id: string; name: string }[];
 }
 
 // --- Job Linkage ---

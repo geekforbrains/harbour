@@ -12,9 +12,9 @@ Key concepts:
 - **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
-- **Docs** — shared markdown documents injected into runs automatically.
-- **Databases** — SQLite tables agents create and manage, injected into runs.
-- **Env Vars** — encrypted key-value pairs (API keys, tokens) decrypted at runtime.
+- **Docs** — shared markdown documents injected into the runs of jobs they're attached to (pinned docs auto-attach to new jobs).
+- **Databases** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're linked to.
+- **Env Vars** — encrypted key-value pairs (API keys, tokens) injected into the runs of jobs they're attached to (pinned vars auto-attach to new jobs), decrypted at runtime.
 
 ## Authentication
 

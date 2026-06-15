@@ -115,16 +115,8 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
   "data": {
-    "metrics": {
-      "id": "uuid",
-      "columns": [{ "name": "followers", "type": "INTEGER" }, { "name": "engagement_rate", "type": "REAL" }],
-      "rows": [{ "_id": 1, "followers": 12400, "engagement_rate": 3.2 }]
-    },
-    "tweet_history": {
-      "id": "uuid",
-      "columns": [{ "name": "date", "type": "TEXT" }, { "name": "text", "type": "TEXT" }, { "name": "impressions", "type": "INTEGER" }],
-      "rows": [{ "_id": 5, "date": "2024-03-01", "text": "...", "impressions": 340 }]
-    }
+    "metrics": { "id": "uuid" },
+    "tweet_history": { "id": "uuid" }
   },
   "env": {
     "GITHUB_TOKEN": "ghp_...",
@@ -174,7 +166,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), referenced docs, databases (keyed by name; each carries its `id`, `columns`, and the most recent 100 `rows` — use the `id` with `insert_rows`/`read_rows` to write back), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached databases (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, databases, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
 
@@ -308,7 +300,7 @@ Pending runs **always take priority** over scheduled jobs. Other jobs continue t
 
 ## Databases
 
-Databases are real SQLite tables managed through the API. Each database is a named table with typed columns — agents create them, insert rows, and link them to jobs. Linked databases are automatically injected into the `/next` payload.
+Databases are real SQLite tables managed through the API. Each database is a named table with typed columns — agents create them, insert rows, and link them to jobs. A database injected into a run is a **read reference**: the `/next` payload carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`.
 
 ### Create a Database
 
@@ -388,7 +380,7 @@ Content-Type: application/json
 { "databaseId": "uuid" }
 ```
 
-Org-, project-, and job-linked databases are all included in the `/next` payload under `data`, keyed by name. Each entry is `{ id, columns, rows }` (most recent 100 rows per table) — use the `id` to target `insert_rows`/`read_rows` and `columns` for valid field names.
+Only databases **linked to the job** (via this endpoint) are included in the `/next` payload under `data`, keyed by name — org/project membership alone does not inject a database. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/databases/:id` returns the table's column schema if you need it.
 
 ### Convenience Endpoint
 

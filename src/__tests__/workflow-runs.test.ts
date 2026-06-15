@@ -180,10 +180,10 @@ describe("workflow stale-run reaping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildRunPayload — full workflow shape: composes resources, no agent block
+// buildRunPayload — full workflow shape: injects linked resources, no agent block
 // ---------------------------------------------------------------------------
 describe("buildRunPayload: workflow run shape", () => {
-  it("composes docs/data/env, carries the command, and omits the agent block + title preamble", () => {
+  it("injects linked docs/data/env, carries the command, and omits the agent block + title preamble", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
 
@@ -214,10 +214,11 @@ describe("buildRunPayload: workflow run shape", () => {
     expect(payload.agent).toBeUndefined();
     expect(payload.job.instructions).toBeNull();
 
-    // Resources compose for a workflow run just like an agent run
+    // Linked resources inject for a workflow run just like an agent run.
     expect(payload.docs.map((d) => d.id)).toContain(doc.id);
     expect(payload.env.API_TOKEN).toBe("secret");
-    expect(payload.data.metrics.rows).toEqual([expect.objectContaining({ v: "row-1" })]);
+    // Databases are read references: name + id only, no rows inlined.
+    expect(payload.data.metrics).toEqual({ id: data.id });
   });
 });
 

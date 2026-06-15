@@ -300,23 +300,14 @@ function buildPrompt(payload, apiKey, isResume) {
   }
 
   if (payload.data && Object.keys(payload.data).length > 0) {
-    prompt += `## Reference Data\n\n`;
-    prompt += `To add or read rows, use the insert_rows / read_rows endpoints from the api section with each table's database id below.\n\n`;
+    prompt += `## Reference Databases\n\n`;
+    prompt += `These databases are linked to this job as read references — their contents are not inlined. Read rows with the read_rows endpoint and write with insert_rows (both in the api section), targeting each database by the id below.\n\n`;
     for (const [name, info] of Object.entries(payload.data)) {
-      // Current shape: { id, columns, rows }. Tolerate the old rows[] shape too.
-      const rows = Array.isArray(info) ? info : info?.rows || [];
+      // Current shape: { id }. Tolerate the old { id, columns, rows } / rows[] shapes.
       const id = Array.isArray(info) ? null : info?.id;
-      const columns = Array.isArray(info) ? null : info?.columns;
       prompt += `### ${name}\n`;
       if (id) prompt += `database id: ${id}\n`;
-      if (columns?.length)
-        prompt += `columns: ${columns.map((c) => `${c.name} (${c.type})`).join(", ")}\n`;
       prompt += `\n`;
-      if (rows.length > 0) {
-        prompt += `\`\`\`json\n${JSON.stringify(rows.slice(0, 20), null, 2)}\n\`\`\`\n\n`;
-      } else {
-        prompt += `(no rows)\n\n`;
-      }
     }
   }
 
@@ -331,9 +322,9 @@ function buildPrompt(payload, apiKey, isResume) {
   }
 
   if (payload.env && Object.keys(payload.env).length > 0) {
-    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run. Use them when making API calls or authenticating with services.\n\n`;
-    for (const [key, value] of Object.entries(payload.env)) {
-      prompt += `- \`${key}\`: \`${value}\`\n`;
+    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run as real environment variables. Read each by name from your environment (e.g. \`$KEY\` or \`printenv KEY\`) — values are not printed here. Use them when making API calls or authenticating with services.\n\n`;
+    for (const key of Object.keys(payload.env)) {
+      prompt += `- \`${key}\`\n`;
     }
     prompt += "\n";
   }
