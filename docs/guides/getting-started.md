@@ -190,11 +190,36 @@ This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.
 
 To stop polling: `npm run harbour -- agent uninstall` (removes the plist and unloads it).
 
+## Workflows (deterministic, no agent)
+
+Not all recurring work needs an LLM. A **workflow** is a scheduled shell command — poll an API, sync a file, run a health check — that runs the same way every time, no agent and no tokens. → [Workflows](../concepts/workflows.md).
+
+The one thing to know up front: **workflows are claimed by a separate runner.** The agent runner you installed above never picks them up, so a workflow with no workflow runner connected just sits in `scheduled` forever — including one you trigger by hand from the dashboard.
+
+### 1. Create a workflow
+
+In the dashboard, open **Workflows → New Workflow**. Give it a name and schedule, pick a runtime (`bash`, `python`, or `node`), and write the command body. (Over the API this is `POST /api/jobs` with a `command` gate — see the [admin guide](../admin-guide.md#create-a-workflow-no-agent).)
+
+### 2. Connect a workflow runner
+
+Workflow runners have their own credentials, separate from agents — and there's no dashboard UI for them yet, so mint one over the API. `POST /api/workflow-runners?orgId=<id>` returns a connect command ending in a base64 blob. On the runner host:
+
+```bash
+npm run harbour -- workflow connect <blob>   # store runner identity
+npm run harbour -- workflow run              # one-shot: claim and run anything due
+npm run harbour -- workflow install          # schedule polling every 60s
+```
+
+Running `workflow run` once by hand is the fastest way to confirm the loop — it claims any due workflow run and executes it on the spot. `workflow list` shows the runners configured on this host.
+
+> Runner identity lives in `~/.harbour/workflow-runners.json`, and `workflow install` creates a **separate** launchd service from `agent install`, so deterministic workflows and agent jobs are operated independently.
+
 ## Now what?
 
 You have a working harbour with a working agent. From here:
 
 - [Jobs and runs](../concepts/jobs-and-runs.md) — the polling ladder, the lifecycle, how retries work.
 - [Agents](../concepts/agents.md) — the harbour-vs-external split and per-agent settings.
+- [Workflows](../concepts/workflows.md) — deterministic shell-command jobs, their runners, and the exit-code contract.
 - [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning auto-attaches them.
 - [Running a runner on a different machine](run-on-different-machine.md) — for iOS/Xcode boxes, GPU workstations, on-prem repos.

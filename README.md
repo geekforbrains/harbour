@@ -60,6 +60,18 @@ npm run harbour -- agent install   # polls every 60s; logs at ~/.harbour/runner.
 
 > More: [agents](docs/concepts/agents.md) (eager polling, per-agent Claude Code permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
 
+### Running workflows
+
+Workflows are claimed by a **separate** workflow runner — the agent runner never picks them up, so a workflow with no runner connected just sits queued. Mint a runner credential over the API (`POST /api/workflow-runners?orgId=<id>`), then on the runner host:
+
+```bash
+npm run harbour -- workflow connect <blob>   # store runner identity
+npm run harbour -- workflow run              # one-shot: claim and run anything due
+npm run harbour -- workflow install          # schedule polling (its own launchd service)
+```
+
+> More: [workflows](docs/concepts/workflows.md) (runners, gates, the exit-code contract).
+
 ### Managing Harbour over the API
 
 An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, tables, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).

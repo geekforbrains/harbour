@@ -71,8 +71,14 @@ export default function WorkflowsPage() {
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
           <p className="font-medium text-amber-600">Workflow runner not active</p>
           <p className="text-muted-foreground mt-0.5">
-            You have workflows but no workflow runner polling — they won't run until one is
-            connected. On the runner host:{" "}
+            You have workflows but no workflow runner is polling, so none will run. Mint a runner
+            credential (
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">POST /api/workflow-runners</code>
+            ), then on the runner host connect it with{" "}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">
+              npm run harbour -- workflow connect &lt;blob&gt;
+            </code>{" "}
+            and start it with{" "}
             <code className="text-xs bg-muted px-1 py-0.5 rounded">
               npm run harbour -- workflow install
             </code>
