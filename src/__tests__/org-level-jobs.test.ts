@@ -5,23 +5,23 @@ import { POST as jobDocsPOST } from "@/app/api/jobs/[id]/docs/route";
 import { GET as jobsGET, POST as jobsPOST } from "@/app/api/jobs/route";
 import {
   addMembership,
-  createDatabase,
   createDoc,
   createEnvVar,
   createJob,
   createOrg,
   createProject,
   createSession,
+  createTable,
   createUser,
   createWorkflow,
-  getComposedDatabasesForJob,
   getComposedDocsForJob,
+  getComposedTablesForJob,
   getDecryptedEnvVarsForJob,
   getJobById,
   getNextWorkflowRun,
-  linkDatabaseToJob,
   linkDocToJob,
   linkEnvVarToJob,
+  linkTableToJob,
   listAllJobs,
   listRunningRuns,
   listRunsHistory,
@@ -92,7 +92,7 @@ function editorFor(orgId: string) {
 }
 
 // ===========================================================================
-// createWorkflow — scope tiers (dual-tier like docs/env_vars/databases)
+// createWorkflow — scope tiers (dual-tier like docs/env_vars/tables)
 // ===========================================================================
 
 describe("createWorkflow scope tiers", () => {
@@ -163,9 +163,9 @@ describe("org-level job link guard", () => {
   it("rejects a project-level database with a clear message", () => {
     const { org, project } = fixture();
     const wf = orgWorkflow(org.id);
-    const projDb = createDatabase(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
-    expect(() => linkDatabaseToJob(wf.id, projDb.id)).toThrow(
-      "Org-level jobs can only link org-level databases",
+    const projDb = createTable(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
+    expect(() => linkTableToJob(wf.id, projDb.id)).toThrow(
+      "Org-level jobs can only link org-level tables",
     );
   });
 
@@ -184,16 +184,16 @@ describe("org-level job link guard", () => {
     const wf = orgWorkflow(org.id);
     const orgDoc = createDoc(org.id, null, "Org Doc", "o")!;
     const orgVar = createEnvVar(org.id, null, "ORG_VAR", "v")!;
-    const orgDb = createDatabase(org.id, null, "orgdb", [{ name: "v", type: "TEXT" }]);
+    const orgDb = createTable(org.id, null, "orgdb", [{ name: "v", type: "TEXT" }]);
 
     linkDocToJob(wf.id, orgDoc.id);
     linkEnvVarToJob(wf.id, orgVar.id);
-    linkDatabaseToJob(wf.id, orgDb.id);
+    linkTableToJob(wf.id, orgDb.id);
 
     const job = getJobById(wf.id)!;
     expect(job.docs.map((d: { id: string }) => d.id)).toContain(orgDoc.id);
     expect(job.envVars.map((e: { id: string }) => e.id)).toContain(orgVar.id);
-    expect(job.databases.map((d: { id: string }) => d.id)).toContain(orgDb.id);
+    expect(job.tables.map((d: { id: string }) => d.id)).toContain(orgDb.id);
   });
 
   it("project-level jobs still link both tiers as before", () => {
@@ -248,8 +248,8 @@ describe("attachment-driven injection", () => {
     const projDoc = createDoc(org.id, project.id, "Proj Doc", "proj-content")!;
     const orgVar = createEnvVar(org.id, null, "ORG_VAR", "org-value")!;
     const projVar = createEnvVar(org.id, project.id, "PROJ_VAR", "proj-value")!;
-    const orgDb = createDatabase(org.id, null, "orgdb", [{ name: "v", type: "TEXT" }]);
-    const projDb = createDatabase(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
+    const orgDb = createTable(org.id, null, "orgdb", [{ name: "v", type: "TEXT" }]);
+    const projDb = createTable(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
     return { org, project, orgDoc, projDoc, orgVar, projVar, orgDb, projDb };
   }
 
@@ -259,7 +259,7 @@ describe("attachment-driven injection", () => {
 
     expect(getComposedDocsForJob(wf.id)).toEqual([]);
     expect(getDecryptedEnvVarsForJob(wf.id)).toEqual({});
-    expect(getComposedDatabasesForJob(wf.id)).toEqual([]);
+    expect(getComposedTablesForJob(wf.id)).toEqual([]);
   });
 
   it("injects only explicitly linked resources for an org-level job", () => {
@@ -267,7 +267,7 @@ describe("attachment-driven injection", () => {
     // Link via createWorkflow's docIds/envVarIds and explicit linkers (the link
     // guard permits org-level resources only — project resources can't attach).
     const wf = orgWorkflow(org.id, { docIds: [orgDoc.id], envVarIds: [orgVar.id] });
-    linkDatabaseToJob(wf.id, orgDb.id);
+    linkTableToJob(wf.id, orgDb.id);
 
     const docIds = getComposedDocsForJob(wf.id).map((d) => d.id);
     expect(docIds).toEqual([orgDoc.id]);
@@ -277,7 +277,7 @@ describe("attachment-driven injection", () => {
     expect(env.ORG_VAR).toBe("org-value");
     expect(env.PROJ_VAR).toBeUndefined();
 
-    const dataIds = getComposedDatabasesForJob(wf.id).map((d) => d.id);
+    const dataIds = getComposedTablesForJob(wf.id).map((d) => d.id);
     expect(dataIds).toEqual([orgDb.id]);
     expect(dataIds).not.toContain(projDb.id);
   });

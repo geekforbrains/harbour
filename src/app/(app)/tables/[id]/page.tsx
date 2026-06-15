@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { PageLoading } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useDatabase, useDatabaseRows, useDeleteDatabase } from "@/lib/hooks/use-databases";
+import { useDeleteTable, useTable, useTableRows } from "@/lib/hooks/use-tables";
 import { timeAgo } from "@/lib/time";
 
 type ColumnInfo = {
@@ -22,7 +22,7 @@ type ColumnInfo = {
 };
 type JobRef = { id: string; name: string };
 
-type DatabaseDetail = {
+type TableDetail = {
   id: string;
   name: string;
   table_name: string;
@@ -40,61 +40,61 @@ type RowsResponse = {
 };
 
 function formatCell(value: unknown): string {
-  if (value === null || value === undefined) return "\u2014";
+  if (value === null || value === undefined) return "—";
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
 }
 
-export default function DatabaseDetailPage() {
+export default function TableDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [page, setPage] = useState(0);
   const pageSize = 50;
 
-  const { data: dbData, isLoading: dbLoading } = useDatabase(id, { refetchInterval: 5000 });
-  const db = (dbData as DatabaseDetail | undefined) ?? null;
+  const { data: tableData, isLoading: tableLoading } = useTable(id, { refetchInterval: 5000 });
+  const table = (tableData as TableDetail | undefined) ?? null;
 
-  const { data: rowsRaw, isLoading: rowsLoading } = useDatabaseRows(id, page, pageSize, {
+  const { data: rowsRaw, isLoading: rowsLoading } = useTableRows(id, page, pageSize, {
     refetchInterval: 5000,
   });
   const rowsData = (rowsRaw as RowsResponse | undefined) ?? null;
 
-  const deleteDatabase = useDeleteDatabase();
+  const deleteTable = useDeleteTable();
 
-  const loading = dbLoading || rowsLoading;
+  const loading = tableLoading || rowsLoading;
 
   async function handleDelete() {
-    if (!confirm(`Delete "${db?.name}"? The table and all its data will be permanently removed.`))
+    if (
+      !confirm(`Delete "${table?.name}"? The table and all its data will be permanently removed.`)
+    )
       return;
     try {
-      await deleteDatabase.mutateAsync(id);
+      await deleteTable.mutateAsync(id);
     } catch {
-      alert("Failed to delete database");
+      alert("Failed to delete table");
       return;
     }
-    router.push("/databases");
+    router.push("/tables");
   }
 
   if (loading) return <PageLoading />;
-  if (!db)
-    return (
-      <div className="text-sm text-muted-foreground py-12 text-center">Database not found.</div>
-    );
+  if (!table)
+    return <div className="text-sm text-muted-foreground py-12 text-center">Table not found.</div>;
 
   const totalPages = rowsData ? Math.ceil(rowsData.total / pageSize) : 0;
-  const columns = db.columns;
+  const columns = table.columns;
   const rows = rowsData?.rows ?? [];
 
   return (
     <div className="space-y-6">
-      <BackLink href="/databases" label="Databases" />
+      <BackLink href="/tables" label="Tables" />
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight font-mono">{db.name}</h1>
+          <h1 className="text-xl font-semibold tracking-tight font-mono">{table.name}</h1>
           <p className="text-xs text-muted-foreground mt-1">
             {rowsData?.total ?? 0} {(rowsData?.total ?? 0) === 1 ? "row" : "rows"} · Updated{" "}
-            {timeAgo(db.updated_at)}
+            {timeAgo(table.updated_at)}
           </p>
         </div>
         <Button
@@ -108,9 +108,9 @@ export default function DatabaseDetailPage() {
         </Button>
       </div>
 
-      {db.jobs.length > 0 && (
+      {table.jobs.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          {db.jobs.map((j) => (
+          {table.jobs.map((j) => (
             <Link key={j.id} href={`/jobs/${j.id}`}>
               <Badge variant="secondary" className="gap-1 cursor-pointer hover:bg-accent">
                 <Briefcase className="h-3 w-3" /> {j.name}

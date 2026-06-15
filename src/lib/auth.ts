@@ -397,7 +397,7 @@ export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
 
 /**
  * Dual-identity authorization for resource routes that BOTH dashboard users and
- * harbour agents call (docs create/update, databases create + rows + columns,
+ * harbour agents call (docs create/update, tables create + rows + columns,
  * agents/jobs `data` helpers). Users are checked against `opts.role` in the
  * resource's org; agents are scoped to their own project's org.
  *

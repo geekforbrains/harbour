@@ -8,6 +8,7 @@ import { listPinnedDocIds } from "./docs";
 import { linkEnvVarToJob, listPinnedEnvVarIds } from "./env-vars";
 import { getDb } from "./schema";
 import { getTimezone } from "./settings";
+import { linkTableToJob, listPinnedTableIds } from "./tables";
 
 export function createJob(
   projectId: string,
@@ -25,6 +26,7 @@ export function createJob(
     titleFormat?: string;
     docIds?: string[];
     envVarIds?: string[];
+    tableIds?: string[];
     active?: boolean;
   },
 ) {
@@ -68,6 +70,8 @@ export function createJob(
     for (const docId of allDocIds) linkDocToJob(id, docId);
     const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
     for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
+    const allTableIds = new Set([...(data.tableIds || []), ...listPinnedTableIds(projectId)]);
+    for (const tableId of allTableIds) linkTableToJob(id, tableId);
   });
 
   create();
@@ -75,7 +79,7 @@ export function createJob(
 }
 
 /**
- * Create a workflow job. Dual-tier like docs/env_vars/databases: pass projectId
+ * Create a workflow job. Dual-tier like docs/env_vars/tables: pass projectId
  * for a project-level workflow, or null for an org-level one shared across the
  * org's workflow runners. Scope is fixed at creation — updateJob cannot move a
  * job between tiers. Agent jobs are always project-level (see createJob).
@@ -91,6 +95,7 @@ export function createWorkflow(
     timeoutMinutes?: number;
     docIds?: string[];
     envVarIds?: string[];
+    tableIds?: string[];
     active?: boolean;
   },
 ) {
@@ -135,13 +140,22 @@ export function createWorkflow(
             )
             .all(orgId) as { id: string }[]
         ).map((r) => r.id);
+    const pinnedTableIds = projectId
+      ? listPinnedTableIds(projectId)
+      : (
+          db
+            .prepare(`SELECT id FROM tables WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`)
+            .all(orgId) as { id: string }[]
+        ).map((r) => r.id);
 
     // Guard-bearing link functions: an org-level workflow linking a
-    // project-scoped doc/env var throws here and rolls the creation back.
+    // project-scoped doc/env var/table throws here and rolls the creation back.
     const allDocIds = new Set([...(data.docIds || []), ...pinnedDocIds]);
     for (const docId of allDocIds) linkDocToJob(id, docId);
     const allEnvVarIds = new Set([...(data.envVarIds || []), ...pinnedEnvVarIds]);
     for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
+    const allTableIds = new Set([...(data.tableIds || []), ...pinnedTableIds]);
+    for (const tableId of allTableIds) linkTableToJob(id, tableId);
   });
 
   create();
@@ -168,11 +182,11 @@ export function getJobById(id: string) {
   `)
     .all(id);
 
-  const databases = db
+  const tables = db
     .prepare(`
-    SELECT d.id, d.name, d.table_name FROM job_databases jd
-    JOIN databases d ON jd.database_id = d.id
-    WHERE jd.job_id = ?
+    SELECT t.id, t.name, t.table_name FROM job_tables jt
+    JOIN tables t ON jt.table_id = t.id
+    WHERE jt.job_id = ?
   `)
     .all(id);
 
@@ -184,7 +198,7 @@ export function getJobById(id: string) {
   `)
     .all(id);
 
-  return { ...job, docs, databases, envVars };
+  return { ...job, docs, tables, envVars };
 }
 
 export function listJobsByAgent(agentId: string) {
@@ -245,6 +259,7 @@ export function updateJob(
     timeoutMinutes?: number;
     docIds?: string[];
     envVarIds?: string[];
+    tableIds?: string[];
     active?: boolean;
     nextRunAt?: number;
   },
@@ -338,6 +353,10 @@ export function updateJob(
       db.prepare(`DELETE FROM job_env_vars WHERE job_id = ?`).run(id);
       for (const envId of data.envVarIds) linkEnvVarToJob(id, envId);
     }
+    if (data.tableIds !== undefined) {
+      db.prepare(`DELETE FROM job_tables WHERE job_id = ?`).run(id);
+      for (const tableId of data.tableIds) linkTableToJob(id, tableId);
+    }
   });
   update();
   return getJobById(id);
@@ -422,7 +441,7 @@ export function unlinkDocFromJob(jobId: string, docId: string) {
   db.prepare(`DELETE FROM job_docs WHERE job_id = ? AND doc_id = ?`).run(jobId, docId);
 }
 
-// linkDatabaseToJob and unlinkDatabaseFromJob are in database.ts
+// linkTableToJob and unlinkTableFromJob are in tables.ts
 
 export function touchJobRan(id: string) {
   const db = getDb();

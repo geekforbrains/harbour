@@ -3,17 +3,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildRunPayload,
   createAgent,
-  createDatabase,
   createDoc,
   createEnvVar,
   createJob,
   createOrg,
   createProject,
   createRun,
+  createTable,
   insertRows,
-  linkDatabaseToJob,
   linkDocToJob,
   linkEnvVarToJob,
+  linkTableToJob,
   toggleDocPinned,
   toggleEnvVarPinned,
 } from "@/lib/db/queries";
@@ -42,8 +42,8 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 // Resource injection — attachment-driven: a run carries only the resources
-// linked to its job (job_docs / job_env_vars / job_databases), never the
-// org/project tiers at large. Pinned docs/vars reach a job by auto-attaching at
+// linked to its job (job_docs / job_env_vars / job_tables), never the
+// org/project tiers at large. Pinned docs/vars/tables reach a job by auto-attaching at
 // job create. Databases are read references: name + id only, no rows/columns.
 // ---------------------------------------------------------------------------
 
@@ -68,15 +68,11 @@ describe("run payload resource injection", () => {
     linkDocToJob(job.id, linkedDoc.id);
 
     // Databases: one linked, one unlinked. Rows exist but must NOT be injected.
-    const linkedDb = createDatabase(org.id, project.id, "linked_table", [
-      { name: "v", type: "TEXT" },
-    ]);
+    const linkedDb = createTable(org.id, project.id, "linked_table", [{ name: "v", type: "TEXT" }]);
     insertRows(linkedDb.id, [{ v: "linked-row" }]);
-    const unlinkedDb = createDatabase(org.id, null, "unlinked_table", [
-      { name: "v", type: "TEXT" },
-    ]);
+    const unlinkedDb = createTable(org.id, null, "unlinked_table", [{ name: "v", type: "TEXT" }]);
     insertRows(unlinkedDb.id, [{ v: "unlinked-row" }]);
-    linkDatabaseToJob(job.id, linkedDb.id);
+    linkTableToJob(job.id, linkedDb.id);
 
     const run = createRun(job.id, agent.id)!;
     const payload = buildRunPayload(run.id)!;
@@ -93,8 +89,8 @@ describe("run payload resource injection", () => {
     expect(payload.docs[0].content).toBe("linked doc body");
 
     // Databases: linked one only, exposed as name + id — no columns, no rows.
-    expect(payload.data.linked_table).toEqual({ id: linkedDb.id });
-    expect(payload.data.unlinked_table).toBeUndefined();
+    expect(payload.tables.linked_table).toEqual({ id: linkedDb.id });
+    expect(payload.tables.unlinked_table).toBeUndefined();
   });
 
   it("auto-attaches pinned docs/vars to a new job and injects them; unpinned are excluded", () => {
@@ -130,7 +126,7 @@ describe("run payload resource injection", () => {
     // Org- and project-level resources of every kind, none linked to jobA.
     createEnvVar(org.id, null, "ORG_VAR", "org-val");
     createDoc(org.id, null, "Org Doc", "org body");
-    const orgDb = createDatabase(org.id, null, "org_data", [{ name: "v", type: "TEXT" }]);
+    const orgDb = createTable(org.id, null, "org_data", [{ name: "v", type: "TEXT" }]);
     insertRows(orgDb.id, [{ v: "x" }]);
 
     createEnvVar(org.id, projA.id, "A_VAR", "a-val");
@@ -143,6 +139,6 @@ describe("run payload resource injection", () => {
     // Nothing is auto-injected — not org-level, not own-project, not project B.
     expect(payloadA.env).toEqual({});
     expect(payloadA.docs).toEqual([]);
-    expect(payloadA.data).toEqual({});
+    expect(payloadA.tables).toEqual({});
   });
 });

@@ -28,14 +28,14 @@ Two ownership shapes (full columns in
   `runs` carry a NOT NULL `org_id` plus a nullable `project_id`: agent jobs are
   always project-level, but a **workflow** job may be org-level
   (`project_id IS NULL`), and its runs inherit that. Scope is fixed at creation.
-- **Resources** — `docs`, `env_vars` (Secrets), `databases` — are **dual-tier**:
+- **Resources** — `docs`, `env_vars` (Secrets), `tables` — are **dual-tier**:
   a NOT NULL `org_id` plus a nullable `project_id`. `project_id IS NULL` means
   **org-level** (usable by every project in the org); otherwise **project-level**.
   See [shared context](shared-context.md).
 
 There are **no** `project_*` junction tables (v1 had them). Belonging to a
 project *is* the `project_id` column, not a linking row. The only junction tables
-left are the job-linked ones (`job_docs`, `job_env_vars`, `job_databases`).
+left are the job-linked ones (`job_docs`, `job_env_vars`, `job_tables`).
 
 ## Switching org & project
 
@@ -63,7 +63,7 @@ resources in that project cascade.
 - **No nesting.** Flat list within an org.
 - **No multi-project entities.** An agent or job belongs to exactly one project
   (the direct FK) — or, for workflows only, to the org tier. Sharing *within* an
-  org is done at the **org level** — an org-level doc / secret / database /
+  org is done at the **org level** — an org-level doc / secret / table /
   workflow is visible to every project in the org — not by referencing one
   entity from many projects.
 

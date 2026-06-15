@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import type { ColumnDef } from "@/lib/db/database";
 import {
-  createDatabase,
+  createTable,
   getAgentById,
-  getDatabaseByName,
+  getTableByName,
   insertRows,
-  linkDatabaseToJob,
+  linkTableToJob,
 } from "@/lib/db/queries";
+import type { ColumnDef } from "@/lib/db/tables";
 import { badRequest, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
-// POST: Agent creates a database and optionally links it to a job + inserts initial rows.
+// POST: Agent creates a table and optionally links it to a job + inserts initial rows.
 // Convenience endpoint for agents — combines create + link + seed in one call.
 export const POST = withAgentOrUser(
   async (req, auth, { params }) => {
@@ -29,7 +29,7 @@ export const POST = withAgentOrUser(
     if (!body.name) return NextResponse.json({ error: "name is required" }, { status: 400 });
     const name = requireNonEmptyString(body.name, "name");
     const jobId = optionalString(body.jobId, "jobId");
-    // columns/rows shapes are validated in depth by createDatabase/insertRows
+    // columns/rows shapes are validated in depth by createTable/insertRows
     // (which throw plain Errors mapped to 400 below); here we only require the
     // outer container to be an array so a wrong-typed value is a clean 400.
     if (body.columns !== undefined && !Array.isArray(body.columns)) {
@@ -42,17 +42,17 @@ export const POST = withAgentOrUser(
     const rows = body.rows as Record<string, unknown>[] | undefined;
 
     try {
-      // Get or create the database (scoped to the agent's org + project).
-      let db = getDatabaseByName(auth.orgId, agent.project_id, name);
-      const created = !db;
-      if (!db) {
+      // Get or create the table (scoped to the agent's org + project).
+      let table = getTableByName(auth.orgId, agent.project_id, name);
+      const created = !table;
+      if (!table) {
         if (!columns?.length) {
           return NextResponse.json(
-            { error: "columns are required when creating a new database" },
+            { error: "columns are required when creating a new table" },
             { status: 400 },
           );
         }
-        db = createDatabase(auth.orgId, agent.project_id, name, columns);
+        table = createTable(auth.orgId, agent.project_id, name, columns);
       }
 
       if (jobId) {
@@ -60,14 +60,14 @@ export const POST = withAgentOrUser(
         if (orgIdForResource("job", jobId) !== auth.orgId) {
           return NextResponse.json({ error: "Job not found" }, { status: 404 });
         }
-        linkDatabaseToJob(jobId, db.id);
+        linkTableToJob(jobId, table.id);
       }
 
       if (rows?.length) {
-        insertRows(db.id, rows);
+        insertRows(table.id, rows);
       }
 
-      return NextResponse.json(db, { status: created ? 201 : 200 });
+      return NextResponse.json(table, { status: created ? 201 : 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return NextResponse.json({ error: message }, { status: 400 });

@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { deleteRow, getDatabaseById, updateRow } from "@/lib/db/queries";
+import { deleteRow, getTableById, updateRow } from "@/lib/db/queries";
 import { readJson } from "@/lib/http";
 
-const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
+const tableOrg = (p: Record<string, string>) => orgIdForResource("table", p.id);
 
 export const PUT = withAgentOrUser(
   async (req, _auth, { params }) => {
     const { id, rowId } = await params;
-    const db = getDatabaseById(id);
-    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const table = getTableById(id);
+    if (!table) return NextResponse.json({ error: "Table not found" }, { status: 404 });
 
     const body = await readJson(req);
     try {
@@ -21,14 +21,14 @@ export const PUT = withAgentOrUser(
       return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: dbOrg },
+  { role: "editor", orgFromParams: tableOrg },
 );
 
 export const DELETE = withAgentOrUser(
   async (_req, _auth, { params }) => {
     const { id, rowId } = await params;
-    const db = getDatabaseById(id);
-    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const table = getTableById(id);
+    if (!table) return NextResponse.json({ error: "Table not found" }, { status: 404 });
 
     try {
       deleteRow(id, parseInt(rowId, 10));
@@ -38,5 +38,5 @@ export const DELETE = withAgentOrUser(
       return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: dbOrg },
+  { role: "editor", orgFromParams: tableOrg },
 );

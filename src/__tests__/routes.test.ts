@@ -1,14 +1,14 @@
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { POST as agentDataPOST } from "@/app/api/agents/[id]/data/route";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
+import { POST as agentTablesPOST } from "@/app/api/agents/[id]/tables/route";
 import { GET as agentsGET } from "@/app/api/agents/route";
 import { POST as docsPOST } from "@/app/api/docs/route";
 import { POST as envVarsPOST } from "@/app/api/env-vars/route";
-import { POST as jobDataPOST } from "@/app/api/jobs/[id]/data/route";
 import { POST as jobDocsPOST } from "@/app/api/jobs/[id]/docs/route";
 import { POST as jobEnvVarsPOST } from "@/app/api/jobs/[id]/env-vars/route";
+import { POST as jobTablesPOST } from "@/app/api/jobs/[id]/tables/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { PUT as orgsPUT } from "@/app/api/orgs/route";
@@ -22,7 +22,6 @@ import { GET as workflowsNextGET } from "@/app/api/workflows/next/route";
 import {
   addMembership,
   createAgent,
-  createDatabase,
   createDoc,
   createEnvVar,
   createJob,
@@ -30,6 +29,7 @@ import {
   createProject,
   createRun,
   createSession,
+  createTable,
   createUser,
   createWorkflow,
   createWorkflowRunner,
@@ -219,8 +219,8 @@ function otherOrgFixture() {
   const run = createRun(job.id, agent.id)!; // status 'running'
   const doc = createDoc(org.id, project.id, "OtherDoc")!;
   const envVar = createEnvVar(org.id, project.id, "OTHER_SECRET", "val")!;
-  const database = createDatabase(org.id, project.id, "other_db", [{ name: "c", type: "TEXT" }]);
-  return { org, project, agent, job, run, doc, envVar, database };
+  const table = createTable(org.id, project.id, "other_db", [{ name: "c", type: "TEXT" }]);
+  return { org, project, agent, job, run, doc, envVar, table };
 }
 
 describe("cross-org isolation (negative tests)", () => {
@@ -337,19 +337,19 @@ describe("cross-org isolation (negative tests)", () => {
     expect(linked.n).toBe(0);
   });
 
-  it("rejects linking an org-B database to an org-A job", async () => {
+  it("rejects linking an org-B table to an org-A job", async () => {
     const { job: jobA, editor } = fixture();
     const other = otherOrgFixture();
     const req = userReq(editor.id, "http://x/", {
       method: "POST",
-      body: JSON.stringify({ databaseId: other.database.id }),
+      body: JSON.stringify({ tableId: other.table.id }),
       headers: { "content-type": "application/json" },
     });
-    const res = await jobDataPOST(req, ctx({ id: jobA.id }));
+    const res = await jobTablesPOST(req, ctx({ id: jobA.id }));
     expect(res.status).toBe(404);
     const linked = getDb()
-      .prepare(`SELECT COUNT(*) as n FROM job_databases WHERE job_id = ? AND database_id = ?`)
-      .get(jobA.id, other.database.id) as { n: number };
+      .prepare(`SELECT COUNT(*) as n FROM job_tables WHERE job_id = ? AND table_id = ?`)
+      .get(jobA.id, other.table.id) as { n: number };
     expect(linked.n).toBe(0);
   });
 
@@ -595,7 +595,7 @@ describe("agent self-ownership (within an org)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("an agent cannot write data as another agent in the same org", async () => {
+  it("an agent cannot write table data as another agent in the same org", async () => {
     const { project, agent } = fixture(); // agent A
     const agentB = createAgent(project.id, "DevB"); // same org, different agent
     const req = agentReq(agentB.apiKey, "http://x/", {
@@ -603,7 +603,7 @@ describe("agent self-ownership (within an org)", () => {
       body: JSON.stringify({ name: "tbl", columns: [{ name: "c", type: "TEXT" }] }),
       headers: { "content-type": "application/json" },
     });
-    const res = await agentDataPOST(req, ctx({ id: agent.id }));
+    const res = await agentTablesPOST(req, ctx({ id: agent.id }));
     expect(res.status).toBe(404);
   });
 });

@@ -4,7 +4,6 @@ import {
   Calendar,
   CalendarClock,
   Cpu,
-  Database,
   FileText,
   KeyRound,
   Pause,
@@ -13,6 +12,7 @@ import {
   Plus,
   RotateCcw,
   Settings,
+  Table2,
   Trash2,
   X,
   Zap,
@@ -62,6 +62,7 @@ import {
   useJobRuns,
   useUpdateJob,
 } from "@/lib/hooks/use-jobs";
+import { useTables } from "@/lib/hooks/use-tables";
 import { DEFAULT_RUNTIME, type Gate, isRuntime, RUNTIME_META } from "@/lib/runtimes";
 import { formatTimestamp, timeAgo } from "@/lib/time";
 
@@ -93,7 +94,7 @@ type Job = {
   last_run_at: number | null;
   next_run_at: number | null;
   docs: { id: string; title: string }[];
-  databases: { id: string; name: string; table_name: string }[];
+  tables: { id: string; name: string; table_name: string }[];
   envVars: { id: string; name: string }[];
 };
 const INSTRUCTIONS_CHAR_LIMIT = 400;
@@ -147,6 +148,7 @@ export default function JobDetailPage() {
 
   const { data: allDocs = [] } = useDocs();
   const { data: allEnvVars = [] } = useEnvVars();
+  const { data: allTables = [] } = useTables();
 
   const updateJob = useUpdateJob();
   const deleteJob = useDeleteJob();
@@ -157,6 +159,7 @@ export default function JobDetailPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
   const [showEnvVars, setShowEnvVars] = useState(false);
+  const [showTables, setShowTables] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
@@ -172,8 +175,10 @@ export default function JobDetailPage() {
   const [editTitleFormat, setEditTitleFormat] = useState("");
   const [editDocIds, setEditDocIds] = useState<string[]>([]);
   const [editEnvVarIds, setEditEnvVarIds] = useState<string[]>([]);
+  const [editTableIds, setEditTableIds] = useState<string[]>([]);
   const [showEditDocPicker, setShowEditDocPicker] = useState(false);
   const [showEditEnvVarPicker, setShowEditEnvVarPicker] = useState(false);
+  const [showEditTablePicker, setShowEditTablePicker] = useState(false);
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -198,6 +203,7 @@ export default function JobDetailPage() {
           titleFormat: editingWorkflow ? "" : editTitleFormat,
           docIds: editDocIds,
           envVarIds: editEnvVarIds,
+          tableIds: editTableIds,
         },
       });
     } catch (err) {
@@ -248,6 +254,22 @@ export default function JobDetailPage() {
     }
   }
 
+  async function handleLinkTable(tableId: string) {
+    try {
+      await linkMutations.linkTable.mutateAsync(tableId);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to link table");
+    }
+  }
+
+  async function handleUnlinkTable(tableId: string) {
+    try {
+      await linkMutations.unlinkTable.mutateAsync(tableId);
+    } catch {
+      alert("Failed to unlink table");
+    }
+  }
+
   const [showTrigger, setShowTrigger] = useState(false);
 
   async function handleDelete() {
@@ -280,6 +302,7 @@ export default function JobDetailPage() {
   const linkableEnvVars = isOrgLevel
     ? allEnvVars.filter((ev) => ev.project_id === null)
     : allEnvVars;
+  const linkableTables = isOrgLevel ? allTables.filter((t) => t.project_id === null) : allTables;
 
   return (
     <div className="space-y-6">
@@ -338,6 +361,7 @@ export default function JobDetailPage() {
                 setEditTitleFormat(job.title_format || "");
                 setEditDocIds(job.docs.map((d) => d.id));
                 setEditEnvVarIds(job.envVars.map((ev) => ev.id));
+                setEditTableIds(job.tables.map((t) => t.id));
               }
               setShowEdit(true);
             }}
@@ -470,22 +494,42 @@ export default function JobDetailPage() {
         )}
       </section>
 
-      {/* Databases */}
-      {job.databases.length > 0 && (
-        <section>
-          <SectionHeader>Databases</SectionHeader>
+      {/* Tables */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Tables</SectionHeader>
+          <Button variant="outline" size="sm" onClick={() => setShowTables(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
+        </div>
+        {job.tables.length === 0 ? (
+          <EmptyState>No tables linked to this job.</EmptyState>
+        ) : (
           <div className="space-y-2">
-            {job.databases.map((d) => (
-              <RowLink key={d.id} href={`/databases/${d.id}`} align="center">
+            {job.tables.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 rounded-lg border p-3 group">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <Table2 className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <span className="text-sm font-mono font-medium">{d.name}</span>
-              </RowLink>
+                <Link
+                  href={`/tables/${t.id}`}
+                  className="text-sm font-mono font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors"
+                >
+                  {t.name}
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => handleUnlinkTable(t.id)}
+                  className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Remove"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* Secrets */}
       <section>
@@ -648,6 +692,53 @@ export default function JobDetailPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Add Tables Dialog */}
+      <Dialog open={showTables} onOpenChange={setShowTables}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Tables</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const linkedIds = new Set(job.tables.map((t) => t.id));
+            const available = linkableTables.filter((t) => !linkedIds.has(t.id));
+            if (available.length === 0) {
+              return (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  All tables are already linked to this job.
+                </p>
+              );
+            }
+            return (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {available.map((t) => (
+                  <button
+                    type="button"
+                    key={t.id}
+                    onClick={async () => {
+                      await handleLinkTable(t.id);
+                    }}
+                    className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <Table2 className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <span className="text-sm font-mono font-medium flex-1 min-w-0 truncate">
+                      {t.name}
+                    </span>
+                    {t.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowTables(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Dialog */}
       <Dialog open={showEdit} onOpenChange={setShowEdit}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto overflow-x-hidden">
@@ -775,6 +866,15 @@ export default function JobDetailPage() {
               label="Secrets"
               nameClass="font-mono"
             />
+            <SelectedItems
+              items={linkableTables}
+              selectedIds={editTableIds}
+              onRemove={(tid) => setEditTableIds((prev) => prev.filter((i) => i !== tid))}
+              onAdd={() => setShowEditTablePicker(true)}
+              icon={Table2}
+              label="Tables"
+              nameClass="font-mono"
+            />
             <DialogFooter>
               <Button
                 type="button"
@@ -819,6 +919,20 @@ export default function JobDetailPage() {
           )
         }
         icon={KeyRound}
+        nameClass="font-mono"
+      />
+      <PickerDialog
+        open={showEditTablePicker}
+        onOpenChange={setShowEditTablePicker}
+        title="Select Tables"
+        items={linkableTables}
+        selectedIds={new Set(editTableIds)}
+        onToggle={(tid) =>
+          setEditTableIds((prev) =>
+            prev.includes(tid) ? prev.filter((i) => i !== tid) : [...prev, tid],
+          )
+        }
+        icon={Table2}
         nameClass="font-mono"
       />
 

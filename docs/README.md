@@ -24,7 +24,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 - [Jobs and runs](concepts/jobs-and-runs.md) — schedules, the lifecycle, retries
 - [Workflows](concepts/workflows.md) — deterministic shell-command jobs and agent prerun gates
 - [Projects](concepts/projects.md) — orgs, projects, and where work lives
-- [Shared context](concepts/shared-context.md) — docs, databases, secrets, and pinning
+- [Shared context](concepts/shared-context.md) — docs, tables, secrets, and pinning
 - [Captain](concepts/captain.md) — the in-browser CLI for operating the harbour
 - [Attachments](concepts/attachments.md) — files and embeds, video processing
 

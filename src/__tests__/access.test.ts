@@ -13,13 +13,13 @@ import {
 import {
   addMembership,
   createAgent,
-  createDatabase,
   createDoc,
   createEnvVar,
   createJob,
   createOrg,
   createProject,
   createRun,
+  createTable,
   createUser,
   updateUser,
 } from "@/lib/db/queries";
@@ -173,21 +173,21 @@ describe("orgIdForResource", () => {
     const projDoc = createDoc(org.id, project.id, "Spec")!;
     const orgEnv = createEnvVar(org.id, null, "API_KEY", "secret")!;
     const projEnv = createEnvVar(org.id, project.id, "DB_URL", "url")!;
-    const orgDb = createDatabase(org.id, null, "shared", [{ name: "v", type: "TEXT" }]);
-    const projDb = createDatabase(org.id, project.id, "local", [{ name: "v", type: "TEXT" }]);
+    const orgDb = createTable(org.id, null, "shared", [{ name: "v", type: "TEXT" }]);
+    const projDb = createTable(org.id, project.id, "local", [{ name: "v", type: "TEXT" }]);
 
     expect(orgIdForResource("doc", orgDoc.id)).toBe(org.id);
     expect(orgIdForResource("doc", projDoc.id)).toBe(org.id);
     expect(orgIdForResource("env_var", orgEnv.id)).toBe(org.id);
     expect(orgIdForResource("env_var", projEnv.id)).toBe(org.id);
-    expect(orgIdForResource("database", orgDb.id)).toBe(org.id);
-    expect(orgIdForResource("database", projDb.id)).toBe(org.id);
+    expect(orgIdForResource("table", orgDb.id)).toBe(org.id);
+    expect(orgIdForResource("table", projDb.id)).toBe(org.id);
   });
 
   it("returns null for a non-existent resource", () => {
     expect(orgIdForResource("doc", "nope")).toBeNull();
     expect(orgIdForResource("env_var", "nope")).toBeNull();
-    expect(orgIdForResource("database", "nope")).toBeNull();
+    expect(orgIdForResource("table", "nope")).toBeNull();
   });
 });
 

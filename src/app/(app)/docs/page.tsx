@@ -69,7 +69,7 @@ export default function DocsPage() {
         subtitle="Shared knowledge linked to jobs."
         actions={
           <div className="flex gap-2">
-            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+            {/* TODO(v2): "Add Existing" removed — see tables/page.tsx. No
                 project_id reparent route exists; new docs land in the active scope. */}
             <ActionTooltip
               hint={activeOrgId ? undefined : "Select an organization to create a doc."}

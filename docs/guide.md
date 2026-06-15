@@ -4,15 +4,15 @@ This document covers everything an agent needs to work with Harbour. It is serve
 
 ## Overview
 
-Harbour is a control plane that manages your recurring jobs, shared docs, data stores, and encrypted environment variables. It doesn't control how you do your work — it tells you *what* to do, *when*, and gives you the context to do it.
+Harbour is a control plane that manages your recurring jobs, shared docs, tables, and encrypted environment variables. It doesn't control how you do your work — it tells you *what* to do, *when*, and gives you the context to do it.
 
-You poll for work. Harbour returns a job with instructions, referenced docs, database rows, and env vars. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and your next poll picks it up. You can also create and update shared docs and manage structured data through the API.
+You poll for work. Harbour returns a job with instructions, referenced docs, table rows, and env vars. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and your next poll picks it up. You can also create and update shared docs and manage structured data through the API.
 
 Key concepts:
-- **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/data/env vars
+- **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/tables/env vars
 - **Runs** — a single execution of a job, with an activity log of agent and human messages
 - **Docs** — shared markdown documents, injected into runs automatically
-- **Databases** — SQLite tables you create and manage, injected into runs automatically
+- **Tables** — SQLite tables you create and manage, injected into runs automatically
 - **Env Vars** — encrypted key-value pairs (API keys, tokens), decrypted and injected at runtime
 
 ## Scheduling
@@ -114,7 +114,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
-  "data": {
+  "tables": {
     "metrics": { "id": "uuid" },
     "tweet_history": { "id": "uuid" }
   },
@@ -149,9 +149,9 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
       "upload_attachment": "POST https://your-harbour.example.com/api/runs/<run_id>/attachments",
       "create_doc": "POST https://your-harbour.example.com/api/docs",
       "update_doc": "PUT https://your-harbour.example.com/api/docs/:id",
-      "create_database": "POST https://your-harbour.example.com/api/databases",
-      "insert_rows": "POST https://your-harbour.example.com/api/databases/:id/rows",
-      "read_rows": "GET https://your-harbour.example.com/api/databases/:id/rows",
+      "create_table": "POST https://your-harbour.example.com/api/tables",
+      "insert_rows": "POST https://your-harbour.example.com/api/tables/:id/rows",
+      "read_rows": "GET https://your-harbour.example.com/api/tables/:id/rows",
       "guide": "GET https://your-harbour.example.com/api/guide"
     },
     "status_options": ["done", "failed", "waiting"],
@@ -166,7 +166,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached databases (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, databases, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached tables (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, tables, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and tables — no need to construct URLs yourself.
 
 The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
 
@@ -298,14 +298,14 @@ Content-Type: application/json
 
 Pending runs **always take priority** over scheduled jobs. Other jobs continue to fire normally while a run is waiting — work doesn't block.
 
-## Databases
+## Tables
 
-Databases are real SQLite tables managed through the API. Each database is a named table with typed columns — agents create them, insert rows, and link them to jobs. A database injected into a run is a **read reference**: the `/next` payload carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`.
+Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the `/next` payload carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are auto-attached to new jobs created in their scope (like pinned docs and secrets).
 
-### Create a Database
+### Create a Table
 
 ```
-POST /api/databases
+POST /api/tables
 Content-Type: application/json
 
 {
@@ -319,12 +319,12 @@ Content-Type: application/json
 }
 ```
 
-If a database with the same name already exists, it returns the existing one. Column types are native SQLite: `TEXT`, `INTEGER`, `REAL`. Every table gets an auto-incrementing `_id` column.
+If a table with the same name already exists, it returns the existing one. Column types are native SQLite: `TEXT`, `INTEGER`, `REAL`. Every table gets an auto-incrementing `_id` column.
 
 ### Insert Rows
 
 ```
-POST /api/databases/:id/rows
+POST /api/tables/:id/rows
 Content-Type: application/json
 
 [
@@ -338,7 +338,7 @@ Body can be a single object or an array. Unknown columns are silently ignored.
 ### Read Rows
 
 ```
-GET /api/databases/:id/rows?limit=50&offset=0&orderBy=date&order=DESC
+GET /api/tables/:id/rows?limit=50&offset=0&orderBy=date&order=DESC
 ```
 
 Returns `{ rows: [...], total: 100, limit: 50, offset: 0 }`.
@@ -348,7 +348,7 @@ All query params are optional. Defaults: `limit=100`, `offset=0`, `order=DESC`, 
 ### Update a Row
 
 ```
-PUT /api/databases/:id/rows/:rowId
+PUT /api/tables/:id/rows/:rowId
 Content-Type: application/json
 
 { "likes": 200 }
@@ -357,13 +357,13 @@ Content-Type: application/json
 ### Delete a Row
 
 ```
-DELETE /api/databases/:id/rows/:rowId
+DELETE /api/tables/:id/rows/:rowId
 ```
 
 ### Add a Column
 
 ```
-POST /api/databases/:id/columns
+POST /api/tables/:id/columns
 Content-Type: application/json
 
 { "name": "retweets", "type": "INTEGER", "default": 0 }
@@ -371,23 +371,23 @@ Content-Type: application/json
 
 Schema changes are tracked in a migration history.
 
-### Link a Database to a Job
+### Link a Table to a Job
 
 ```
-POST /api/jobs/:id/data
+POST /api/jobs/:id/tables
 Content-Type: application/json
 
-{ "databaseId": "uuid" }
+{ "tableId": "uuid" }
 ```
 
-Only databases **linked to the job** (via this endpoint) are included in the `/next` payload under `data`, keyed by name — org/project membership alone does not inject a database. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/databases/:id` returns the table's column schema if you need it.
+Only tables **linked to the job** (via this endpoint) are included in the `/next` payload under `tables`, keyed by name — org/project membership alone does not inject a table. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/tables/:id` returns the table's column schema if you need it.
 
 ### Convenience Endpoint
 
 Agents can also use the combined endpoint to create + link + seed in one call:
 
 ```
-POST /api/agents/:id/data
+POST /api/agents/:id/tables
 Content-Type: application/json
 
 {

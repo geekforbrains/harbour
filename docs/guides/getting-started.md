@@ -109,7 +109,7 @@ curl -s -H "Authorization: Bearer $KEY" \
   "$HARBOUR_URL/api/agents/$AGENT_ID/next"
 ```
 
-You'll get the full bundle: `run`, `job`, `docs`, `data`, `env`, `attachments`, and an `api` block with pre-resolved endpoints for this run. That's what your agent runtime parses to do work.
+You'll get the full bundle: `run`, `job`, `docs`, `tables`, `env`, `attachments`, and an `api` block with pre-resolved endpoints for this run. That's what your agent runtime parses to do work.
 
 Finish the run cleanly so the next poll doesn't keep returning the same one:
 
@@ -196,5 +196,5 @@ You have a working harbour with a working agent. From here:
 
 - [Jobs and runs](../concepts/jobs-and-runs.md) — the polling ladder, the lifecycle, how retries work.
 - [Agents](../concepts/agents.md) — the harbour-vs-external split and per-agent settings.
-- [Shared context](../concepts/shared-context.md) — docs, databases, env vars, and how pinning auto-attaches them.
+- [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning auto-attaches them.
 - [Running a runner on a different machine](run-on-different-machine.md) — for iOS/Xcode boxes, GPU workstations, on-prem repos.

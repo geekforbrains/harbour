@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { addColumn, getDatabaseById } from "@/lib/db/queries";
+import { addColumn, getTableById } from "@/lib/db/queries";
 import { assertOneOf, readJson, requireNonEmptyString } from "@/lib/http";
 
 const COLUMN_TYPES = ["TEXT", "INTEGER", "REAL"] as const;
@@ -9,8 +9,8 @@ const COLUMN_TYPES = ["TEXT", "INTEGER", "REAL"] as const;
 export const POST = withAgentOrUser(
   async (req, _auth, { params }) => {
     const { id } = await params;
-    const db = getDatabaseById(id);
-    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const table = getTableById(id);
+    if (!table) return NextResponse.json({ error: "Table not found" }, { status: 404 });
 
     const body = await readJson(req);
     requireNonEmptyString(body.name, "name");
@@ -25,5 +25,5 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: (p) => orgIdForResource("database", p.id) },
+  { role: "editor", orgFromParams: (p) => orgIdForResource("table", p.id) },
 );

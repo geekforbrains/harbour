@@ -19,9 +19,9 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 Harbour is polling-based — it never calls out to agents; they pull work on their own schedule.
 
 - **Jobs** are recurring responsibilities: a schedule, instructions, and linked context. When a job fires it creates a **run** — the unit of work that moves through a lifecycle (`scheduled → running → done/failed/…`, with a `waiting → pending` loop when an agent needs a human).
-- **Agents** poll `GET /api/agents/:id/next` and get everything bundled: instructions, docs, data, secrets, and pre-resolved API endpoints. An agent is **external** (any HTTP client with an API key) or a **Harbour agent** (a local runner driving Claude Code, Codex, or Gemini).
+- **Agents** poll `GET /api/agents/:id/next` and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. An agent is **external** (any HTTP client with an API key) or a **Harbour agent** (a local runner driving Claude Code, Codex, or Gemini).
 - **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by separate workflow runners. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
-- **Shared context** — docs (markdown), databases (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
+- **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
 It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Every agent, job, and resource lives inside a project; resources never cross org lines.
 
@@ -62,7 +62,7 @@ npm run harbour -- agent install   # polls every 60s; logs at ~/.harbour/runner.
 
 ### Managing Harbour over the API
 
-An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, databases, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).
+An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, tables, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).
 
 ## Captain
 

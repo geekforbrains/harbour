@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, KeyRound, Pin, Plus, X } from "lucide-react";
+import { FileText, KeyRound, Pin, Plus, Table2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GateField } from "@/components/app/gate-field";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
@@ -22,6 +22,7 @@ import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useTables } from "@/lib/hooks/use-tables";
 import type { Gate } from "@/lib/runtimes";
 
 // Sub-dialog for picking docs or env vars
@@ -172,6 +173,7 @@ export function CreateDialog({
   const { data: agents = [] } = useAgents(undefined, { enabled: open });
   const { data: docs = [] } = useDocs(undefined, { enabled: open });
   const { data: envVars = [] } = useEnvVars(undefined, { enabled: open });
+  const { data: tables = [] } = useTables(undefined, { enabled: open });
 
   // Shared fields
   const [agentId, setAgentId] = useState("");
@@ -181,11 +183,13 @@ export function CreateDialog({
   const [thinking, setThinking] = useState("");
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [selectedEnvVarIds, setSelectedEnvVarIds] = useState<string[]>([]);
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
   const [pinnedSeeded, setPinnedSeeded] = useState(false);
 
   // Picker dialogs
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [showEnvVarPicker, setShowEnvVarPicker] = useState(false);
+  const [showTablePicker, setShowTablePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Job fields. Gates (prerun/postrun for agents, the command for workflows)
@@ -206,20 +210,22 @@ export function CreateDialog({
   // the server rejects anything wider with a 400.
   const eligibleDocs = orgScoped ? docs.filter((d) => d.project_id === null) : docs;
   const eligibleEnvVars = orgScoped ? envVars.filter((ev) => ev.project_id === null) : envVars;
+  const eligibleTables = orgScoped ? tables.filter((t) => t.project_id === null) : tables;
 
   // Default the agent select to the first agent once the list loads.
   useEffect(() => {
     if (open && agents.length > 0 && !agentId) setAgentId(agents[0].id);
   }, [open, agents, agentId]);
 
-  // Auto-select pinned docs/env vars once when the dialog opens.
+  // Auto-select pinned docs/env vars/tables once when the dialog opens.
   useEffect(() => {
     if (!open || pinnedSeeded) return;
-    if (docs.length === 0 && envVars.length === 0) return;
+    if (docs.length === 0 && envVars.length === 0 && tables.length === 0) return;
     setSelectedDocIds(docs.filter((d) => d.pinned).map((d) => d.id));
     setSelectedEnvVarIds(envVars.filter((ev) => ev.pinned).map((ev) => ev.id));
+    setSelectedTableIds(tables.filter((t) => t.pinned).map((t) => t.id));
     setPinnedSeeded(true);
-  }, [open, pinnedSeeded, docs, envVars]);
+  }, [open, pinnedSeeded, docs, envVars, tables]);
 
   function reset() {
     setName("");
@@ -228,6 +234,7 @@ export function CreateDialog({
     setThinking("");
     setSelectedDocIds([]);
     setSelectedEnvVarIds([]);
+    setSelectedTableIds([]);
     setPinnedSeeded(false);
     setSubmitting(false);
     setDescription("");
@@ -262,6 +269,7 @@ export function CreateDialog({
     const envVarIds = selectedEnvVarIds.filter((sid) =>
       eligibleEnvVars.some((ev) => ev.id === sid),
     );
+    const tableIds = selectedTableIds.filter((sid) => eligibleTables.some((t) => t.id === sid));
 
     const body = {
       name,
@@ -277,6 +285,7 @@ export function CreateDialog({
       titleFormat: !isWorkflow ? titleFormat.trim() || undefined : undefined,
       docIds: docIds.length > 0 ? docIds : undefined,
       envVarIds: envVarIds.length > 0 ? envVarIds : undefined,
+      tableIds: tableIds.length > 0 ? tableIds : undefined,
     };
 
     try {
@@ -353,6 +362,15 @@ export function CreateDialog({
         onAdd={() => setShowEnvVarPicker(true)}
         icon={KeyRound}
         label="Secrets"
+        nameClass="font-mono"
+      />
+      <SelectedItems
+        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        selectedIds={selectedTableIds}
+        onRemove={(id) => setSelectedTableIds((prev) => prev.filter((i) => i !== id))}
+        onAdd={() => setShowTablePicker(true)}
+        icon={Table2}
+        label="Tables"
         nameClass="font-mono"
       />
     </>
@@ -511,7 +529,7 @@ export function CreateDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Sub-dialogs for picking docs and env vars */}
+      {/* Sub-dialogs for picking docs, env vars, and tables */}
       <PickerDialog
         open={showDocPicker}
         onOpenChange={setShowDocPicker}
@@ -529,6 +547,16 @@ export function CreateDialog({
         selectedIds={new Set(selectedEnvVarIds)}
         onToggle={(id) => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
         icon={KeyRound}
+        nameClass="font-mono"
+      />
+      <PickerDialog
+        open={showTablePicker}
+        onOpenChange={setShowTablePicker}
+        title="Select Tables"
+        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        selectedIds={new Set(selectedTableIds)}
+        onToggle={(id) => toggleItem(id, selectedTableIds, setSelectedTableIds)}
+        icon={Table2}
         nameClass="font-mono"
       />
     </>

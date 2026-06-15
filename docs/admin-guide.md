@@ -4,16 +4,16 @@ This document covers everything an admin agent needs to manage a Harbour instanc
 
 ## Overview
 
-You have admin access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage orgs, projects, agents, jobs, runs, docs, databases, env vars, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
+You have admin access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage orgs, projects, agents, jobs, runs, docs, tables, env vars, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
 
 Key concepts:
 - **Orgs** — top-level tenants. Every project belongs to an org; resources never cross org lines.
-- **Projects** — containers inside an org. Every agent lives in exactly one project. Docs, databases, env vars — and workflow jobs — are either project-level or org-level (shared across the org's projects); agent jobs are always project-level.
+- **Projects** — containers inside an org. Every agent lives in exactly one project. Docs, tables, env vars — and workflow jobs — are either project-level or org-level (shared across the org's projects); agent jobs are always project-level.
 - **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into the runs of jobs they're attached to (pinned docs auto-attach to new jobs).
-- **Databases** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're linked to.
+- **Tables** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're linked to (pinned tables auto-attach to new jobs).
 - **Env Vars** — encrypted key-value pairs (API keys, tokens) injected into the runs of jobs they're attached to (pinned vars auto-attach to new jobs), decrypted at runtime.
 
 ## Authentication
@@ -30,7 +30,7 @@ The key acts as the user who created it — all actions are attributed to that u
 
 Every mutation endpoint validates its input before touching the database, so you either succeed or get a clear rejection — there's no silent third outcome where a malformed value is stored.
 
-- **Send a JSON object body.** Set `Content-Type: application/json` and send a top-level object (`{ ... }`). A malformed/empty body, a non-JSON body, or a top-level array/string/number is a **400** `{ "error": "..." }` — never a 500. (Where the wire contract allows a bare array — only the row-insert endpoint `POST /api/databases/:id/rows` — that's called out at the endpoint.)
+- **Send a JSON object body.** Set `Content-Type: application/json` and send a top-level object (`{ ... }`). A malformed/empty body, a non-JSON body, or a top-level array/string/number is a **400** `{ "error": "..." }` — never a 500. (Where the wire contract allows a bare array — only the row-insert endpoint `POST /api/tables/:id/rows` — that's called out at the endpoint.)
 - **Required fields and types are enforced.** A required field that's missing or empty, a string field given an object, an integer field given `"30m"`, an array field given a string, or an unknown enum value (e.g. an invalid `cli` or column `type`) all return **400** with a human-readable message naming the offending field. Wrong-typed values are rejected, never coerced and stored.
 - **Error envelope.** All errors are `{ "error": "<message>" }`. Status codes: `400` bad input, `401` unauthenticated, `403` forbidden/out-of-scope (a resource in another tenant resolves to 403/404 rather than leaking its existence), `404` not found, `409` conflict (a name-slug collision, or an illegal run-status edge such as killing a non-running run), `429` rate-limited.
 
@@ -38,7 +38,7 @@ The practical contract: submit correctly and the call succeeds, or submit wrong 
 
 ## Scope: Orgs and Projects
 
-List and create endpoints are scoped by query param — `?orgId=<id>` for org-scoped resources (runs, jobs, docs, databases, env vars, projects) and `?projectId=<id>` for project-level ones (agents). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
+List and create endpoints are scoped by query param — `?orgId=<id>` for org-scoped resources (runs, jobs, docs, tables, env vars, projects) and `?projectId=<id>` for project-level ones (agents). Requests without the scope param return 403. Resource-by-id endpoints (`/api/jobs/:id`, etc.) need no scope param — access is checked against the resource's owning org.
 
 Discover your scope first:
 
@@ -178,7 +178,7 @@ Content-Type: application/json
 }
 ```
 
-`name`, `schedule`, and `command` are all required. `command` is a **gate** — `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }`, same shape as an agent job's prerun/postrun (`runtime` optional, defaults to `"bash"`; `content` required and non-empty). `workflow` is accepted as an alias for `command`. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/databases; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner materializes the command's body to a file under `~/.harbour/workflows/` and runs it with the runtime's interpreter, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
+`name`, `schedule`, and `command` are all required. `command` is a **gate** — `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }`, same shape as an agent job's prerun/postrun (`runtime` optional, defaults to `"bash"`; `content` required and non-empty). `workflow` is accepted as an alias for `command`. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/tables; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner materializes the command's body to a file under `~/.harbour/workflows/` and runs it with the runtime's interpreter, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
 
 ### Schedule Format
 
@@ -231,17 +231,17 @@ Creates a run in `scheduled` status with `scheduled_for` set to now, regardless 
 ```
 POST   /api/jobs/:id/docs                  { "docId": "uuid" }
 POST   /api/jobs/:id/env-vars              { "envVarId": "uuid" }
-POST   /api/jobs/:id/data                  { "databaseId": "uuid" }
+POST   /api/jobs/:id/tables                { "tableId": "uuid" }
 DELETE /api/jobs/:id/docs/:docId
 DELETE /api/jobs/:id/env-vars/:envVarId
-DELETE /api/jobs/:id/data/:dataId
+DELETE /api/jobs/:id/tables/:tableId
 ```
 
-Each POST returns `{ "ok": true }` (the `docs` and `data` routes use status 201; the `env-vars` route uses status 200). The body field is required and must be a non-empty string id, else 400.
+Each POST returns `{ "ok": true }` (the `docs` and `tables` routes use status 201; the `env-vars` route uses status 200). The body field is required and must be a non-empty string id, else 400.
 
 Two distinct rejections, by cause:
 - A resource in a **different org** than the job → **404** (it's treated as not found, never leaking cross-tenant existence).
-- A tier violation — an **org-level job linking a project-level resource** → **400** with a message like "Org-level jobs can only link org-level …". An org-level (workflow) job may link only org-level docs/env vars/databases.
+- A tier violation — an **org-level job linking a project-level resource** → **400** with a message like "Org-level jobs can only link org-level …". An org-level (workflow) job may link only org-level docs/env vars/tables.
 
 ### List a Job's Runs
 ```
@@ -383,17 +383,17 @@ POST /api/docs/:id/pin
 ```
 Toggles pinned status. Pinned docs are auto-attached to new jobs created in their scope — an org-level pinned doc to every new job in the org, a project-level one to new jobs in that project.
 
-## Databases
+## Tables
 
-### List Databases
+### List Tables
 ```
-GET /api/databases?orgId=<id>
-GET /api/databases?orgId=<id>&projectId=<id>
+GET /api/tables?orgId=<id>
+GET /api/tables?orgId=<id>&projectId=<id>
 ```
 
-### Create a Database
+### Create a Table
 ```
-POST /api/databases
+POST /api/tables
 Content-Type: application/json
 
 {
@@ -405,19 +405,19 @@ Content-Type: application/json
 }
 ```
 
-Column `type` must be one of `TEXT`, `INTEGER`, `REAL` (case-insensitive — anything else is a 400). Every table gets an auto-incrementing `_id` column. `projectId` is optional (body or query) — without it the database is org-level. If a database with that name already exists in scope, the existing one is returned instead of creating a duplicate.
+Column `type` must be one of `TEXT`, `INTEGER`, `REAL` (case-insensitive — anything else is a 400). Every table gets an auto-incrementing `_id` column. `projectId` is optional (body or query) — without it the table is org-level. If a table with that name already exists in scope, the existing one is returned instead of creating a duplicate.
 
-**Name sanitization (applies to both the database name and every column name):** names are lowercased, every non-`[a-z0-9_]` character becomes `_`, runs of `_` collapse, leading/trailing `_` are stripped, and the result is truncated to 64 chars — so `"Daily Metrics!"` is stored as `daily_metrics`. A name that sanitizes to empty (no letters or digits) is a 400, as is one that collides with a SQLite reserved word (e.g. `order`, `select`, `group`). A column may not be named `_id` (reserved). At create time a `required: true` column needs no `default` (the table starts empty); adding a required column to an *existing* table later does — see **Add a Column** below.
+**Name sanitization (applies to both the table name and every column name):** names are lowercased, every non-`[a-z0-9_]` character becomes `_`, runs of `_` collapse, leading/trailing `_` are stripped, and the result is truncated to 64 chars — so `"Daily Metrics!"` is stored as `daily_metrics`. A name that sanitizes to empty (no letters or digits) is a 400, as is one that collides with a SQLite reserved word (e.g. `order`, `select`, `group`). A column may not be named `_id` (reserved). At create time a `required: true` column needs no `default` (the table starts empty); adding a required column to an *existing* table later does — see **Add a Column** below.
 
-### Get / Delete a Database
+### Get / Delete a Table
 ```
-GET    /api/databases/:id
-DELETE /api/databases/:id
+GET    /api/tables/:id
+DELETE /api/tables/:id
 ```
 
 ### Add a Column
 ```
-POST /api/databases/:id/columns
+POST /api/tables/:id/columns
 Content-Type: application/json
 
 { "name": "new_field", "type": "TEXT", "default": "" }
@@ -426,7 +426,7 @@ Content-Type: application/json
 
 ### Insert Rows
 ```
-POST /api/databases/:id/rows
+POST /api/tables/:id/rows
 Content-Type: application/json
 
 [
@@ -437,15 +437,21 @@ Content-Type: application/json
 
 ### Read Rows
 ```
-GET /api/databases/:id/rows?limit=100&offset=0&orderBy=date&order=DESC
+GET /api/tables/:id/rows?limit=100&offset=0&orderBy=date&order=DESC
 ```
 All query params are optional. Defaults: `limit=100`, `offset=0`, `order=DESC`. With no `orderBy` the rows come back newest-first by insertion order (`rowid DESC`); supplying an `orderBy` that isn't a real column is a 400. Returns `{ "rows": [...], "total": <count>, "limit": ..., "offset": ... }`.
 
 ### Update / Delete a Row
 ```
-PUT    /api/databases/:id/rows/:rowId    { "value": 99.9 }
-DELETE /api/databases/:id/rows/:rowId
+PUT    /api/tables/:id/rows/:rowId    { "value": 99.9 }
+DELETE /api/tables/:id/rows/:rowId
 ```
+
+### Pin/Unpin a Table
+```
+POST /api/tables/:id/pin
+```
+Toggles pinned status. Pinned tables are auto-attached to new jobs created in their scope, same as pinned docs and env vars.
 
 ## Environment Variables
 

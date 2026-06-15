@@ -4,12 +4,12 @@ import {
   Activity,
   Bot,
   Briefcase,
-  Database,
   FileText,
   KeyRound,
   MessageSquare,
   MoreHorizontal,
   Settings,
+  Table2,
   Users,
   Workflow,
 } from "lucide-react";
@@ -47,7 +47,7 @@ export function MobileBottomNav() {
   const moreLinks = [
     { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/docs", label: "Docs", icon: FileText },
-    { href: "/databases", label: "Databases", icon: Database },
+    { href: "/tables", label: "Tables", icon: Table2 },
     { href: "/env-vars", label: "Secrets", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },

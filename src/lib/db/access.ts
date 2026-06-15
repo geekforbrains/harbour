@@ -86,7 +86,7 @@ export function orgIdForRun(id: string): string | null {
   return row?.org_id ?? null;
 }
 
-export type ResourceKind = "project" | "agent" | "job" | "run" | "doc" | "env_var" | "database";
+export type ResourceKind = "project" | "agent" | "job" | "run" | "doc" | "env_var" | "table";
 
 /**
  * Resolve any resource (by kind + id) to its owning org id, walking the
@@ -115,8 +115,8 @@ export function orgIdForResource(kind: ResourceKind, id: string): string | null 
         | undefined;
       return row?.org_id ?? null;
     }
-    case "database": {
-      const row = db.prepare(`SELECT org_id FROM databases WHERE id = ?`).get(id) as
+    case "table": {
+      const row = db.prepare(`SELECT org_id FROM tables WHERE id = ?`).get(id) as
         | { org_id: string }
         | undefined;
       return row?.org_id ?? null;

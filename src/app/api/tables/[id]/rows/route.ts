@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getDatabaseById, getRows, insertRows } from "@/lib/db/queries";
+import { getRows, getTableById, insertRows } from "@/lib/db/queries";
 import { badRequest } from "@/lib/http";
 
 // The wire contract (docs/guide.md) allows either a single row object or an
@@ -24,13 +24,13 @@ function readRowsBody(text: string): Record<string, unknown>[] {
   return rows as Record<string, unknown>[];
 }
 
-const dbOrg = (p: Record<string, string>) => orgIdForResource("database", p.id);
+const tableOrg = (p: Record<string, string>) => orgIdForResource("table", p.id);
 
 export const GET = withAgentOrUser(
   async (req, _auth, { params }) => {
     const { id } = await params;
-    const db = getDatabaseById(id);
-    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const table = getTableById(id);
+    if (!table) return NextResponse.json({ error: "Table not found" }, { status: 404 });
 
     const url = new URL(req.url);
     const limit = parseInt(url.searchParams.get("limit") || "100", 10);
@@ -41,14 +41,14 @@ export const GET = withAgentOrUser(
     const result = getRows(id, { limit, offset, orderBy, order });
     return NextResponse.json(result);
   },
-  { role: "viewer", orgFromParams: dbOrg },
+  { role: "viewer", orgFromParams: tableOrg },
 );
 
 export const POST = withAgentOrUser(
   async (req, _auth, { params }) => {
     const { id } = await params;
-    const db = getDatabaseById(id);
-    if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    const table = getTableById(id);
+    if (!table) return NextResponse.json({ error: "Table not found" }, { status: 404 });
 
     const rows = readRowsBody(await req.text());
 
@@ -60,5 +60,5 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: message }, { status: 400 });
     }
   },
-  { role: "editor", orgFromParams: dbOrg },
+  { role: "editor", orgFromParams: tableOrg },
 );

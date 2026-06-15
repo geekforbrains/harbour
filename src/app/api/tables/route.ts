@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAgentOrUser, withOrgAuth } from "@/lib/auth";
 import { orgIdForProject } from "@/lib/db/access";
 import type { ColumnDef } from "@/lib/db/queries";
-import { createDatabase, getDatabaseByName, listDatabases } from "@/lib/db/queries";
+import { createTable, getTableByName, listTables } from "@/lib/db/queries";
 import {
   assertOneOf,
   badRequest,
@@ -16,7 +16,7 @@ const COLUMN_TYPES = ["TEXT", "INTEGER", "REAL"] as const;
 export const GET = withOrgAuth(
   async (req, auth) => {
     const projectId = req.nextUrl.searchParams.get("projectId") || null;
-    return NextResponse.json(listDatabases(auth.orgId, projectId));
+    return NextResponse.json(listTables(auth.orgId, projectId));
   },
   { role: "viewer" },
 );
@@ -31,7 +31,7 @@ export const POST = withAgentOrUser(
     }
     // Each column's type is interpolated into CREATE TABLE DDL, so allow-list it
     // (case-insensitive) here rather than letting SQLite fail with an opaque
-    // exec error. Column names are sanitized in createDatabase.
+    // exec error. Column names are sanitized in createTable.
     const columns = body.columns.map((col) => {
       if (col === null || typeof col !== "object") {
         badRequest("each column must be an object");
@@ -51,13 +51,13 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
     }
 
-    // If a database already exists by name in this scope, return it.
-    const existing = getDatabaseByName(auth.orgId, projectId, name);
+    // If a table already exists by name in this scope, return it.
+    const existing = getTableByName(auth.orgId, projectId, name);
     if (existing) return NextResponse.json(existing);
 
     try {
-      const db = createDatabase(auth.orgId, projectId, name, columns as ColumnDef[]);
-      return NextResponse.json(db, { status: 201 });
+      const table = createTable(auth.orgId, projectId, name, columns as ColumnDef[]);
+      return NextResponse.json(table, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return NextResponse.json({ error: message }, { status: 400 });

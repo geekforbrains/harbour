@@ -45,6 +45,7 @@ export const POST = withOrgAuth(
     const description = optionalString(body.description, "description");
     const docIds = optionalStringArray(body.docIds, "docIds");
     const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
+    const tableIds = optionalStringArray(body.tableIds, "tableIds");
     const timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
 
     // Project-level when projectId given; otherwise org-level. Scope is fixed
@@ -77,6 +78,7 @@ export const POST = withOrgAuth(
         timeoutMinutes,
         docIds,
         envVarIds,
+        tableIds,
       });
       return NextResponse.json(job, { status: 201 });
     } catch (error) {

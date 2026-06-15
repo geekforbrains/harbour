@@ -20,7 +20,7 @@ in the schema, not bolted on:
 
 - **Operational entities** (`agents`, `jobs`, `runs`) carry a direct
   `project_id` FK. There are **no** `project_*` junction tables (v1 had them).
-- **Resources** (`docs`, `env_vars`, `databases`) are **dual-tier**: a NOT NULL
+- **Resources** (`docs`, `env_vars`, `tables`) are **dual-tier**: a NOT NULL
   `org_id` plus a NULLABLE `project_id`. `project_id IS NULL` ⇒ org-level (shared
   across the org); otherwise project-level.
 - **Jobs are dual-tier too**, but only for workflows: `jobs` carries a NOT NULL
@@ -28,7 +28,7 @@ in the schema, not bolted on:
   workflow job claimed by the org's workflow runners. Agent jobs are always
   project-level (a table CHECK enforces it). Scope is fixed at creation —
   `updateJob` cannot move a job between tiers — and an org-level job may link
-  only org-level resources (linking a project-scoped doc/env var/database into
+  only org-level resources (linking a project-scoped doc/env var/table into
   an org-scoped job would widen its blast radius; the query layer rejects it
   and routes return 400).
 - **Org-scoped** infrastructure: `workflow_runners`, `captain_conversations`.
@@ -258,14 +258,16 @@ timestamps. **Name uniqueness is enforced in the query layer**, not by a DB
 constraint, so a project-level name can override an org-level one. Index:
 `idx_env_vars_org_project`.
 
-### `databases`
+### `tables`
 Registry of agent-managed SQLite tables (the data tables are siblings in the
 same file). `org_id`, `project_id`, `name`, `table_name` (NN, **U** — globally
-unique physical identifier). Index: `idx_databases_org_project`.
+unique physical identifier), `pinned` (INTEGER NN, default 0 — pinned tables
+auto-attach to new jobs at creation, parity with `docs`/`env_vars`). Index:
+`idx_tables_org_project`.
 
-### `database_migrations`
-Per-database DDL history. `database_id`, `version` (NN), `description`, `sql`
-(NN), `created_at`. Index: `idx_database_migrations_db`.
+### `table_migrations`
+Per-table DDL history. `table_id`, `version` (NN), `description`, `sql`
+(NN), `created_at`. Index: `idx_table_migrations_tbl`.
 
 ## Job-linked junctions
 
@@ -277,7 +279,7 @@ project-level tiers).
 |---|---|---|
 | `job_docs` | `job_id` → `jobs` | `doc_id` → `docs` |
 | `job_env_vars` | `job_id` → `jobs` | `env_var_id` → `env_vars` |
-| `job_databases` | `job_id` → `jobs` | `database_id` → `databases` |
+| `job_tables` | `job_id` → `jobs` | `table_id` → `tables` |
 
 ## Settings
 
@@ -309,7 +311,7 @@ Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
   (`src/lib/db/runs.ts`) run as a single `db.transaction`. With `busy_timeout`
   plus guarded claim UPDATEs (`AND status = 'scheduled'/'pending'`), a lost race
   is a no-op, never a double-claim.
-- **Dual-tier resolution.** For `docs`/`env_vars`/`databases`, `project_id IS
+- **Dual-tier resolution.** For `docs`/`env_vars`/`tables`, `project_id IS
   NULL` means org-level; the query layer resolves project-over-org on name
   collisions.
 - **Workflows.** `jobs.kind = 'workflow'` ⇒ `agent_id` is NULL on both the job

@@ -1,6 +1,6 @@
 # Jobs and runs
 
-A **job** is configuration: instructions, a trigger (when to fire), and links to docs/databases/env vars that a run will need. A **run** is a single execution of that job — a row with a status, an activity log, an optional CLI session, and a deadline.
+A **job** is configuration: instructions, a trigger (when to fire), and links to docs/tables/env vars that a run will need. A **run** is a single execution of that job — a row with a status, an activity log, an optional CLI session, and a deadline.
 
 Jobs don't *do* anything on their own. They sit in the database and wait. When an agent polls and the job is due, Harbour creates a run and hands the agent everything bundled. The job stays put; the run is what moves through the lifecycle.
 
@@ -140,7 +140,7 @@ An external agent doesn't poll the kill signal, so there's no process for Harbou
 
 ## What the agent gets
 
-`/next` returns one bundle: the run, the job, referenced docs, database rows (most-recent 100 per linked table), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [guide.md](../guide.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
+`/next` returns one bundle: the run, the job, referenced docs, linked tables (each a name+id read reference), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [guide.md](../guide.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
 
 A few invariants worth knowing:
 

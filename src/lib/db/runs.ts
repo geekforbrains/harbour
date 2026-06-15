@@ -4,11 +4,11 @@ import { DEFAULT_RUNTIME, type Gate, isRuntime } from "../runtimes";
 import { slugify } from "../slug";
 import { getAgentWorkspace } from "./agents";
 import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
-import { getComposedDatabasesForJob } from "./database";
 import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { getDb } from "./schema";
+import { getComposedTablesForJob } from "./tables";
 
 /**
  * Shape a gate's stored `(runtime, script)` columns into the run payload's gate
@@ -955,13 +955,13 @@ export function buildRunPayload(runId: string) {
   // Docs injected from the job's attachments (job_docs), each with its content.
   const docs = getComposedDocsForJob(run.job_id);
 
-  // Databases injected from the job's attachments (job_databases). A database is
+  // Tables injected from the job's attachments (job_tables). A table is
   // a read reference: the payload carries only id + name, keyed by logical name.
   // The agent reads rows on demand via read_rows and writes via insert_rows,
   // both targeted by id — no columns or rows are inlined here.
-  const databases = getComposedDatabasesForJob(run.job_id);
-  const data: Record<string, { id: string }> = {};
-  for (const d of databases) data[d.name] = { id: d.id };
+  const linkedTables = getComposedTablesForJob(run.job_id);
+  const tables: Record<string, { id: string }> = {};
+  for (const t of linkedTables) tables[t.name] = { id: t.id };
 
   // Env vars injected from the job's attachments (job_env_vars), decrypted.
   const env = getDecryptedEnvVarsForJob(run.job_id);
@@ -1041,7 +1041,7 @@ export function buildRunPayload(runId: string) {
     ...(agent ? { agent } : {}),
     ...(workspace ? { workspace } : {}),
     docs,
-    data,
+    tables,
     env,
     attachments,
   };

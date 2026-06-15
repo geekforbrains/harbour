@@ -48,7 +48,7 @@ The non-negotiables. A feature that violates one needs an explicit exception.
 - **Local-first state.** Everything lives under `~/.harbour` (DB, uploads,
   encryption key, runner config). Back up one directory and you have everything.
 - **Multi-tenant by construction.** Instance admin → **orgs** → **projects**.
-  Every agent, job, doc, secret, and database lives inside a project. Resources
+  Every agent, job, doc, secret, and table lives inside a project. Resources
   never cross org lines.
 - **Least privilege.** An agent can reach only its own run and the secrets and
   connection vars Harbour hands it — nothing more of the host or the database.
@@ -89,7 +89,7 @@ detail, see [docs/reference](reference/).
   a run.
 
 **Shared context**
-- Docs (versioned markdown), databases (agent-managed SQLite tables), and secrets
+- Docs (versioned markdown), tables (agent-managed SQLite tables), and secrets
   (encrypted env vars), linkable to jobs and composed into each run's payload.
 - Dual-tier (org-level + project-level) plus job-linked; pinning auto-attaches an
   item to all new jobs.
@@ -102,7 +102,7 @@ detail, see [docs/reference](reference/).
 - Captain: an in-browser CLI console for operating the harbour itself.
 - Per-run attachments (files + embeds) with optional video transcription and
   storyboard generation.
-- Dashboard for runs, jobs, agents, docs, databases, secrets, users, and settings.
+- Dashboard for runs, jobs, agents, docs, tables, secrets, users, and settings.
 
 **APIs**
 - A worker wire contract ([guide.md](guide.md)) and an admin wire contract

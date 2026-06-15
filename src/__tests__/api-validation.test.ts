@@ -2,9 +2,9 @@ import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
-import { POST as databasesPOST } from "@/app/api/databases/route";
 import { PUT as jobPUT } from "@/app/api/jobs/[id]/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
+import { POST as tablesPOST } from "@/app/api/tables/route";
 import {
   addMembership,
   createAgent,
@@ -174,15 +174,15 @@ describe("PUT /api/jobs/:id gate clearing", () => {
   });
 });
 
-describe("POST /api/databases validation", () => {
+describe("POST /api/tables validation", () => {
   it("returns 400 on an unsupported column type", async () => {
     const { org, editor } = fixture();
     const req = userReq(
       editor.id,
-      `http://localhost/api/databases?orgId=${org.id}`,
+      `http://localhost/api/tables?orgId=${org.id}`,
       JSON.stringify({ name: "mydb", columns: [{ name: "col", type: "VARCHAR" }] }),
     );
-    const res = await databasesPOST(req, ctx({}));
+    const res = await tablesPOST(req, ctx({}));
     expect(res.status).toBe(400);
   });
 
@@ -190,10 +190,10 @@ describe("POST /api/databases validation", () => {
     const { org, editor } = fixture();
     const req = userReq(
       editor.id,
-      `http://localhost/api/databases?orgId=${org.id}`,
+      `http://localhost/api/tables?orgId=${org.id}`,
       JSON.stringify({ name: "mydb", columns: [{ name: "col", type: "TEXT" }] }),
     );
-    const res = await databasesPOST(req, ctx({}));
+    const res = await tablesPOST(req, ctx({}));
     expect(res.status).toBeLessThan(300);
   });
 });

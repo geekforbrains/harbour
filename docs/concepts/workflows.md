@@ -46,9 +46,9 @@ and the paired `*_script` column holds the body. Together they form a gate — a
 it with the runtime's interpreter; nothing is referenced by bare filename. See
 [Gates](#gates) below.
 
-Workflow jobs are dual-tier, like docs, env vars, and databases: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
+Workflow jobs are dual-tier, like docs, env vars, and tables: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
 
-An org-level workflow may link only **org-level** docs, env vars, and databases — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Injection is attachment-driven (like every job): the run carries only the resources the workflow is actually linked to, never the org tier at large.
+An org-level workflow may link only **org-level** docs, env vars, and tables — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Injection is attachment-driven (like every job): the run carries only the resources the workflow is actually linked to, never the org tier at large.
 
 Workflow runner credentials live in `workflow_runners`. They are org-scoped, enabled or disabled independently, and authenticate only workflow polling plus allowed workflow-run reporting endpoints. A runner claims every due workflow in its org, org-level and project-level alike.
 
@@ -214,7 +214,7 @@ The workflow receives the same composed run context as an agent run, minus the a
     "scripts_dir": "acme/ops/health-check-1a2b3c4d"
   },
   "docs": [],
-  "data": {},
+  "tables": {},
   "env": {},
   "attachments": []
 }
@@ -222,7 +222,7 @@ The workflow receives the same composed run context as an agent run, minus the a
 
 `prerun`, `postrun`, `command`, and `workflow` are each a gate — a `{ runtime, content }` object — or `null` when unset. `command` and `workflow` alias the **same** workflow gate: both are set on a workflow run and both `null` on an agent run (where `prerun`/`postrun` carry the gates instead). `postrun_gates` is a boolean. `scripts_dir` is present on **every** run (agent and workflow): the **relative** path under the runner's `$HARBOUR_HOME/workflows` root where the runner materializes the gate's body before running it. It is `null` only for a malformed or unknown job, which the runner refuses to run — see [Gates](#gates).
 
-Linked docs, env vars, databases, and attachments are composed the same way as agent runs. Env vars are decrypted at request time and are plaintext inside the runner process, so treat workflow scripts as trusted code.
+Linked docs, env vars, tables, and attachments are composed the same way as agent runs. Env vars are decrypted at request time and are plaintext inside the runner process, so treat workflow scripts as trusted code.
 
 ## Exit Codes
 

@@ -43,6 +43,7 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
     const active = optionalBoolean(body.active, "active");
     const docIds = optionalStringArray(body.docIds, "docIds");
     const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
+    const tableIds = optionalStringArray(body.tableIds, "tableIds");
 
     // A per-job thinking override rides the agent's CLI — validate against it.
     const thinking = optionalString(body.thinking, "thinking");
@@ -74,6 +75,7 @@ export const POST = withResourceAuth("agent", "id", { role: "editor" })(
         titleFormat,
         docIds,
         envVarIds,
+        tableIds,
         active,
       });
       return NextResponse.json(job, { status: 201 });

@@ -61,7 +61,7 @@ export default function JobsPage() {
         subtitle="Recurring work across all agents."
         actions={
           <div className="flex gap-2">
-            {/* TODO(v2): "Add Existing" removed — see databases/page.tsx. No
+            {/* TODO(v2): "Add Existing" removed — see tables/page.tsx. No
                 project_id reparent route exists; new jobs land in the active project. */}
             <ActionTooltip hint={newJobHint}>
               <Button onClick={() => setShowCreate(true)} size="sm" disabled={!!newJobHint}>

@@ -29,7 +29,7 @@ Key concepts:
 - **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/data/env vars
 - **Runs** — a single execution of a job, with an activity log
 - **Docs** — shared markdown documents injected into runs
-- **Databases** — SQLite tables agents create and manage
+- **Tables** — SQLite tables agents create and manage
 - **Env Vars** — encrypted key-value pairs injected at runtime
 - **Projects** — optional groupings to organize everything
 
@@ -59,7 +59,7 @@ Harbour uses a single SQLite database:
 | run_activity | Message log per run (agent/user/system messages) |
 | run_output | Streaming CLI output events per run |
 | docs / doc_revisions | Shared markdown documents with version history |
-| databases | Agent-managed SQLite tables |
+| tables | Agent-managed SQLite tables |
 | env_vars | Encrypted environment variables |
 | settings | System key-value config |
 | users / sessions | Dashboard authentication |

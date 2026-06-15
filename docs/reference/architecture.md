@@ -14,7 +14,7 @@ happen inside SQLite transactions, so the claim path is atomic without external
 coordination.
 
 It is **multi-tenant**: an instance admin owns the install, work is organized
-into **orgs → projects**, and every agent, job, doc, secret, and database lives
+into **orgs → projects**, and every agent, job, doc, secret, and table lives
 inside a project. Resources never cross org lines. Harbour never calls out to
 agents — everything is pull.
 
@@ -214,7 +214,7 @@ Two App Router route groups:
 
 - **`src/app/(auth)/`** — `login/`, `set-password/`. Public; no shell.
 - **`src/app/(app)/`** — the dashboard, wrapped in `AppShell`: `captain/`,
-  `runs/` (root dashboard), `jobs/`, `agents/`, `docs/`, `databases/`,
+  `runs/` (root dashboard), `jobs/`, `agents/`, `docs/`, `tables/`,
   `env-vars/` (labeled **Secrets**), `users/`, `settings/`.
 
 `AppShell` (`src/components/app/app-shell.tsx`) does the auth check

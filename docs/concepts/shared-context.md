@@ -1,13 +1,13 @@
-# Shared context: docs, databases, env vars
+# Shared context: docs, tables, env vars
 
 Three top-level entities — markdown documents, agent-managed SQLite tables, and encrypted key-value pairs — that share one job: get the right context into a run without the agent having to ask. They're discussed together because the contract is the same:
 
 - They belong to an **org** (`org_id`), optionally narrowed to a **project** (`project_id` is nullable — `NULL` means org-level, usable by every project in the org). See [Orgs & projects](projects.md).
-- They're **linked to a job** via three identical junction tables: `job_docs`, `job_databases`, `job_env_vars`.
-- They're **injected into `/next`** when an agent polls — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, databases as a name+id read reference, secrets as a decrypted map.
-- Two of them (docs and secrets) support **pinning** for "auto-attach to all new jobs."
+- They're **linked to a job** via three identical junction tables: `job_docs`, `job_tables`, `job_env_vars`.
+- They're **injected into `/next`** when an agent polls — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map.
+- All three support **pinning** for "auto-attach to all new jobs."
 
-The differences are in *what* gets injected. Docs are full text. Databases inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
+The differences are in *what* gets injected. Docs are full text. Tables inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
 
 (The UI labels env vars **Secrets**; the table is still `env_vars`.)
 
@@ -17,7 +17,7 @@ A `Marketing` agent has one job — "Daily content calendar update":
 
 ```
 Linked docs:        Brand voice (pinned), Style guide
-Linked databases:   marketing_calendar
+Linked tables:      marketing_calendar
 Linked env vars:    BUFFER_API_KEY (pinned)
 ```
 
@@ -31,8 +31,8 @@ The agent polls `GET /api/agents/<id>/next`. The response bundles:
     { "title": "Brand voice", "content": "...full markdown..." },
     { "title": "Style guide", "content": "...full markdown..." }
   ],
-  "data": {
-    "marketing_calendar": { "id": "db-uuid" }
+  "tables": {
+    "marketing_calendar": { "id": "tbl-uuid" }
   },
   "env": {
     "BUFFER_API_KEY": "decrypted-secret-here"
@@ -41,13 +41,13 @@ The agent polls `GET /api/agents/<id>/next`. The response bundles:
 }
 ```
 
-The agent writes a draft, posts it to Buffer using the env var, then reads `marketing_calendar` via `GET /api/databases/db-uuid/rows` to check what's already scheduled, inserts a row, and sets status to `done`. The database arrives as a reference (`id` only), not inlined rows — the agent pulls exactly the slice it needs on demand.
+The agent writes a draft, posts it to Buffer using the env var, then reads `marketing_calendar` via `GET /api/tables/tbl-uuid/rows` to check what's already scheduled, inserts a row, and sets status to `done`. The table arrives as a reference (`id` only), not inlined rows — the agent pulls exactly the slice it needs on demand.
 
 ## Pinning
 
-Pinning is the answer to "I just made a new thing — apply this context everywhere automatically." Both docs and env vars support it.
+Pinning is the answer to "I just made a new thing — apply this context everywhere automatically." Docs, tables, and env vars all support it.
 
-The crucial detail: **pinning is checked at creation time only**. When you call `createJob` (or `createOneOffRun`) the code merges your explicitly-selected ids with `listPinnedDocIds()` and `listPinnedEnvVarIds()` and inserts both sets into the junction tables. After that, the link is just a row in `job_docs` / `job_env_vars` like any other.
+The crucial detail: **pinning is checked at creation time only**. When you call `createJob` (or `createOneOffRun`) the code merges your explicitly-selected ids with `listPinnedDocIds()`, `listPinnedTableIds()`, and `listPinnedEnvVarIds()` and inserts all three sets into the junction tables. After that, the link is just a row in `job_docs` / `job_tables` / `job_env_vars` like any other.
 
 What this means in practice:
 
@@ -60,7 +60,7 @@ What this means in practice:
 
 Treat pinning as a default for *new* things, not as a live broadcast. If you want a doc applied retroactively, link it to each job manually (or write a one-shot SQL update via Captain).
 
-Databases don't pin. They're heavier — typically you want a job to see only the slice of structured data it cares about, so the explicit linking is the point.
+Tables pin like docs and secrets, but reach for it sparingly — they're heavier, and typically you want a job to see only the slice of structured data it cares about, so explicit linking is usually the point.
 
 ## Docs
 
@@ -71,20 +71,20 @@ Markdown documents, stored revisioned. Each `docs` row has a title and metadata;
 
 Agents can create and update docs through `POST /api/docs` and `PUT /api/docs/:id`. Updates are revisions — there's no destructive edit. If an agent maintains a "Daily summary" doc, every day's update is a new row; the dashboard's revision viewer can walk the history.
 
-## Databases
+## Tables
 
-Agent-managed SQLite tables that live in the same `harbour.db` file. The agent calls `POST /api/databases` with a name and column definitions; harbour creates a real table with a sanitized, globally-unique physical name and an auto-incrementing `_id INTEGER PRIMARY KEY` plus the agent's columns.
+Agent-managed SQLite tables that live in the same `harbour.db` file. The agent calls `POST /api/tables` with a name and column definitions; harbour creates a real table with a sanitized, globally-unique physical name and an auto-incrementing `_id INTEGER PRIMARY KEY` plus the agent's columns.
 
 Two tables track the metadata:
 
-(Columns in [database-schema.md](../reference/database-schema.md#databases).
-`databases`/`database_migrations` are dual-tier like docs and secrets.)
+(Columns in [database-schema.md](../reference/database-schema.md#tables).
+`tables`/`table_migrations` are dual-tier like docs and secrets.)
 
-Every schema change (CREATE, ALTER) records a `database_migrations` row, so the dashboard can show the schema's history.
+Every schema change (CREATE, ALTER) records a `table_migrations` row, so the dashboard can show the schema's history.
 
-The injection rule for `/next`: for each **linked** database, harbour puts `{ id }` into `data.<name>` — no rows, no columns. A database is a read reference, not inlined content; the agent calls `GET /api/databases/:id/rows` (with `?limit=`/`?offset=`/`?orderBy=`) to read exactly the slice it needs and `POST /api/databases/:id/rows` to write. Org/project membership alone does not inject a database — only an entry in `job_databases` does.
+The injection rule for `/next`: for each **linked** table, harbour puts `{ id }` into `tables.<name>` — no rows, no columns. A table is a read reference, not inlined content; the agent calls `GET /api/tables/:id/rows` (with `?limit=`/`?offset=`/`?orderBy=`) to read exactly the slice it needs and `POST /api/tables/:id/rows` to write. Org/project membership alone does not inject a table — only an entry in `job_tables` does.
 
-Reserved-word and SQL-injection guards: column names are sanitized identically (lowercase, `[a-z0-9_]`, no `_id`), and a list of SQLite reserved words is rejected outright. Inserts validate the keys against `PRAGMA table_info` before running. Don't trust an agent's input to be safe; the helpers in `src/lib/db/database.ts` enforce the rules.
+Reserved-word and SQL-injection guards: column names are sanitized identically (lowercase, `[a-z0-9_]`, no `_id`), and a list of SQLite reserved words is rejected outright. Inserts validate the keys against `PRAGMA table_info` before running. Don't trust an agent's input to be safe; the helpers in `src/lib/db/tables.ts` enforce the rules.
 
 ## Env vars
 
@@ -111,26 +111,26 @@ Three identical junction tables, one per kind:
 
 ```sql
 CREATE TABLE job_docs       (job_id, doc_id,       PRIMARY KEY(job_id, doc_id));
-CREATE TABLE job_databases  (job_id, database_id,  PRIMARY KEY(job_id, database_id));
+CREATE TABLE job_tables     (job_id, table_id,     PRIMARY KEY(job_id, table_id));
 CREATE TABLE job_env_vars   (job_id, env_var_id,   PRIMARY KEY(job_id, env_var_id));
 ```
 
-All three use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/db/env var, same.
+All three use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/table/env var, same.
 
 Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs and secrets are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars}`. Pinned ids are merged in automatically at create time as described above.
 
 ## What's not shared
 
-These three are explicitly not the same thing as **attachments** ([Attachments](attachments.md)), which belong to a single run and are fundamentally per-execution context. Docs/data/env vars are per-job standing context — they're meant to be the same on every run of the job.
+These three are explicitly not the same thing as **attachments** ([Attachments](attachments.md)), which belong to a single run and are fundamentally per-execution context. Docs/tables/env vars are per-job standing context — they're meant to be the same on every run of the job.
 
 ## Source-of-truth pointers
 
 If you're hunting in code:
 
 - `src/lib/db/docs.ts` — `createDoc`, `updateDoc` (revisions), `toggleDocPinned`, `listPinnedDocIds`.
-- `src/lib/db/database.ts` — `createDatabase`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
+- `src/lib/db/tables.ts` — `createTable`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
 - `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob`, `listPinnedEnvVarIds`.
 - `src/lib/db/jobs.ts` — `createJob` and `createOneOffRun` are where the pinned ids get merged into the junction inserts.
-- `src/lib/db/runs.ts` — `buildRunPayload` (the `/next` payload assembly): attachment-driven docs/databases/env queries (`getComposedDocsForJob`, `getComposedDatabasesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
+- `src/lib/db/runs.ts` — `buildRunPayload` (the `/next` payload assembly): attachment-driven docs/tables/env queries (`getComposedDocsForJob`, `getComposedTablesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
 - `src/lib/encryption.ts` — AES-256-GCM helpers, key loading.
-- `src/lib/db/schema.ts` — `docs`, `doc_revisions`, `databases`, `database_migrations`, `env_vars`, and the three `job_*` junction tables.
+- `src/lib/db/schema.ts` — `docs`, `doc_revisions`, `tables`, `table_migrations`, `env_vars`, and the three `job_*` junction tables.

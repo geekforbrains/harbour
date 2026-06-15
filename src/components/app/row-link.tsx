@@ -2,7 +2,7 @@ import Link from "next/link";
 
 /**
  * The shared list-row container: a hairline-bordered card that links somewhere
- * and highlights on hover. Used across the jobs/docs/databases/env-vars/agents
+ * and highlights on hover. Used across the jobs/docs/tables/env-vars/agents
  * lists and several detail-page sub-lists. Inner content is per-page.
  *
  * `align` matches the row's vertical alignment — `start` (default) for

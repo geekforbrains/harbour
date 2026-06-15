@@ -54,7 +54,7 @@ export function isUniqueViolation(err: unknown): boolean {
 /**
  * v2 schema — clean break, no migrations. Every table is created directly in
  * its final v2 shape. Org → Project (mandatory) → Agent / Job → Run; resources
- * (docs / env_vars / databases) are dual-tier (org-level or project-level).
+ * (docs / env_vars / tables) are dual-tier (org-level or project-level).
  * Workflow jobs are dual-tier too (project_id NULL = org-level); agent jobs
  * are always project-level, enforced by the CHECK on jobs.
  *
@@ -304,19 +304,20 @@ export function initializeSchema(db: Database.Database) {
       -- name uniqueness enforced in the query layer (project-over-org override)
     );
 
-    CREATE TABLE IF NOT EXISTS databases (
+    CREATE TABLE IF NOT EXISTS tables (
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
       project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level
       name TEXT NOT NULL,
       table_name TEXT NOT NULL UNIQUE,    -- physical SQLite table name, globally unique
+      pinned INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    CREATE TABLE IF NOT EXISTS database_migrations (
+    CREATE TABLE IF NOT EXISTS table_migrations (
       id TEXT PRIMARY KEY,
-      database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+      table_id TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
       version INTEGER NOT NULL,
       description TEXT,
       sql TEXT NOT NULL,
@@ -337,10 +338,10 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, env_var_id)
     );
 
-    CREATE TABLE IF NOT EXISTS job_databases (
+    CREATE TABLE IF NOT EXISTS job_tables (
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-      database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
-      PRIMARY KEY (job_id, database_id)
+      table_id TEXT NOT NULL REFERENCES tables(id) ON DELETE CASCADE,
+      PRIMARY KEY (job_id, table_id)
     );
 
     -- ── Instance settings (true instance-global KV only) ─────────────────
@@ -420,8 +421,8 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_docs_org_project ON docs(org_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_env_vars_org_project ON env_vars(org_id, project_id);
-    CREATE INDEX IF NOT EXISTS idx_databases_org_project ON databases(org_id, project_id);
-    CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
+    CREATE INDEX IF NOT EXISTS idx_tables_org_project ON tables(org_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_table_migrations_tbl ON table_migrations(table_id);
 
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_org ON captain_conversations(org_id);
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
@@ -465,7 +466,7 @@ function describeColumn(c: ColumnInfo): string {
  * future ALTER-based migration path stays compatible) and index definitions
  * textually — a stale same-name index makes CREATE INDEX IF NOT EXISTS a
  * silent no-op, so existence alone isn't enough. Tables the schema doesn't
- * define (agent-managed `d_*` data tables) are ignored.
+ * define (agent-managed `t_*` data tables) are ignored.
  */
 export function diffSchema(live: Database.Database): string[] {
   const expected = new Database(":memory:");

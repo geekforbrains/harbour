@@ -180,7 +180,7 @@ The "one run at a time" rule shapes how you scale across projects. Two patterns 
 - **One agent per role** (`Developer`, `Marketer`, `Reviewer`). Jobs queue behind each other on the same agent. Fine when work is bursty or daily.
 - **Per-project agents** (`ProjectA Developer`, `ProjectB Developer`). Each agent gets its own workspace, model, prompt context, and queue. Use [Projects](projects.md) to filter the dashboard down to one project at a time so the sidebar doesn't blow out.
 
-Docs, secrets, and databases are shared at the **org** level (or scoped to a project), so an org-level `Brand Voice` doc or `STRIPE_API_KEY` secret can serve every project in the org without duplication. See [Shared context](shared-context.md).
+Docs, secrets, and tables are shared at the **org** level (or scoped to a project), so an org-level `Brand Voice` doc or `STRIPE_API_KEY` secret can serve every project in the org without duplication. See [Shared context](shared-context.md).
 
 ## Source-of-truth pointers
 

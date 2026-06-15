@@ -91,7 +91,7 @@ export function useDeleteJob() {
   });
 }
 
-/** Link/unlink docs and env vars to a job. All invalidate the job detail. */
+/** Link/unlink docs, env vars, and tables to a job. All invalidate the job detail. */
 export function useJobLinkMutations(id: string) {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: qk.jobs.detail(id) });
@@ -114,6 +114,16 @@ export function useJobLinkMutations(id: string) {
     unlinkEnvVar: useMutation({
       mutationFn: (envVarId: string) =>
         apiFetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" }),
+      onSuccess: invalidate,
+    }),
+    linkTable: useMutation({
+      mutationFn: (tableId: string) =>
+        apiFetch(`/api/jobs/${id}/tables`, { method: "POST", body: { tableId } }),
+      onSuccess: invalidate,
+    }),
+    unlinkTable: useMutation({
+      mutationFn: (tableId: string) =>
+        apiFetch(`/api/jobs/${id}/tables/${tableId}`, { method: "DELETE" }),
       onSuccess: invalidate,
     }),
   };

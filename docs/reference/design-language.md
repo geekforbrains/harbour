@@ -74,7 +74,7 @@ name)` — never read the hash directly when the stored column is available.
 
 - **Agent vs workflow** — distinguished by icon shape (`Bot` vs `Terminal`), not
   color.
-- **Docs / Databases / Env Vars / Jobs** — each has a distinct lucide icon and a
+- **Docs / Tables / Env Vars / Jobs** — each has a distinct lucide icon and a
   page header. They stay monochrome. Giving entity *types* their own colors is
   the "overboard" line; it dilutes the status and agent signals.
 

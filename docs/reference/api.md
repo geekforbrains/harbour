@@ -1,7 +1,7 @@
 # API
 
 The codebase-side route map: every route file, its HTTP method, the auth wrapper
-(and minimum role), and a one-liner. **77 route files.**
+(and minimum role), and a one-liner. **78 route files.**
 
 The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
@@ -32,13 +32,13 @@ not-found resolves to **403** to avoid leaking existence across tenants.
   `HttpError`; the auth wrappers' `runHandler` renders those as `{ error }`.
   Net effect every mutation route inherits: a malformed/empty/non-object JSON
   body is a clean `400` (not a `500`), and a wrong-typed or unknown-enum field
-  is a `400` rather than being silently stored. (`POST /api/databases/:id/rows`
+  is a `400` rather than being silently stored. (`POST /api/tables/:id/rows`
   parses inline because the contract allows a top-level array.)
 - **Scope** comes from the query string / cookies: org routes read `?orgId=` or
   the `harbour_org` cookie; project routes read `?projectId=`; `[id]` routes
   resolve the owning org from the resource.
 - **`/next` payload** (`GET /api/agents/:id/next` and `/api/workflows/next`):
-  `null` or `{ run, job, docs, data, env, attachments, api }`, plus `agent` and
+  `null` or `{ run, job, docs, tables, env, attachments, api }`, plus `agent` and
   `workspace` (the org/project/agent slugs) on agent runs. The `api` block is
   pre-resolved full URLs. Full schema in [guide.md](../guide.md).
 - **SSE**: `GET /api/runs/:id/output/stream` and
@@ -92,7 +92,7 @@ There is **no** signup route.
 | POST | `/api/agents/:id/rotate-key` | `withResourceAuth` agent (editor) | New API key |
 | GET / POST | `/api/agents/:id/jobs` | `withResourceAuth` agent (viewer / editor) | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withResourceAuth` agent (viewer) | Run history |
-| POST | `/api/agents/:id/data` | `withAgentOrUser` (editor) | Convenience: create a database, optionally link to a job + seed rows |
+| POST | `/api/agents/:id/tables` | `withAgentOrUser` (editor) | Convenience: create a table, optionally link to a job + seed rows |
 | GET | `/api/agents/:id/next` | `withAgentAuth` + `requireAgentSelf` | **Poll** for work (`?peek=true`) |
 
 ## Jobs
@@ -106,14 +106,14 @@ There is **no** signup route.
 | POST | `/api/jobs/:id/trigger` | `withAgentOrUser` (editor) | Create an immediate run (optional extra instructions) |
 | POST / DELETE | `/api/jobs/:id/docs[/:docId]` | `withResourceAuth` job (editor) | Link / unlink a doc |
 | POST / DELETE | `/api/jobs/:id/env-vars[/:envVarId]` | `withResourceAuth` job (editor) | Link / unlink a secret |
-| POST | `/api/jobs/:id/data` | `withAgentOrUser` (editor) | Link a database |
-| DELETE | `/api/jobs/:id/data/:dataId` | `withResourceAuth` job (editor) | Unlink a database |
+| POST | `/api/jobs/:id/tables` | `withAgentOrUser` (editor) | Link a table |
+| DELETE | `/api/jobs/:id/tables/:tableId` | `withResourceAuth` job (editor) | Unlink a table |
 
 `/api/jobs` is dual-tier like the shared-context lists: `GET` with `?projectId=`
 includes org-level jobs, and `POST` without a `projectId` (query or body)
 creates an **org-level** workflow — agent jobs (`POST /api/agents/:id/jobs`)
 are always project-level, and scope is fixed at creation. An org-level job may
-link only org-level docs / env vars / databases; the link routes (and create /
+link only org-level docs / env vars / tables; the link routes (and create /
 update with `docIds` / `envVarIds`) return 400 otherwise.
 
 A job's gates — `prerun` / `postrun` on an agent job, `command` on a workflow —
@@ -172,13 +172,14 @@ in the `/next` payload (`job.prerun` / `job.postrun` / `job.command` /
 | DELETE | `/api/docs/:id` | `withResourceAuth` doc (editor) | Delete |
 | GET | `/api/docs/:id/revisions` | `withResourceAuth` doc (viewer) | History |
 | POST | `/api/docs/:id/pin` | `withResourceAuth` doc (editor) | Toggle pin |
-| GET | `/api/databases` | `withOrgAuth` (viewer) | List; `?projectId=` |
-| POST | `/api/databases` | `withAgentOrUser` (editor) | Create |
-| GET | `/api/databases/:id` | `withResourceAuth` database (viewer) | DB + migrations + linked jobs |
-| DELETE | `/api/databases/:id` | `withResourceAuth` database (editor) | Drop |
-| POST | `/api/databases/:id/columns` | `withAgentOrUser` | Add a column (records a migration) |
-| GET / POST | `/api/databases/:id/rows` | `withAgentOrUser` | Read (paginated) / insert |
-| PUT / DELETE | `/api/databases/:id/rows/:rowId` | `withAgentOrUser` | Update / delete a row |
+| GET | `/api/tables` | `withOrgAuth` (viewer) | List; `?projectId=` |
+| POST | `/api/tables` | `withAgentOrUser` (editor) | Create |
+| GET | `/api/tables/:id` | `withResourceAuth` table (viewer) | Table + migrations + linked jobs |
+| DELETE | `/api/tables/:id` | `withResourceAuth` table (editor) | Drop |
+| POST | `/api/tables/:id/columns` | `withAgentOrUser` | Add a column (records a migration) |
+| GET / POST | `/api/tables/:id/rows` | `withAgentOrUser` | Read (paginated) / insert |
+| PUT / DELETE | `/api/tables/:id/rows/:rowId` | `withAgentOrUser` | Update / delete a row |
+| POST | `/api/tables/:id/pin` | `withResourceAuth` table (editor) | Toggle pin |
 | GET | `/api/env-vars` | `withOrgAuth` (viewer) | List secrets (no plaintext); `?projectId=` |
 | POST | `/api/env-vars` | `withOrgAuth` (editor) | Create (encrypts) |
 | GET | `/api/env-vars/:id` | `withResourceAuth` env_var (viewer) | Metadata (no plaintext) |

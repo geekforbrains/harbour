@@ -6,18 +6,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authenticateWorkflowRunner,
   buildRunPayload,
-  createDatabase,
   createDoc,
   createEnvVar,
   createOrg,
   createProject,
   createRun,
+  createTable,
   createWorkflow,
   createWorkflowRunner,
   getNextWorkflowRun,
   getRunById,
   insertRows,
-  linkDatabaseToJob,
+  linkTableToJob,
   listRunActivity,
   peekWorkflowNext,
 } from "@/lib/db/queries";
@@ -198,9 +198,9 @@ describe("buildRunPayload: workflow run shape", () => {
       envVarIds: [env.id],
     })!;
 
-    const data = createDatabase(org.id, project.id, "metrics", [{ name: "v", type: "TEXT" }]);
+    const data = createTable(org.id, project.id, "metrics", [{ name: "v", type: "TEXT" }]);
     insertRows(data.id, [{ v: "row-1" }]);
-    linkDatabaseToJob(wf.id, data.id);
+    linkTableToJob(wf.id, data.id);
 
     const run = createRun(wf.id, null)!;
     const payload = buildRunPayload(run.id)!;
@@ -218,7 +218,7 @@ describe("buildRunPayload: workflow run shape", () => {
     expect(payload.docs.map((d) => d.id)).toContain(doc.id);
     expect(payload.env.API_TOKEN).toBe("secret");
     // Databases are read references: name + id only, no rows inlined.
-    expect(payload.data.metrics).toEqual({ id: data.id });
+    expect(payload.tables.metrics).toEqual({ id: data.id });
   });
 });
 

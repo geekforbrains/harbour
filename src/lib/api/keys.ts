@@ -77,11 +77,11 @@ export const qk = {
     detail: (id: string) => ["env-vars", "detail", id] as const,
   },
 
-  databases: {
-    all: ["databases"] as const,
-    list: (scope?: Scope) => ["databases", "list", scopeKey(scope)] as const,
-    detail: (id: string) => ["databases", "detail", id] as const,
-    rows: (id: string, page?: number) => ["databases", "detail", id, "rows", page ?? 0] as const,
+  tables: {
+    all: ["tables"] as const,
+    list: (scope?: Scope) => ["tables", "list", scopeKey(scope)] as const,
+    detail: (id: string) => ["tables", "detail", id] as const,
+    rows: (id: string, page?: number) => ["tables", "detail", id, "rows", page ?? 0] as const,
   },
 
   users: {
@@ -124,6 +124,6 @@ export const SCOPED_DOMAINS = [
   qk.runs.all,
   qk.docs.all,
   qk.envVars.all,
-  qk.databases.all,
+  qk.tables.all,
   qk.captain.all,
 ] as const;

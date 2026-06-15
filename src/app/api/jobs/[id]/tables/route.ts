@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { orgIdForResource } from "@/lib/db/access";
-import { getJobById, linkDatabaseToJob } from "@/lib/db/queries";
+import { getJobById, linkTableToJob } from "@/lib/db/queries";
 import { readJson, requireNonEmptyString } from "@/lib/http";
 
 export const POST = withAgentOrUser(
@@ -11,17 +11,17 @@ export const POST = withAgentOrUser(
     if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
     const body = await readJson(req);
-    const databaseId = requireNonEmptyString(body.databaseId, "databaseId");
+    const tableId = requireNonEmptyString(body.tableId, "tableId");
 
-    // The database must belong to the same org as the job — never link cross-org.
-    if (orgIdForResource("database", databaseId) !== auth.orgId) {
-      return NextResponse.json({ error: "Database not found" }, { status: 404 });
+    // The table must belong to the same org as the job — never link cross-org.
+    if (orgIdForResource("table", tableId) !== auth.orgId) {
+      return NextResponse.json({ error: "Table not found" }, { status: 404 });
     }
 
     try {
-      linkDatabaseToJob(id, databaseId);
+      linkTableToJob(id, tableId);
     } catch (error) {
-      // Link guard: an org-level job may only link org-level databases.
+      // Link guard: an org-level job may only link org-level tables.
       const message = error instanceof Error ? error.message : String(error);
       return NextResponse.json({ error: message }, { status: 400 });
     }
