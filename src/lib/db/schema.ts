@@ -4,10 +4,31 @@ import { dbPath, ensureDir, harbourHome } from "../paths";
 
 let _db: Database.Database | null = null;
 
+// better-sqlite3 is a native addon locked to the Node ABI it was compiled
+// against. If the active Node changed since `npm install`, loading it throws a
+// cryptic NODE_MODULE_VERSION error; translate it into the actual fix.
+function describeNativeError(err: unknown): Error {
+  const e = err as { code?: string; message?: string };
+  const msg = e?.message ?? String(err);
+  if (e?.code === "ERR_DLOPEN_FAILED" || msg.includes("NODE_MODULE_VERSION")) {
+    return new Error(
+      `Harbour can't load better-sqlite3: its native binary was built for a different Node.js version than the one you're running (${process.version}). ` +
+        "This usually means your Node version changed since 'npm install' (e.g. via nvm). " +
+        `Fix: run 'npm rebuild better-sqlite3' under Node ${process.version}, or switch back to the Node you installed with. Harbour targets Node 24 LTS.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
 export function getDb(): Database.Database {
   if (!_db) {
     ensureDir(harbourHome());
-    const db = new Database(dbPath());
+    let db: Database.Database;
+    try {
+      db = new Database(dbPath());
+    } catch (err) {
+      throw describeNativeError(err);
+    }
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     // Two runners polling one org can race to claim the same run. With a busy

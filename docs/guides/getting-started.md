@@ -8,7 +8,7 @@ The flow: install and run the server, then drive the claim loop by hand with cur
 
 ## Install and run
 
-You'll need Node 20+ and a working `npm` (macOS or Linux).
+You'll need **Node 24 LTS** and a working `npm` (macOS or Linux). If you later switch Node versions (e.g. with nvm), re-run `npm rebuild better-sqlite3` so its native binary matches the active Node — otherwise Harbour refuses to boot with a `NODE_MODULE_VERSION` error.
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git

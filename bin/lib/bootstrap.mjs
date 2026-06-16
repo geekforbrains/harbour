@@ -33,10 +33,32 @@ function dbPath() {
   return process.env.HARBOUR_DB_PATH || path.join(harbourHome(), "harbour.db");
 }
 
+// better-sqlite3 is a native addon: its compiled binary is locked to the Node
+// ABI it was built against. If the active Node changed since `npm install`
+// (common when nvm hands different windows different versions), the raw loader
+// error is a cryptic NODE_MODULE_VERSION stack trace. Translate it into the fix.
+function describeNativeError(err) {
+  const msg = String(err?.message ?? err);
+  if (err?.code === "ERR_DLOPEN_FAILED" || msg.includes("NODE_MODULE_VERSION")) {
+    return new Error(
+      `Harbour can't load better-sqlite3: its native binary was built for a different Node.js version than the one you're running (${process.version}).\n` +
+        "This usually means your Node version changed since 'npm install' (e.g. nvm picked a different version in this window).\n" +
+        `Fix: run 'npm rebuild better-sqlite3' (or 'npm install') under Node ${process.version}, or switch back to the Node you installed with.\n` +
+        "Harbour targets Node 24 LTS.",
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
 function openDb() {
   const dir = harbourHome();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const db = new Database(dbPath());
+  let db;
+  try {
+    db = new Database(dbPath());
+  } catch (err) {
+    throw describeNativeError(err);
+  }
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   // Mirror the users + runners DDL from src/lib/db/schema.ts exactly. Idempotent:

@@ -31,7 +31,7 @@ It's multi-tenant: an **instance admin** owns the install, and work is organized
 
 There's no web signup — the first admin is created from the shell (the operator has host access, so first-run setup belongs there). After that, admins create orgs, projects, and users from the dashboard.
 
-All you need is Node 20+ on macOS or Linux.
+All you need is Node 24 LTS on macOS or Linux.
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git

@@ -10,7 +10,7 @@ Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. Yo
 
 ### 1. Prerequisites
 
-- **Node 22** (e.g. via [NodeSource](https://github.com/nodesource/distributions): `curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs`)
+- **Node 24 LTS** (e.g. via [NodeSource](https://github.com/nodesource/distributions): `curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs`)
 - **A domain you control**, with an A record you can point at the host.
 - Whatever AI CLIs your agents use (Claude Code, Codex, Gemini CLI) — installed later, under the service user.
 

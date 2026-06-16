@@ -33,7 +33,20 @@ Usage:
   );
 }
 
+// Harbour targets Node 24 LTS. A mismatched Node is the usual cause of the
+// better-sqlite3 NODE_MODULE_VERSION error, so warn early (non-blocking — the
+// DB-open path raises a precise, actionable error if the binary won't load).
+function checkNode() {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major < 24) {
+    console.warn(
+      `⚠ Harbour targets Node 24 LTS — you're on ${process.version}. If you hit a better-sqlite3 load error, run 'npm rebuild better-sqlite3' under this Node.`,
+    );
+  }
+}
+
 async function main() {
+  checkNode();
   switch (command) {
     case "start": {
       const child = spawn("npx", ["next", "start", ...rest], {
