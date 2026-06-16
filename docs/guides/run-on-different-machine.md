@@ -2,6 +2,8 @@
 
 The harbour server and the runner that claims work do not have to live on the same box. This guide walks through enrolling a runner on machine B against a harbour server on machine A, and routing specific work to it.
 
+A runner is **any process that implements the [Runner Protocol](../runner-guide.md)** — it needn't be written in Node or be Harbour's bundled runner. Remote runners are **self-managed**: run [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) (the standalone reference runner) or your own implementation in any language. Everything below — placement labels, minting a credential, the claim handshake, the run lifecycle — is protocol-level and works the same regardless of what executes it; only step 3's *bundled-runner* path is Node-specific.
+
 ## Why you'd want this
 
 The runner is the thing that actually spawns the CLI tool (Claude Code, Codex, Gemini) and runs your workflow scripts. The CLI runs as a subprocess on the runner's host. Anything that depends on the local environment lives with the runner, not the server:
@@ -72,9 +74,13 @@ Traced through [`src/app/api/runners/route.ts`](../../src/app/api/runners/route.
 
 > The token is minted once and only its hash is stored. If you lose the blob before pasting it, you can't recover the token — revoke the runner and mint a new one (see [Rotating a runner token](#rotating-a-runner-token)).
 
-### 3. Clone harbour on the remote machine
+### 3. Run a runner on the remote machine
 
-You don't need to build or run the harbour server on the remote — just the `bin/` runner code and its (zero) dependencies.
+The minted token from step 2 is all a runner needs. Two paths:
+
+**A self-managed runner** — [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) or your own implementation in any language. Point it at the harbour URL with that token, have it advertise the label, and it claims over the [Runner Protocol](../runner-guide.md) like any other runner. Follow that project's own setup; the bundled-runner steps below (4–6) are Harbour's Node CLI and don't apply.
+
+**Harbour's bundled runner** (the rest of this guide) — the Node runner from this repo, run on the remote box. You don't build or run the harbour *server* there, just the `bin/` runner. It needs **Node 24 LTS** (this repo pins it):
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
@@ -82,7 +88,7 @@ cd harbour
 npm install
 ```
 
-`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs` and is invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
+`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs`, invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
 
 ### 4. Connect the runner
 

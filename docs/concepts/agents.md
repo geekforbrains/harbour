@@ -145,6 +145,8 @@ Enrolling one is three steps:
 
 A remote runner advertises its labels via `HARBOUR_RUNNER_LABELS` on the host (the row's `labels` is what the token is *authorized* to serve; the advertised set is intersected with it). One runner credential covers both agent and workflow work — there's no separate per-agent or per-workflow credential.
 
+Those three steps use Harbour's **bundled** runner, but a remote runner is self-managed and can be *any* [Runner Protocol](../runner-guide.md) implementation — the standalone [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) or your own in any language. Only the minted credential (step 2) is required; how a self-managed runner stores its token and polls is its own concern. See [Running a runner on a different machine](../guides/run-on-different-machine.md).
+
 Remote agents are still scoped — a run can only mutate itself. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`admin-guide.md`](../admin-guide.md). [guide.md](../guide.md) remains the wire contract for the run payload — its shape, the statuses, and what each run owes back — whether a local or remote runner is driving the CLI.
 
 Two operational notes:

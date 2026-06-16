@@ -58,7 +58,7 @@ Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https
 npm run harbour -- install   # polls every 60s; logs at ~/.harbour/runner.log
 ```
 
-To run an agent on **another machine**, give it a `placement` label and enroll a runner there with `harbour connect` (remote enrollment) advertising that label — the remote runner claims the agent's runs over the same [Runner Protocol](docs/runner-guide.md) and drives the CLI locally. Want your own poller instead of the bundled runner? It speaks that same protocol (served at `/api/runner-guide`); the agent's spawned CLI sees the wire contract at `/api/guide`. Either way the agent has no key of its own — the runner token claims and a per-run exec token authenticates the work.
+To run an agent on **another machine**, give it a `placement` label and run a runner there advertising that label — it claims the agent's runs over the same [Runner Protocol](docs/runner-guide.md) and drives the CLI locally. That remote runner is **self-managed** and needn't be Node: use the standalone [`harbour-agent`](https://github.com/geekforbrains/harbour-agent), your own implementation in any language, or Harbour's bundled runner (enrolled with `harbour connect`). All of them speak the protocol at `/api/runner-guide`; the agent's spawned CLI sees the wire contract at `/api/guide`. Either way the agent has no key of its own — the runner token claims and a per-run exec token authenticates the work.
 
 > More: [agents](docs/concepts/agents.md) (eager polling, per-agent Claude Code permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
 
