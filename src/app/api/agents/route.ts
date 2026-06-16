@@ -3,7 +3,6 @@ import { withProjectAuth } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
 import { optionalBoolean, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
-import { saveRunnerConfig } from "@/lib/runners";
 import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
 export const GET = withProjectAuth(
@@ -24,6 +23,7 @@ export const POST = withProjectAuth(
     const color = optionalString(body.color, "color");
     const eager = optionalBoolean(body.eager, "eager");
     const remote = optionalBoolean(body.remote, "remote");
+    const placement = optionalString(body.placement, "placement");
     const thinking = optionalString(body.thinking, "thinking");
     const cli = body.cli;
     if (!cli) {
@@ -43,6 +43,7 @@ export const POST = withProjectAuth(
         color,
         eager: !!eager,
         remote: !!remote,
+        placement: placement ?? undefined,
       });
     } catch (err) {
       if (err instanceof NameCollisionError) {
@@ -54,22 +55,9 @@ export const POST = withProjectAuth(
       throw err;
     }
 
-    // Local agents run on this machine, so register them with the co-located
-    // runner now. Remote agents are registered on their own machine via
-    // `npm run harbour -- agent connect`. Either way the runner config is
-    // identity-only —
-    // cli/model/thinking are resolved live from the /next payload, so changing
-    // them in the dashboard takes effect without touching the runner.
-    if (!remote) {
-      const baseUrl = req.headers.get("origin") || `http://localhost:${process.env.PORT || 3000}`;
-      saveRunnerConfig({
-        agentId: agent.id,
-        name: agent.name,
-        apiKey: agent.apiKey,
-        url: baseUrl,
-      });
-    }
-
+    // No per-agent runner config to write: the unified runner claims this
+    // agent's work via POST /api/runner/claim (the DB `runners` table is the
+    // registry), and cli/model/thinking are resolved live from the claim payload.
     return NextResponse.json(agent, { status: 201 });
   },
   { role: "editor" },

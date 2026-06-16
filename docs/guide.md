@@ -6,7 +6,9 @@ This document covers everything an agent needs to work with Harbour. It is serve
 
 Harbour is a control plane that manages your recurring jobs, shared docs, tables, and encrypted environment variables. It doesn't control how you do your work — it tells you *what* to do, *when*, and gives you the context to do it.
 
-You poll for work. Harbour returns a job with instructions, referenced docs, table rows, and env vars. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and your next poll picks it up. You can also create and update shared docs and manage structured data through the API.
+You don't poll Harbour yourself — a **runner** claims work on your behalf and spawns you (the CLI) with the run already in hand: instructions, referenced docs, table rows, env vars, and a pre-resolved `api` block. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and a later claim picks the run back up. You can also create and update shared docs and manage structured data through the API.
+
+The runner↔server side of this — how a runner claims a run, what it advertises, the shape of the run payload — is a separate contract served at `GET /api/runner-guide` (the Runner Protocol). This document is the worker-agent contract: what you receive once spawned, and how you call back.
 
 Key concepts:
 - **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/tables/env vars
@@ -56,35 +58,25 @@ For convenience, the API also accepts human-readable strings and common cron exp
 
 ## Authentication
 
-All API requests require a Bearer token in the Authorization header:
+Every callback you make for a run is authenticated with that run's **exec token** — a per-run credential (`hbx_…`) minted when the runner claimed the run and handed to you in the `api` block. Send it as a Bearer token:
 
 ```
-Authorization: Bearer hbr_<your_api_key>
+Authorization: Bearer hbx_<exec_token>
 ```
 
-API keys are issued when an agent is created and shown only once. Keys can be rotated from the dashboard.
+The exec token is scoped to a single run and rotated on every re-claim, so it carries the lifecycle endpoints (`set_title`, `update_status`, `post_activity`, `upload_attachment`, …) as well as the docs and tables endpoints. You never see or use the runner's own token, and an agent no longer authenticates with its own long-lived API key for run work — that high-value key stays on the runner. Read the resolved URLs and the auth note straight out of `api` (see the next section); don't construct them yourself.
 
-## The Polling Loop
+## Your Run Context
 
-Agents pull work from Harbour on their own schedule. Harbour never calls out to agents.
+Harbour never calls out to agents and you never poll it. A runner claims the next runnable unit from the server — the Runner Protocol, served at `GET /api/runner-guide` — and spawns you with the full run context already resolved. The server decides what to hand over — most notably:
 
-### Get Next Work
+- A `pending` run a human nudged back into the queue is resumed (full activity history included) ahead of fresh scheduled work.
+- A `scheduled` run (triggered from the dashboard or via `POST /api/jobs/:id/trigger`) is claimed when due.
+- A recurring job past its scheduled time is materialized into a new run.
 
-```
-GET /api/agents/:id/next
-```
+You don't see that selection — you just receive the chosen run, already flipped to `running`, as the context below.
 
-Returns the next thing for the agent to work on, or `null` if nothing to do.
-
-**Priority order:**
-1. Any stale `running` run past its job's timeout is automatically failed first
-2. If the agent has a run in `running` status, returns `null` (agent is busy)
-3. Any `pending` run (human responded, ready to resume) — resume it
-4. Any `scheduled` run ready to start (triggered from the dashboard or `POST /api/jobs/:id/trigger`) — claim it
-5. Any recurring job past its scheduled time without an active run — create a new run
-6. Nothing to do — returns `null`
-
-**Response format:**
+**Run context (what the runner hands you):**
 ```json
 {
   "run": {
@@ -93,6 +85,7 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "title": "Morning Tweet · 9:00am",
     "activity": [...]
   },
+  "exec_token": "hbx_...",
   "job": {
     "id": "uuid",
     "kind": "agent",
@@ -142,10 +135,14 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   ],
   "api": {
     "base_url": "https://your-harbour.example.com",
+    "auth": "Bearer <exec_token> (from this claim) on every /api/runs/:id/* call",
     "endpoints": {
       "set_title": "PUT https://your-harbour.example.com/api/runs/<run_id>/title",
       "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
       "post_activity": "POST https://your-harbour.example.com/api/runs/<run_id>/activity",
+      "post_output": "POST https://your-harbour.example.com/api/runs/<run_id>/output",
+      "poll_kill": "GET https://your-harbour.example.com/api/runs/<run_id>/kill",
+      "save_session": "PUT https://your-harbour.example.com/api/runs/<run_id>/session",
       "upload_attachment": "POST https://your-harbour.example.com/api/runs/<run_id>/attachments",
       "create_doc": "POST https://your-harbour.example.com/api/docs",
       "update_doc": "PUT https://your-harbour.example.com/api/docs/:id",
@@ -166,34 +163,22 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the harbour-agent runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached tables (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, tables, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and tables — no need to construct URLs yourself.
+Everything the agent needs is bundled in the context the runner passes through: the run, the `exec_token` you authenticate callbacks with, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached tables (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, tables, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and tables — no need to construct URLs yourself, and send the `exec_token` (echoed in `api.auth`) as the Bearer on each one.
 
 The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
 
 The `job.prerun`, `job.postrun`, `job.command`, `job.workflow`, and `job.scripts_dir` fields carry the job's gates for the runner that executes them. They are present on every run (agent and workflow):
 
 - Each gate is a `{ runtime, content }` object (or `null` when unset). `runtime` is one of `bash`, `python`, or `node`; `content` is the script body, stored verbatim. `prerun` and `postrun` are the agent-job gates; `command` and `workflow` are two aliases for the same workflow gate (both set on workflow runs, both `null` on agent runs).
-- `scripts_dir` is a **relative** path under the runner's `$HARBOUR_HOME/workflows` root. The harbour-agent / workflow runner `mkdir -p`s this per-job directory, materializes each present gate's `content` into it as `<role>.<ext>` (`prerun`/`postrun`/`workflow`; `bash`→`.sh`, `python`→`.py`, `node`→`.js`) with an executable mode, and runs it from there via the runtime's interpreter (`bash <file>` / `python3 <file>` / `node <file>`).
+- `scripts_dir` is a **relative** path under the runner's `$HARBOUR_HOME/workflows` root. The runner `mkdir -p`s this per-job directory, materializes each present gate's `content` into it as `<role>.<ext>` (`prerun`/`postrun`/`workflow`; `bash`→`.sh`, `python`→`.py`, `node`→`.js`) with an executable mode, and runs it from there via the runtime's interpreter (`bash <file>` / `python3 <file>` / `node <file>`).
 
 These fields matter only to a runner that executes the gates; if you're a worker doing the actual LLM work (not running `prerun`/`postrun`/`command`), you can ignore them.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
-The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the same Bearer token. Embeds carry the source URL — recognised providers (`loom`, `youtube`, `vimeo`) render as inline players on the dashboard; anything else is recorded with `embed_provider: "generic"` and shown as a link.
+The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the run's exec token as the Bearer. Embeds carry the source URL — recognised providers (`loom`, `youtube`, `vimeo`) render as inline players on the dashboard; anything else is recorded with `embed_provider: "generic"` and shown as a link.
 
-### Peek (Read-Only Check)
-
-```
-GET /api/agents/:id/next?peek=true
-```
-
-Check if work is available without claiming anything. Useful for cron guards. Returns one of:
-
-- `{"available": false, "reason": "busy"}` — agent already has a `running` run
-- `{"available": false, "reason": "nothing_to_do"}` — no work
-- `{"available": true, "type": "pending_resume", "run_id": "...", "job_name": "..."}` — a `pending` run is ready to resume
-- `{"available": true, "type": "scheduled_run", "run_id": "...", "job_name": "..."}` — a triggered or requeued `scheduled` run is due
-- `{"available": true, "type": "scheduled", "job_id": "...", "job_name": "..."}` — a recurring job is due (run will be created on the next non-peek call)
+> Claiming and read-only availability checks (`?peek=true`) are the runner's job, not yours — they belong to the runner↔server protocol, the Runner Protocol served at `GET /api/runner-guide`.
 
 ## Run Lifecycle
 
@@ -208,7 +193,7 @@ Content-Type: application/json
 
 Each run carries a short human-readable title displayed on the dashboard. Harbour seeds a placeholder (the job name plus the time it fired); you should overwrite it **as the first action on every run** so the title reflects what you actually do.
 
-The `/next` payload prepends a short instruction telling you to do this, and the `api.endpoints.set_title` field gives you the resolved URL. If the job sets a `title_format` (e.g. `"Issue #XXX — short summary"`), follow it; otherwise use a short sentence summarizing the run. Titles are trimmed and capped at 80 characters server-side.
+The run context prepends a short instruction telling you to do this, and the `api.endpoints.set_title` field gives you the resolved URL. If the job sets a `title_format` (e.g. `"Issue #XXX — short summary"`), follow it; otherwise use a short sentence summarizing the run. Titles are trimmed and capped at 80 characters server-side.
 
 ### Update Status
 
@@ -219,13 +204,13 @@ Content-Type: application/json
 { "status": "waiting" }
 ```
 
-Statuses you set (these are the `status_options` in the `/next` payload):
+Statuses you set (these are the `status_options` in the `api` block):
 - `done` — completed successfully
 - `failed` — something broke (or timed out)
 - `waiting` — agent needs human input (surfaces on dashboard)
 
 Statuses you'll see but shouldn't set yourself (the API accepts them, but they're managed by Harbour or the runner):
-- `running` — set when a run is claimed via `/next`
+- `running` — set when a runner claims the run
 - `pending` — set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run; queued for agent pickup
 - `skipped` — a workflow or prerun gate determined there was nothing to do (exit code 77)
 - `killed` — set by the harbour-agent runner when a kill request was honored
@@ -236,9 +221,9 @@ Statuses you'll see but shouldn't set yourself (the API accepts them, but they'r
 
 When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
 
-**Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. An agent run goes back to `pending` with a system activity note, and the agent picks it up on next poll. A workflow run is requeued as `scheduled` so a workflow runner claims a fresh attempt.
+**Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. An agent run goes back to `pending` with a system activity note, and is resumed the next time a runner claims it. A workflow run is requeued as `scheduled` so a runner advertising the `workflow` kind claims a fresh attempt.
 
-**Timeouts:** Each job has a configurable `timeout_minutes` (default 30). It's a hard wallclock ceiling per running attempt, measured from when the run was claimed — not an inactivity window. A run that exceeds it is automatically failed on the next poll with a system message, even if it's still streaming output (a chatty run can still be wedged; the ceiling guarantees stuck runs never block the agent). Resuming a run (`pending` → `running`) starts a fresh attempt with a fresh clock.
+**Timeouts:** Each job has a configurable `timeout_minutes` (default 30). It's a hard wallclock ceiling per running attempt, measured from when the run was claimed — not an inactivity window. A run that exceeds it is automatically failed on the next claim with a system message, even if it's still streaming output (a chatty run can still be wedged; the ceiling guarantees stuck runs never block the agent). Resuming a run (`pending` → `running`) starts a fresh attempt with a fresh clock.
 
 ### Add Activity
 
@@ -255,7 +240,7 @@ Activity entries support markdown. They form the visible record of what happened
 
 ### Attachments
 
-Attach files (screenshots, PDFs, exports) or URL embeds (Loom, YouTube, Vimeo, or generic links) to a run. Both kinds appear in the activity thread on the dashboard and in the `attachments` array of `/next`.
+Attach files (screenshots, PDFs, exports) or URL embeds (Loom, YouTube, Vimeo, or generic links) to a run. Both kinds appear in the activity thread on the dashboard and in the `attachments` array of the run context.
 
 **Upload a file (multipart/form-data):**
 
@@ -286,21 +271,21 @@ Content-Type: application/json
 
 **List attachments:** `GET /api/runs/:id/attachments`
 **Delete an attachment:** `DELETE /api/runs/:id/attachments/:aid`
-**Download a file:** `GET /api/runs/:id/attachments/:aid/file` — same Bearer token works.
+**Download a file:** `GET /api/runs/:id/attachments/:aid/file` — the run's exec token works as the Bearer.
 
 **The waiting flow:**
 
 1. You need human input — set the run to `waiting` and add an activity message explaining what you need
 2. The run surfaces on the dashboard. The human reads your message and responds
 3. The status automatically changes from `waiting` to `pending` — the human's response is in the activity log
-4. On your next `/next` poll, Harbour returns this `pending` run — status flipped to `running`, full activity history included
+4. A runner re-claims this `pending` run on a later poll and re-spawns you — status flipped to `running`, full activity history included, with a freshly minted exec token in the `api` block
 5. You read the human's response from the activity log and continue your work
 
 Pending runs **always take priority** over scheduled jobs. Other jobs continue to fire normally while a run is waiting — work doesn't block.
 
 ## Tables
 
-Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the `/next` payload carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are auto-attached to new jobs created in their scope (like pinned docs and secrets).
+Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the run context carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are auto-attached to new jobs created in their scope (like pinned docs and secrets).
 
 ### Create a Table
 
@@ -380,7 +365,7 @@ Content-Type: application/json
 { "tableId": "uuid" }
 ```
 
-Only tables **linked to the job** (via this endpoint) are included in the `/next` payload under `tables`, keyed by name — org/project membership alone does not inject a table. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/tables/:id` returns the table's column schema if you need it.
+Only tables **linked to the job** (via this endpoint) are included in the run context under `tables`, keyed by name — org/project membership alone does not inject a table. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/tables/:id` returns the table's column schema if you need it.
 
 ### Convenience Endpoint
 
@@ -400,7 +385,7 @@ Content-Type: application/json
 
 ## Docs
 
-Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the `/next` payload automatically. Pinned docs are auto-attached to new jobs created in their scope. Agents can also create and update docs:
+Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the run context automatically. Pinned docs are auto-attached to new jobs created in their scope. Agents can also create and update docs:
 
 ### Create a Doc
 
@@ -422,18 +407,24 @@ Content-Type: application/json
 
 Both fields are optional — send either or both. Doc revisions are preserved automatically.
 
-## Reference Runner
+## Worker callbacks
+
+You don't claim work — a runner does that (the Runner Protocol, served at `GET /api/runner-guide`) and spawns you with the run context already in hand. From there you read the exec token and the resolved endpoints out of the context and call back against this run:
 
 ```bash
 #!/bin/bash
-# Polls Harbour and invokes the LLM when there's work
+# $CONTEXT is the run context the runner handed you (the JSON above).
 
-RESPONSE=$(curl -s -H "Authorization: Bearer $KEY" \
-  "$HARBOUR_URL/api/agents/$AGENT_ID/next")
-[ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ] && exit 0
+RUN_ID=$(echo "$CONTEXT" | jq -r '.run.id')
+EXEC_TOKEN=$(echo "$CONTEXT" | jq -r '.exec_token')
+SET_TITLE=$(echo "$CONTEXT" | jq -r '.api.endpoints.set_title')
 
-RUN_ID=$(echo "$RESPONSE" | jq -r '.run.id')
+# Authenticate every callback with the run's exec token — never a runner or agent key.
+curl -s -X PUT "$SET_TITLE" \
+  -H "Authorization: Bearer $EXEC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Issue #1234 — Fix login redirect"}'
 
-# Your LLM invocation here
-# RESPONSE contains the full run context
+# Do the work, posting activity and (finally) a terminal status the same way,
+# each against the endpoints in $CONTEXT.api.endpoints with $EXEC_TOKEN.
 ```

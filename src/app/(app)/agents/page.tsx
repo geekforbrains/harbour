@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Briefcase, Check, CheckCircle, Copy, Loader2, Plus, XCircle } from "lucide-react";
+import { Bot, Briefcase, CheckCircle, Loader2, Plus, XCircle } from "lucide-react";
 import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
@@ -66,12 +66,9 @@ export default function AgentsPage() {
   const [newAgent, setNewAgent] = useState<{
     id: string;
     name: string;
-    apiKey: string;
-    remote: boolean;
   } | null>(null);
-  const [copied, setCopied] = useState(false);
   const [eagerAgent, setEagerAgent] = useState(false);
-  const [remoteAgent, setRemoteAgent] = useState(false);
+  const [placement, setPlacement] = useState("");
 
   // CLI tool selection — every v2 agent is a harbour CLI agent; cli is required.
   const [cliTools, setCliTools] = useState<CliTool[]>([]);
@@ -112,15 +109,13 @@ export default function AgentsPage() {
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
     if (eagerAgent) body.eager = true;
-    if (remoteAgent) body.remote = true;
+    if (placement.trim()) body.placement = placement.trim();
 
     try {
       const data = await createAgent.mutateAsync(body);
       setNewAgent({
         id: data.id,
         name: data.name,
-        apiKey: data.apiKey ?? "",
-        remote: !!data.remote,
       });
       setName("");
       setDescription("");
@@ -133,16 +128,9 @@ export default function AgentsPage() {
     setCreating(false);
   }
 
-  function handleCopy() {
-    navigator.clipboard.writeText(getConnectCommand());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   function handleCloseCreate() {
     setShowCreate(false);
     setNewAgent(null);
-    setCopied(false);
     setColor("");
     createAgent.reset();
     setSelectedCli(null);
@@ -150,24 +138,7 @@ export default function AgentsPage() {
     setSelectedThinking("");
     setCliTools([]);
     setEagerAgent(false);
-    setRemoteAgent(false);
-  }
-
-  // Identity-only blob: cli/model/thinking are resolved live from /next, so the
-  // connect command just carries who the agent is and where harbour lives.
-  function getConnectBlob() {
-    if (!newAgent || typeof window === "undefined") return "";
-    const payload = {
-      url: window.location.origin,
-      agentId: newAgent.id,
-      apiKey: newAgent.apiKey,
-      name: newAgent.name,
-    };
-    return btoa(JSON.stringify(payload));
-  }
-
-  function getConnectCommand() {
-    return `npm run harbour -- agent connect ${getConnectBlob()}`;
+    setPlacement("");
   }
 
   if (loading) {
@@ -281,61 +252,24 @@ export default function AgentsPage() {
           </DialogHeader>
 
           {newAgent ? (
-            newAgent.remote ? (
-              // Remote agent — the only setup is running the connect command on
-              // the target machine. cli/model/thinking are resolved live from
-              // harbour, so they stay editable here on the agent's page.
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is a remote agent. On the machine that should run
-                  it, clone Harbour and run{" "}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install</code>, then
-                  run this command:
-                </p>
-                <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
-                  {getConnectCommand()}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  The command contains the agent API key — treat it like a password. Model, effort,
-                  and CLI tool are set here in harbour and applied on every run, so you never have
-                  to reconfigure the remote machine. Prerun/postrun gate scripts are stored in
-                  Harbour and materialized onto the runner automatically — just make sure their
-                  runtime (bash, python3, or node) is installed on that machine.
-                </p>
-                <DialogFooter>
-                  <Button variant="outline" onClick={handleCopy}>
-                    {copied ? (
-                      <>
-                        <Check className="h-4 w-4 mr-1.5" /> Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-4 w-4 mr-1.5" /> Copy Command
-                      </>
-                    )}
-                  </Button>
-                  <Button onClick={handleCloseCreate}>Done</Button>
-                </DialogFooter>
-              </div>
-            ) : (
-              // Local agent — the co-located runner was registered automatically.
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is ready. The local runner picks it up on its
-                  next poll — no further setup needed.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  If no runner is installed yet, run{" "}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                    npm run harbour -- agent install
-                  </code>{" "}
-                  on this machine.
-                </p>
-                <DialogFooter>
-                  <Button onClick={handleCloseCreate}>Done</Button>
-                </DialogFooter>
-              </div>
-            )
+            // The runner advertising this agent's placement picks it up on its
+            // next poll — no further setup needed here.
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong>{newAgent.name}</strong> is ready. The runner picks it up on its next poll —
+                no further setup needed.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                If no local runner is installed yet, run{" "}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                  npm run harbour -- agent install
+                </code>{" "}
+                on this machine. Runners for other placements are minted in Settings → Runners.
+              </p>
+              <DialogFooter>
+                <Button onClick={handleCloseCreate}>Done</Button>
+              </DialogFooter>
+            </div>
           ) : !selectedCli ? (
             // CLI tool selection — required; every agent is a harbour CLI agent.
             <div className="space-y-3">
@@ -432,22 +366,17 @@ export default function AgentsPage() {
                   </div>
                 </label>
               </div>
-              <div className="rounded-md border p-3 space-y-2">
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={remoteAgent}
-                    onChange={(e) => setRemoteAgent(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <div className="text-sm">
-                    <p className="font-medium">Runs on a different machine</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      For work that must run elsewhere (e.g. Xcode builds on a Mac). You&apos;ll get
-                      a connect command to run there instead of the local runner picking it up.
-                    </p>
-                  </div>
-                </label>
+              <div className="space-y-2">
+                <Label htmlFor="agent-placement">Placement</Label>
+                <Input
+                  id="agent-placement"
+                  value={placement}
+                  onChange={(e) => setPlacement(e.target.value)}
+                  placeholder="local"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Which runner pool runs this agent (default: local).
+                </p>
               </div>
               <DialogFooter>
                 <Button

@@ -7,13 +7,12 @@ import {
   createProject,
   createRun,
   createWorkflow,
-  getAgentNextRun,
-  getNextWorkflowRun,
   getRunById,
   listRunActivity,
   updateRunStatus,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { claim, localRunner } from "./support/claim";
 
 // ---------------------------------------------------------------------------
 // Run timeout — server-side hard cap (issue #15)
@@ -27,6 +26,10 @@ import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 // For the cap to make sense across resumes/retries, `claimed_at` must be reset
 // every time a run (re)enters `running` — otherwise a run that waited hours for
 // a human, or was retried days later, would be capped the instant it resumes.
+//
+// Reaping is driven by a runner poll: both claim() and peek() call the stale-run
+// reaper before doing anything else, so any claim attempt (even one that matches
+// no work) is enough to fire the hard cap.
 // ---------------------------------------------------------------------------
 
 function freshDb(): Database.Database {
@@ -65,7 +68,8 @@ function claimedAtOf(runId: string): number {
 function agentSetup() {
   const org = createOrg("Acme")!;
   const project = createProject(org.id, "Website")!;
-  const agent = createAgent(project.id, "Dev");
+  // A CLI is required for a CLI runner to claim/resume the agent's runs.
+  const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
   const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
   return { org, project, agent, job };
 }
@@ -81,7 +85,7 @@ describe("failStaleRuns (agent path): hard cap keyed on claimed_at", () => {
     // Claimed 40 min ago (> the 30-min cap) but still actively streaming.
     setTimes(run.id, { claimedAt: NOW() - 40 * 60, updatedAt: NOW() - 1 });
 
-    getAgentNextRun(agent.id); // reaps stale runs before assigning
+    claim(); // a runner poll reaps stale runs before claiming
 
     expect(getRunById(run.id)!.status).toBe("failed");
     const activity = listRunActivity(run.id);
@@ -99,17 +103,17 @@ describe("failStaleRuns (agent path): hard cap keyed on claimed_at", () => {
     // Just claimed (1 min ago) but no output yet (updated 40 min ago).
     setTimes(run.id, { claimedAt: NOW() - 60, updatedAt: NOW() - 40 * 60 });
 
-    getAgentNextRun(agent.id);
+    claim();
 
     expect(getRunById(run.id)!.status).toBe("running");
   });
 });
 
 // ===========================================================================
-// Workflow path — same hard cap in getNextWorkflowRun
+// Workflow path — same hard cap, fired by a runner poll (claim)
 // ===========================================================================
 
-describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
+describe("workflow claim: hard cap keyed on claimed_at", () => {
   it("fails a workflow run claimed past the timeout despite recent updated_at", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Site")!;
@@ -121,7 +125,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 40 * 60, updatedAt: NOW() - 1 });
 
-    getNextWorkflowRun(org.id);
+    claim(); // runner poll reaps the stale workflow run
 
     expect(getRunById(run.id)!.status).toBe("failed");
   });
@@ -137,7 +141,7 @@ describe("getNextWorkflowRun: hard cap keyed on claimed_at", () => {
     const run = createRun(wf.id, null)!;
     setTimes(run.id, { claimedAt: NOW() - 60, updatedAt: NOW() - 40 * 60 });
 
-    getNextWorkflowRun(org.id);
+    claim();
 
     expect(getRunById(run.id)!.status).toBe("running");
   });
@@ -156,13 +160,14 @@ describe("claimed_at resets when a run (re)enters running", () => {
     // Simulate a long human wait: ancient timestamps while parked in 'pending'.
     setTimes(run.id, { claimedAt: NOW() - 9999, updatedAt: NOW() - 9999 });
 
-    const payload = getAgentNextRun(agent.id); // claims pending -> running
+    const runner = localRunner();
+    const payload = claim(runner); // claims pending -> running
     expect(payload).toBeTruthy();
     expect(getRunById(run.id)!.status).toBe("running");
     expect(claimedAtOf(run.id)).toBeGreaterThanOrEqual(NOW() - 5); // freshly stamped
 
     // A subsequent poll reaps stale runs again — the fresh run must survive.
-    getAgentNextRun(agent.id);
+    claim(runner);
     expect(getRunById(run.id)!.status).toBe("running");
   });
 

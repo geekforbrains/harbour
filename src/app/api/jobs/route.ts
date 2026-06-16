@@ -47,6 +47,7 @@ export const POST = withOrgAuth(
     const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
     const tableIds = optionalStringArray(body.tableIds, "tableIds");
     const timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
+    const placement = optionalString(body.placement, "placement");
 
     // Project-level when projectId given; otherwise org-level. Scope is fixed
     // at creation.
@@ -76,6 +77,7 @@ export const POST = withOrgAuth(
         schedule: normalized,
         workflow,
         timeoutMinutes,
+        placement: placement ?? undefined,
         docIds,
         envVarIds,
         tableIds,

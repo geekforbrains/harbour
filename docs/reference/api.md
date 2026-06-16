@@ -1,7 +1,7 @@
 # API
 
 The codebase-side route map: every route file, its HTTP method, the auth wrapper
-(and minimum role), and a one-liner. **78 route files.**
+(and minimum role), and a one-liner. **77 route files.**
 
 The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
@@ -16,6 +16,12 @@ For the auth model behind the wrapper names below — identities, roles, scope
 resolution — see [architecture.md](architecture.md#auth-model). In short:
 `viewer < editor < instance_admin`; agents are scoped to their own project's org;
 not-found resolves to **403** to avoid leaking existence across tenants.
+
+Bearer tokens dispatch by prefix: `hbx_` is a per-run **exec token** (executor
+identity, bound to one run — accepted by the run-lifecycle wrappers below),
+`hbrn_` is a **runner token** (the claim endpoint only), and `hbr_` is an **agent
+key or admin key**. `withAgentOrUser` accepts a user, a permanent agent key, or an
+agent-run's exec token (the executor acts as the run's agent).
 
 ## Conventions
 
@@ -37,10 +43,12 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 - **Scope** comes from the query string / cookies: org routes read `?orgId=` or
   the `harbour_org` cookie; project routes read `?projectId=`; `[id]` routes
   resolve the owning org from the resource.
-- **`/next` payload** (`GET /api/agents/:id/next` and `/api/workflows/next`):
-  `null` or `{ run, job, docs, tables, env, attachments, api }`, plus `agent` and
-  `workspace` (the org/project/agent slugs) on agent runs. The `api` block is
-  pre-resolved full URLs. Full schema in [guide.md](../guide.md).
+- **Claim payload** (`POST /api/runner/claim`): `{ run: null }` or the kind-tagged
+  `{ run, job, docs, tables, env, attachments, exec_token, api }`, plus `agent` and
+  `workspace` (the org/project/agent slugs) on agent runs. `exec_token` is the
+  freshly minted per-run `hbx_` credential and the `api` block is pre-resolved full
+  URLs that authenticate with it. Full schema in
+  [runner-guide.md](../runner-guide.md) (`GET /api/runner-guide`).
 - **SSE**: `GET /api/runs/:id/output/stream` and
   `GET /api/captain/conversations/:id/stream` emit `event: output` (poll-backed),
   then `event: status` / `event: done` on terminal state.
@@ -53,7 +61,8 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 | POST | `/api/auth/logout` | Clear session cookie |
 | POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 12 chars). Rate-limited: 5 attempts per IP per hour → `429` |
 | GET | `/api/auth/me` | Echo the current principal (resolves the caller itself) |
-| GET | `/api/guide` | Serve [guide.md](../guide.md) |
+| GET | `/api/guide` | Serve [guide.md](../guide.md) (worker-agent / CLI contract) |
+| GET | `/api/runner-guide` | Serve [runner-guide.md](../runner-guide.md) (the Runner Protocol) |
 
 There is **no** signup route.
 
@@ -93,7 +102,6 @@ There is **no** signup route.
 | GET / POST | `/api/agents/:id/jobs` | `withResourceAuth` agent (viewer / editor) | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withResourceAuth` agent (viewer) | Run history |
 | POST | `/api/agents/:id/tables` | `withAgentOrUser` (editor) | Convenience: create a table, optionally link to a job + seed rows |
-| GET | `/api/agents/:id/next` | `withAgentAuth` + `requireAgentSelf` | **Poll** for work (`?peek=true`) |
 
 ## Jobs
 
@@ -138,28 +146,36 @@ in the `/next` payload (`job.prerun` / `job.postrun` / `job.command` /
 | GET | `/api/runs/:id` | `withResourceAuth` run (viewer) | Run + activity + attachments |
 | DELETE | `/api/runs/:id` | `withResourceAuth` run (editor) | Delete run + uploads |
 | GET | `/api/runs/:id/activity` | `withResourceAuth` run (viewer) | Activity log |
-| POST | `/api/runs/:id/activity` | `withAgentOrUser` | Append; user comment on a terminal run → `pending`; workflow runs accept runner output only |
+| POST | `/api/runs/:id/activity` | `withRunExecutorOrUser` | Append; user comment on a terminal run → `pending`; workflow runs accept executor output only |
 | GET | `/api/runs/:id/output` | `withResourceAuth` run (viewer) | Buffered output (`?after=`) |
-| POST | `/api/runs/:id/output` | `withAgentOrUser` | Runner streams output; response carries `kill_requested` |
+| POST | `/api/runs/:id/output` | `withRunExecutorOrUser` | Executor streams output; response carries `kill_requested` |
 | GET | `/api/runs/:id/output/stream` | `withResourceAuth` run (viewer) | SSE |
-| GET | `/api/runs/:id/kill` | `withAgentOrUser` | Kill-flag poll (runner fallback) |
+| GET | `/api/runs/:id/kill` | `withRunExecutorOrUser` | Kill-flag poll (runner fallback) |
 | POST | `/api/runs/:id/kill` | `withResourceAuth` run (editor) | Request kill (409 if not running) |
-| POST | `/api/runs/:id/retry` | `withAgentOrUser` | Retry terminal → `pending` (agent) / `scheduled` (workflow) |
-| GET / PUT | `/api/runs/:id/status` | `withAgentOrUser` | Read / set status (409 on illegal transition) |
-| PUT | `/api/runs/:id/session` | `withAgentOrUser` | Runner reports CLI session id + cwd |
-| PUT | `/api/runs/:id/title` | `withAgentOrUser` | Set the run title |
+| POST | `/api/runs/:id/retry` | `withResourceAuth` run (editor) | Retry terminal → `pending` (agent) / `scheduled` (workflow) |
+| GET / PUT | `/api/runs/:id/status` | `withRunExecutorOrUser` | Read / set status (409 on illegal transition) |
+| PUT | `/api/runs/:id/session` | `withRunExecutorOrUser` | Executor reports CLI session id + cwd |
+| PUT | `/api/runs/:id/title` | `withRunExecutorOrUser` | Set the run title |
 
-### Run attachments (all `withAgentOrUser`)
+These lifecycle routes accept either the run's per-run **exec token** (`hbx_`,
+minted at claim and bound to this run id) or a user meeting the stated role in the
+run's org. The runner and the CLI it spawns authenticate every call here with the
+exec token, never the runner token — see [architecture.md](architecture.md#auth-model).
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET / POST | `/api/runs/:id/attachments` | List / upload file (multipart) or embed (JSON) |
-| DELETE | `/api/runs/:id/attachments/:aid` | Delete |
-| GET | `/api/runs/:id/attachments/:aid/file` | Download bytes |
-| GET / POST | `/api/runs/:id/attachments/:aid/processing` | Video processing status / (re)queue |
-| GET | `/api/runs/:id/attachments/:aid/screenshots` | Paginated frames |
-| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | One JPEG |
-| GET | `/api/runs/:id/attachments/:aid/transcript` | Transcript / storyboard (`?format=plain`) |
+### Run attachments
+
+The top-level list/upload pair is `withRunExecutorOrUser` (exec token or user); the
+per-attachment routes below stay `withAgentOrUser`.
+
+| Method | Path | Wrapper | Purpose |
+|---|---|---|---|
+| GET / POST | `/api/runs/:id/attachments` | `withRunExecutorOrUser` | List / upload file (multipart) or embed (JSON) |
+| DELETE | `/api/runs/:id/attachments/:aid` | `withAgentOrUser` | Delete |
+| GET | `/api/runs/:id/attachments/:aid/file` | `withAgentOrUser` | Download bytes |
+| GET / POST | `/api/runs/:id/attachments/:aid/processing` | `withAgentOrUser` | Video processing status / (re)queue |
+| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withAgentOrUser` | Paginated frames |
+| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withAgentOrUser` | One JPEG |
+| GET | `/api/runs/:id/attachments/:aid/transcript` | `withAgentOrUser` | Transcript / storyboard (`?format=plain`) |
 
 ## Shared context
 
@@ -190,12 +206,17 @@ in the `/next` payload (`job.prerun` / `job.postrun` / `job.command` /
 (The UI labels env vars **Secrets**; the route and table names stay `env-vars` /
 `env_vars`.)
 
-## Workflows
+## Runner
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET | `/api/workflows/next` | `withWorkflowRunnerAuth` | Poll for a workflow run (`?peek=true`) |
-| GET / POST | `/api/workflow-runners` | `withOrgAuth` | List / create workflow-runner credentials |
+| POST | `/api/runner/claim` | `withRunnerAuth` | The one execution entry point: a runner POSTs `{ capabilities: { kinds, clis, labels } }` and gets back the next claimable run (kind-tagged, with its `exec_token` + pre-resolved `api` block) or `{ run: null }`. `?peek=true` reports availability/liveness without claiming |
+
+This single endpoint replaces the old per-runner poll routes (`GET
+/api/agents/:id/next`, `GET /api/workflows/next`) and the per-org workflow-runner
+credential routes (`GET / POST /api/workflow-runners`), which are removed. Both
+agent and workflow runs are claimed here; the server is the sole arbiter and
+serializes claims in one SQLite transaction.
 
 ## Captain (all `withOrgAuth`)
 

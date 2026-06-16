@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser, withResourceAuth } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withResourceAuth, withRunExecutorOrUser } from "@/lib/auth";
 import {
   addRunActivity,
   getRunById,
@@ -20,24 +19,18 @@ export const GET = withResourceAuth("run", "id", { role: "viewer" })(
   },
 );
 
-// Viewers may comment (intentional — comments can resume a waiting run), and
-// agents post activity as they work. Workflow runs are the exception: their
-// activity log is runner output only, never a conversation (see guard below).
-export const POST = withAgentOrUser(
+// Viewers may comment (intentional — comments can resume a waiting run), and the
+// run's executor posts activity as it works. Workflow runs are the exception:
+// their activity log is runner output only, never a conversation (guard below).
+export const POST = withRunExecutorOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
     // Workflow runs are non-interactive: their activity log is runner output,
-    // not a message thread. Only the workflow runner may write to it.
-    if (run.job_kind === "workflow" && auth.type !== "workflow_runner") {
+    // not a message thread. Only the executor may write to it.
+    if (run.job_kind === "workflow" && auth.type !== "executor") {
       return NextResponse.json(
         { error: "Workflow runs do not have a message thread" },
         { status: 400 },
@@ -52,20 +45,24 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "content or attachment_ids required" }, { status: 400 });
     }
 
-    const authorType =
-      auth.type === "user" ? "user" : auth.type === "workflow_runner" ? "workflow" : "agent";
-    const authorId =
-      auth.type === "user"
-        ? auth.userId
-        : auth.type === "workflow_runner"
-          ? auth.runnerId
-          : auth.agentId;
-    const authorName =
-      auth.type === "user"
-        ? auth.displayName
-        : auth.type === "workflow_runner"
-          ? auth.runnerName
-          : auth.agentName;
+    // Author: a workflow-run executor authors as 'workflow'; an agent-run
+    // executor as 'agent'; a dashboard user as 'user'.
+    let authorType: string;
+    let authorId: string | null;
+    let authorName: string;
+    if (auth.type === "user") {
+      authorType = "user";
+      authorId = auth.userId;
+      authorName = auth.displayName;
+    } else if (auth.runKind === "workflow") {
+      authorType = "workflow";
+      authorId = auth.runId;
+      authorName = auth.agentName ?? "Runner";
+    } else {
+      authorType = "agent";
+      authorId = auth.agentId ?? auth.runId;
+      authorName = auth.agentName ?? "Agent";
+    }
 
     const entry = addRunActivity(id, authorType, authorId, authorName, content);
 
@@ -73,7 +70,7 @@ export const POST = withAgentOrUser(
       linkAttachmentsToActivity(attachmentIds, entry.id, id);
     }
 
-    // When a user responds, move to pending (ready for agent pickup). 'killed'
+    // When a user responds, move to pending (ready for executor pickup). 'killed'
     // runs can also be resumed via a comment.
     if (authorType === "user" && ["waiting", "done", "failed", "killed"].includes(run.status)) {
       updateRunStatus(id, "pending");
@@ -82,9 +79,5 @@ export const POST = withAgentOrUser(
 
     return NextResponse.json(entry, { status: 201 });
   },
-  {
-    role: "viewer",
-    allowWorkflowRunner: true,
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "viewer" },
 );

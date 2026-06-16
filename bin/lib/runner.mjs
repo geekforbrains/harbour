@@ -2,13 +2,9 @@ import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { loadRunnerCredentials, loadSessions, saveSessions } from "./config.mjs";
 import {
-  loadRunnerConfigs,
-  loadSessions,
-  loadWorkflowRunnerConfigs,
-  saveSessions,
-} from "./config.mjs";
-import {
+  detectCapabilities,
   ensureWorkingDir,
   getProvider,
   resolveRunConfig,
@@ -47,8 +43,8 @@ const KILL_POLL_INTERVAL_MS = 10_000;
 // (used for tests and for tuning chatty/quiet models).
 const CLI_INACTIVITY_TIMEOUT_MS = Number(process.env.HARBOUR_CLI_INACTIVITY_MS) || 3 * 60 * 1000;
 
-// Strip the leading HTTP verb the /next payload prefixes each endpoint with
-// ("PUT https://…" → "https://…").
+// Strip the leading HTTP verb the claim payload's `api` block prefixes each
+// endpoint with ("PUT https://…" → "https://…").
 function stripVerb(endpoint) {
   return (endpoint || "").replace(/^[A-Z]+ /, "");
 }
@@ -564,30 +560,6 @@ async function runGateCommand({
   }
 }
 
-// Cap on consecutive eager iterations within a single launchd tick.
-// Guards against a bug in getAgentNextRun ever returning non-null in a loop.
-// 50 is plenty for any realistic backlog; launchd respawns us next minute anyway.
-export const EAGER_MAX_ITERATIONS = 50;
-
-/**
- * Decide whether the eager loop should continue after one run finishes.
- * Pure function — exposed for unit testing. Encodes:
- *   - "no-work" / "poll-error": always exit (nothing to do or transient issue)
- *   - eager off: never loop (single shot per tick)
- *   - failed / killed: exit (let the 60s gap absorb transient errors;
- *                            kill = user said stop)
- *   - done / waiting / skipped: continue draining
- *
- * @param {string} outcome - one of: no-work, poll-error, done, waiting, skipped, failed, killed, running
- * @param {boolean} eager - the agent's eager flag (live from /next payload)
- * @returns {boolean}
- */
-export function shouldContinueEagerLoop(outcome, eager) {
-  if (outcome === "no-work" || outcome === "poll-error") return false;
-  if (!eager) return false;
-  return outcome === "done" || outcome === "waiting" || outcome === "skipped";
-}
-
 // ---- Postrun gate (#29) ----------------------------------------------------
 // A deterministic post-agent hook, the symmetric twin of the prerun gate. It
 // runs AFTER the run reaches a terminal status (after #34's finalize), with the
@@ -822,42 +794,28 @@ async function runCliTurn({
 }
 
 /**
- * Process at most one run for this runner.
- * Returns { outcome, eager } where outcome is:
- *   'no-work'    — poll returned null (no queued/scheduled/due work)
- *   'poll-error' — fetch threw (network/server error)
- *   'done'       — run finished normally
- *   'waiting'    — run paused for human input
- *   'skipped'    — prerun/workflow command exited 77, or run skipped
- *   'failed'     — CLI/workflow error, agent didn't set status, etc.
- *   'killed'     — user requested kill mid-run
- * `eager` reflects the live `agent.eager` flag from the /next payload (or the
- * cached runner config if the payload didn't include one).
+ * Execute an already-claimed agent run. `payload` is the claim response (carries
+ * the run, job, agent config, workspace, env, and its per-run exec_token);
+ * `creds` is { url, execToken }. The exec token is the run-scoped credential for
+ * every /api/runs/:id/* callback — the high-value runner token never gets here.
+ *
+ * Returns { outcome, eager } where outcome is one of:
+ *   'done'    — run finished normally
+ *   'waiting' — run paused for human input
+ *   'skipped' — prerun command exited 77, or run skipped
+ *   'failed'  — CLI error, agent didn't set status, etc.
+ *   'killed'  — user requested kill mid-run
+ * `eager` reflects the live `agent.eager` flag from the claim payload (the pool
+ * drains all due work each cycle regardless, so it's informational now).
  */
-async function processNextRun(runner) {
-  const { agentId, apiKey, name: agentName, url } = runner;
+export async function processNextRun(payload, { url, execToken }) {
+  const apiKey = execToken;
+  const agentName = payload.workspace?.agent || payload.job?.name || "agent";
   const sessions = loadSessions();
 
-  console.log(`  [${agentName}] Polling...`);
-
-  // Poll for next run
-  let payload;
-  try {
-    payload = await apiCall(`${url}/api/agents/${agentId}/next`, apiKey);
-  } catch (err) {
-    console.error(`  [${agentName}] Poll failed: ${err.message}`);
-    return { outcome: "poll-error", eager: false };
-  }
-
-  if (!payload?.run) {
-    console.log(`  [${agentName}] Nothing to do.`);
-    return { outcome: "no-work", eager: false };
-  }
-
-  // cli/model/thinking come live from the /next payload (harbour is the source
-  // of truth); the runner config is identity-only but may carry legacy values
-  // as a fallback. Resolve before anything that needs the provider.
-  const { cli, model: agentModel, thinking: resolvedThinking } = resolveRunConfig(payload, runner);
+  // cli/model/thinking come live from the claim payload (harbour is the source
+  // of truth). Resolve before anything that needs the provider.
+  const { cli, model: agentModel, thinking: resolvedThinking } = resolveRunConfig(payload);
   if (!cli) {
     console.error(`  [${agentName}] No CLI configured for this agent — set one in the dashboard.`);
     return { outcome: "config-error", eager: false };
@@ -871,8 +829,8 @@ async function processNextRun(runner) {
     resolvedThinking,
   );
 
-  // Live eager flag from server, falling back to cached runner config
-  const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
+  // Live eager flag from the claim payload.
+  const eager = !!payload.agent?.eager;
 
   const runId = payload.run.id;
 
@@ -900,10 +858,12 @@ async function processNextRun(runner) {
   //   2. A resumed session WITHOUT a cwd was persisted by a pre-upgrade
   //      runner, which necessarily started under the legacy flat layout —
   //      resume there so the session and working tree are found.
-  //   3. payload.workspace → the nested layout.
-  //   4. No workspace block (older server) → legacy flat layout.
-  // The legacy slug keeps the OLD inline derivation byte-for-byte so existing
-  // installs keep their directories.
+  //   3. payload.workspace → the nested layout (the normal path — the claim
+  //      payload always carries a workspace block for agent runs).
+  //   4. No workspace block → legacy flat fallback (effectively dead against a
+  //      current server; kept only as a defensive last resort).
+  // Note: agentName here is the agent's slug (from workspace.agent), so the flat
+  // fallback is keyed on the slug — not the display name the pre-#40 runner used.
   const legacySlug = agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const ws = payload.workspace;
   let workingDir;
@@ -1561,23 +1521,6 @@ async function failFinalize({ url, apiKey, runId, agentName }) {
 }
 
 /**
- * Top-level driver for a single runner. Polls /next once per iteration; if the
- * agent has eager polling enabled and the run finished cleanly (done/waiting/
- * skipped), immediately polls again instead of waiting for the next launchd
- * tick. Bails on no-work, poll errors, kills, and failures.
- */
-async function runSingleAgent(runner) {
-  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
-    const { outcome, eager } = await processNextRun(runner);
-    if (!shouldContinueEagerLoop(outcome, eager)) return;
-    console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
-  }
-  console.warn(
-    `  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`,
-  );
-}
-
-/**
  * Map a finished workflow command to its terminal run status.
  * Exit 0 = done, 77 = skip, any other non-zero = failed. A kill only wins when
  * the command did NOT exit cleanly — a clean exit 0 that races a late kill
@@ -1594,23 +1537,12 @@ export function workflowOutcome({ killed, code }) {
   return "failed";
 }
 
-export async function processNextWorkflow(runner, opts = {}) {
+// Execute an already-claimed workflow run. `payload` is the claim response,
+// `creds` is { url, execToken }. No agent/LLM — materialize the gate and run it.
+export async function processNextWorkflow(payload, { url, execToken }, opts = {}) {
   const { killPollIntervalMs = KILL_POLL_INTERVAL_MS } = opts;
-  const { apiKey, name = "workflow", url } = runner;
-  console.log(`  [${name}] Polling workflows...`);
-
-  let payload;
-  try {
-    payload = await apiCall(`${url}/api/workflows/next`, apiKey);
-  } catch (err) {
-    console.error(`  [${name}] Workflow poll failed: ${err.message}`);
-    return { outcome: "poll-error" };
-  }
-
-  if (!payload?.run) {
-    console.log(`  [${name}] No workflow work.`);
-    return { outcome: "no-work" };
-  }
+  const apiKey = execToken;
+  const name = payload.job?.name || "workflow";
 
   const runId = payload.run.id;
   console.log(`  [${name}] Starting workflow run ${runId} (${payload.job?.name || "unnamed"})`);
@@ -1775,46 +1707,89 @@ export async function processNextWorkflow(runner, opts = {}) {
   }
 }
 
-async function runSingleWorkflowRunner(runner) {
-  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
-    const { outcome } = await processNextWorkflow(runner);
-    if (outcome !== "done" && outcome !== "skipped") return;
-    console.log(`  [${runner.name}] Continuing to next workflow (iter ${i + 1})...`);
+// ── The unified pool (`harbour run`) ─────────────────────────────────────────
+//
+// One process, one token. Claims work via POST /api/runner/claim advertising the
+// host's capabilities, runs distinct lock units in parallel (the server's lock
+// serializes the same unit), and branches on job.kind. Each cycle drains all
+// currently-due work, then exits — the scheduler service invokes it on a tick.
+
+const POOL_SIZE = Math.max(1, Number(process.env.HARBOUR_POOL_SIZE) || 4);
+// Backstop so one cycle can't run unboundedly if work keeps arriving.
+const MAX_CLAIMS_PER_CYCLE = Math.max(POOL_SIZE, Number(process.env.HARBOUR_MAX_CLAIMS) || 200);
+
+/**
+ * Claim the next runnable unit. Returns the payload ({ run } present or null),
+ * or `{ error: true }` on a transient failure (network blip, 5xx, restart). The
+ * caller MUST distinguish the error case from genuine no-work — otherwise a
+ * momentary server hiccup looks like "nothing due" and a one-shot `harbour run`
+ * silently leaves queued work unrun.
+ */
+async function claimOne(creds, capabilities) {
+  try {
+    return await apiCall(`${creds.url}/api/runner/claim`, creds.token, "POST", { capabilities });
+  } catch (err) {
+    console.error(`Claim failed: ${err.message}`);
+    return { error: true };
   }
-  console.warn(
-    `  [${runner.name}] Hit workflow iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`,
-  );
 }
 
-export async function runAgents() {
-  const runners = loadRunnerConfigs();
-  if (runners.length === 0) {
-    console.log("No harbour agents configured. Create one from the dashboard.");
-    return;
+/** Execute a claimed run with its exec token; never throws (logs + returns). */
+async function dispatch(payload, creds) {
+  const sub = { url: creds.url, execToken: payload.exec_token };
+  try {
+    if (payload.job?.kind === "workflow") return await processNextWorkflow(payload, sub);
+    return await processNextRun(payload, sub);
+  } catch (err) {
+    console.error(`  Run ${payload.run?.id} crashed in the runner: ${err.message}`);
+    return { outcome: "error" };
   }
-
-  console.log(`Polling ${runners.length} harbour agent(s)...`);
-
-  const work = [];
-  for (const runner of runners) {
-    work.push(runSingleAgent(runner));
-  }
-
-  await Promise.allSettled(work);
-
-  console.log("Done.");
 }
 
-export async function runWorkflows() {
-  const runners = loadWorkflowRunnerConfigs();
-  if (runners.length === 0) {
+/**
+ * Drain all currently-claimable work, running up to POOL_SIZE units concurrently.
+ * The bundled local runner and a remote runner share this exact code path — the
+ * only difference is which token loadRunnerCredentials returns.
+ */
+export async function runPool() {
+  const creds = loadRunnerCredentials();
+  if (!creds) {
     console.log(
-      "No harbour workflow runners configured. Create and connect one from the dashboard.",
+      "No runner token. Run `harbour setup` (local) or `harbour connect <blob>` (remote) first.",
     );
     return;
   }
+  const capabilities = detectCapabilities();
+  console.log(
+    `Runner polling ${creds.url} — kinds=[${capabilities.kinds}] clis=[${capabilities.clis || []}] labels=[${capabilities.labels}] pool=${POOL_SIZE}`,
+  );
 
-  console.log(`Polling ${runners.length} harbour workflow runner(s)...`);
-  await Promise.allSettled(runners.map(runSingleWorkflowRunner));
-  console.log("Done.");
+  const inFlight = new Set();
+  let claims = 0;
+  let claimError = false;
+
+  while (true) {
+    // Top up the pool with claimable work.
+    while (inFlight.size < POOL_SIZE && claims < MAX_CLAIMS_PER_CYCLE) {
+      const payload = await claimOne(creds, capabilities);
+      if (payload?.error) {
+        // Transient failure — stop topping up this cycle (a later top-up after a
+        // slot frees will retry). Recorded so we don't report "nothing to do".
+        claimError = true;
+        break;
+      }
+      if (!payload?.run) break; // genuinely nothing claimable right now
+      claims++;
+      const task = dispatch(payload, creds).finally(() => inFlight.delete(task));
+      inFlight.add(task);
+    }
+    if (inFlight.size === 0) break; // pool empty and nothing more to claim → done
+    await Promise.race([...inFlight]); // a slot freed — try to top up again
+  }
+
+  if (claimError) {
+    console.log(`Claim error this cycle — ${claims} unit(s) ran; will retry on the next poll.`);
+  } else {
+    console.log(claims === 0 ? "Nothing to do." : `Done — ran ${claims} unit(s) this cycle.`);
+  }
 }

@@ -19,8 +19,8 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 Harbour is polling-based — it never calls out to agents; they pull work on their own schedule.
 
 - **Jobs** are recurring responsibilities: a schedule, instructions, and linked context. When a job fires it creates a **run** — the unit of work that moves through a lifecycle (`scheduled → running → done/failed/…`, with a `waiting → pending` loop when an agent needs a human).
-- **Agents** poll `GET /api/agents/:id/next` and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. An agent is **external** (any HTTP client with an API key) or a **Harbour agent** (a local runner driving Claude Code, Codex, or Gemini).
-- **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by separate workflow runners. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
+- **Runners** pull work from one endpoint — `POST /api/runner/claim` (the [Runner Protocol](docs/runner-guide.md)) — and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. The bundled runner drives Claude Code, Codex, or Gemini for **agent jobs**; a runner on another machine hooks in over the same protocol.
+- **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by the same runner that drives agent jobs. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
 - **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
 It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Every agent, job, and resource lives inside a project; resources never cross org lines.
@@ -38,11 +38,13 @@ git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
-npm run harbour -- setup   # one-time: create the instance admin (interactive)
-npm start
+npm run harbour -- setup   # one-time: create the instance admin + local runner (interactive)
+npm start                  # run the server
 ```
 
-Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively.)
+`setup` also auto-provisions the **local runner** — it writes a runner token to `~/.harbour/runner.token` and prompts to schedule the polling service. `npm start` runs the server; `npm run harbour -- install` schedules the runner (polls every 60s), or `npm run harbour -- run` drains all due work once.
+
+Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin and provisions the local runner non-interactively.)
 
 ### Deploy to production
 
@@ -50,25 +52,19 @@ See [deploying to production](docs/guides/deploy-to-production.md) for the Linux
 
 ### Running agents
 
-Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). Create a **Harbour Agent** in the dashboard (pick a CLI, model, and effort level), then install the local runner:
+Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). Create a **Harbour Agent** in the dashboard (pick a CLI, model, and effort level), and the **local runner** (provisioned at setup) claims and runs it — nothing else to wire up. If you haven't scheduled the runner yet:
 
 ```bash
-npm run harbour -- agent install   # polls every 60s; logs at ~/.harbour/runner.log
+npm run harbour -- install   # polls every 60s; logs at ~/.harbour/runner.log
 ```
 
-`agent list` / `agent run` / `agent uninstall` manage it. For an **external** agent — any HTTP poller you write yourself — create the agent with "Runs on a different machine" checked: the connect command's blob carries the API key, and the wire contract at `/api/guide` is the onboarding doc.
+For an **external** agent — any HTTP poller you write yourself — create the agent with "Runs on a different machine" checked: its blob carries the API key, and the wire contract at `/api/guide` is the onboarding doc. A runner on another machine is enrolled the same way, with `harbour connect` (remote enrollment).
 
 > More: [agents](docs/concepts/agents.md) (eager polling, per-agent Claude Code permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
 
 ### Running workflows
 
-Workflows are claimed by a **separate** workflow runner — the agent runner never picks them up, so a workflow with no runner connected just sits queued. Mint a runner credential over the API (`POST /api/workflow-runners?orgId=<id>`), then on the runner host:
-
-```bash
-npm run harbour -- workflow connect <blob>   # store runner identity
-npm run harbour -- workflow run              # one-shot: claim and run anything due
-npm run harbour -- workflow install          # schedule polling (its own launchd service)
-```
+Workflows are claimed by the **same** local runner that drives agent jobs — one runner handles both, so there's nothing extra to install. A workflow with no runner scheduled at all just sits queued until you run `npm run harbour -- install` (service) or `npm run harbour -- run` (one-shot).
 
 > More: [workflows](docs/concepts/workflows.md) (runners, gates, the exit-code contract).
 

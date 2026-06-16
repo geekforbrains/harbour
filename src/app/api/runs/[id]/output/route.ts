@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser, withResourceAuth } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withResourceAuth, withRunExecutorOrUser } from "@/lib/auth";
 import { addRunOutput, getRunById, isKillRequested, listRunOutput } from "@/lib/db/queries";
 import { badRequest } from "@/lib/http";
 
@@ -15,16 +14,15 @@ export const GET = withResourceAuth("run", "id", { role: "viewer" })(
   },
 );
 
-export const POST = withAgentOrUser(
+// Only the run's executor streams CLI output; users read it via GET / the SSE
+// stream. The exec token binds the caller to this run, so no further check.
+export const POST = withRunExecutorOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner") {
+    if (auth.type !== "executor") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -79,8 +77,5 @@ export const POST = withAgentOrUser(
     // Piggyback the kill signal onto the runner's frequent output POSTs.
     return NextResponse.json({ ok: true, kill_requested: isKillRequested(id) }, { status: 201 });
   },
-  {
-    role: "editor",
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "editor" },
 );

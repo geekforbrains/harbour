@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withRunExecutorOrUser } from "@/lib/auth";
 import {
   addRunActivity,
   getRunById,
@@ -15,41 +14,24 @@ const AGENT_RUN_STATUSES = ["running", "waiting", "pending", "done", "failed", "
 const WORKFLOW_RUN_STATUSES = ["running", "done", "failed", "skipped", "killed"];
 
 // Lightweight status read. The full run detail (GET /api/runs/:id) is
-// withResourceAuth (user/admin only), so a runner can't use it to check the
+// withResourceAuth (user/admin only), so the runner can't use it to check the
 // status it just set — it would always read "running" and wrongly fail the run.
-// This mirrors the PUT's agent-ownership check and returns only { status }.
-export const GET = withAgentOrUser(
-  async (_req, auth, { params }) => {
+// The executor (this run's exec token) and viewers may read just { status }.
+export const GET = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
     return NextResponse.json({ status: run.status });
   },
-  {
-    role: "viewer",
-    allowWorkflowRunner: true,
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "viewer" },
 );
 
-export const PUT = withAgentOrUser(
+export const PUT = withRunExecutorOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const body = await readJson(req);
     const validStatuses = run.job_kind === "workflow" ? WORKFLOW_RUN_STATUSES : AGENT_RUN_STATUSES;
@@ -62,6 +44,17 @@ export const PUT = withAgentOrUser(
       );
     }
     const status = body.status;
+
+    // An executor reports OUTCOMES (waiting/done/failed/skipped/killed). It must
+    // not resurrect a run by flipping it to 'pending' — that's a human retry/
+    // resume action (the /retry route or a user comment). Closes the path where
+    // a leaked exec token re-queues a finished run for another execution.
+    if (auth.type === "executor" && status === "pending") {
+      return NextResponse.json(
+        { error: "Executors cannot set status to pending" },
+        { status: 403 },
+      );
+    }
 
     const isNoOp = run.status === status;
 
@@ -86,9 +79,5 @@ export const PUT = withAgentOrUser(
 
     return NextResponse.json(updated);
   },
-  {
-    role: "editor",
-    allowWorkflowRunner: true,
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "editor" },
 );

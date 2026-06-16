@@ -15,8 +15,10 @@ Jobs don't *do* anything on their own. They sit in the database and wait. When a
 
 Jobs come in two flavors:
 
-- **Agent jobs** — `agent_id` is set. Always project-level. The owning agent picks them up via `/api/agents/:id/next`.
-- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Project-level or org-level (`project_id IS NULL`). Workflow runners pick these up via `/api/workflows/next`. See [Workflows](workflows.md).
+- **Agent jobs** — `agent_id` is set. Always project-level. An LLM CLI runs them.
+- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Project-level or org-level (`project_id IS NULL`). See [Workflows](workflows.md).
+
+Both kinds are picked up the same way: a runner claims due work via `POST /api/runner/claim` (the [Runner Protocol](../runner-guide.md)). The runner branches on `run.kind` — drive a CLI for agent runs, run the gate script for workflows.
 
 Agent jobs can also define a prerun gate — a `{ runtime, content }` script (bash/python/node) that runs before the LLM and can skip the run.
 
@@ -57,26 +59,24 @@ Most runs come from a recurring job firing on schedule. For an ad-hoc run, **tri
 
 (v2 removed standalone "New Run" one-off creation; ad-hoc work is always a trigger on a job, so every run traces back to a job.)
 
-## The polling ladder
+## The unified claim
 
-`getAgentNextRun(agentId)` is the single source of truth for agent work assignment. It runs `failStaleRuns` first, then four assignment checks wrapped in a transaction:
+`claimNextRun(runner, capabilities)` is the single source of truth for work assignment — one org-agnostic path for both kinds, behind `POST /api/runner/claim`. It runs `reapStaleRuns` first, then a four-step ladder inside one **IMMEDIATE** transaction (so concurrent claims serialize on SQLite's single writer):
 
 ```
-0. Fail any running run that's exceeded its job's timeout (failStaleRuns)
-1. Already a 'running' run for this agent? → return null (busy, wait your turn)
-2. A 'pending' run? (human responded) → flip to 'running', return it
-3. A 'scheduled' run with scheduled_for <= now? (one-off / triggered) → claim it
-4. A schedule-trigger job past next_run_at with no active run? → create a run, advance next_run_at
-5. Nothing → null
+0. Fail any running run past its job's timeout (reapStaleRuns)
+1. A 'pending' agent run to resume? (human responded) → flip to 'running', return it
+2. A 'scheduled' run (either kind) due now? → claim it
+3. A recurring agent job past next_run_at? → materialize a run, advance next_run_at
+4. A recurring workflow job past next_run_at? → materialize a run, advance next_run_at
+   (none claimable → { run: null })
 ```
 
-Order matters. Pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run. One-off scheduled runs beat recurring schedules so dashboard-created work isn't elbowed out by a chatty cron job.
+A run is claimable only when its **placement** matches one of the runner's advertised labels, its **kind** (and, for agent runs, the agent's **CLI**) is one the runner advertised, and its **lock unit** has nothing in flight — `agent_id` for agent runs, `job_id` for workflow runs, where in-flight = `running | waiting | pending`. Distinct lock units run in parallel, unbounded by org; the *same* agent or workflow job never doubles up. Order matters within the ladder: pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run.
 
-Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, step 1 would otherwise gate this agent forever. `failStaleRuns` checks `claimed_at + (timeout_minutes * 60) < now()` — a hard wallclock ceiling measured from when the current running attempt was claimed, deliberately **not** keyed on `updated_at` (streaming output refreshes `updated_at`, which would turn the check into a sliding inactivity window that never fires for a chatty-but-stuck run). Matches are force-failed with a system activity entry: "Run timed out after N minutes without completion."
+Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, the lock-unit check would otherwise gate that unit forever. `reapStaleRuns` checks `claimed_at + (timeout_minutes * 60) < now()` — a hard wallclock ceiling measured from when the current running attempt was claimed, deliberately **not** keyed on `updated_at` (streaming output refreshes `updated_at`, which would turn the check into a sliding inactivity window that never fires for a chatty-but-stuck run). Matches are force-failed with a system activity entry: "Run timed out after N minutes without completion."
 
-`peek=true` runs the same checks read-only — useful as a guard before invoking your CLI tool.
-
-There's a parallel ladder for workflow runs (`getNextWorkflowRun`) — same shape, but filtered to `kind = 'workflow'` and authenticated with workflow-runner credentials. See [Workflows](workflows.md).
+`?peek=true` runs the same checks read-only (via `peekClaim`) — proving the runner's liveness and reporting availability without claiming.
 
 ## The run lifecycle
 
@@ -109,7 +109,7 @@ When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances th
 
 ### Resume via comment
 
-A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pending` (the activity route posts the comment, then calls `updateRunStatus`). The agent claims it at step 2 of the polling ladder on its next poll, with the full activity history — so "terminal" statuses other than `skipped` are really just paused: a human can always reopen the conversation. `skipped` runs are the exception (the gate said there was nothing to do); requeue one via retry instead.
+A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pending` (the activity route posts the comment, then calls `updateRunStatus`). A runner claims it at step 1 of the claim ladder on its next poll, with the full activity history — so "terminal" statuses other than `skipped` are really just paused: a human can always reopen the conversation. `skipped` runs are the exception (the gate said there was nothing to do); requeue one via retry instead.
 
 ### Timeouts
 
@@ -151,7 +151,7 @@ A few invariants worth knowing:
 ## Source-of-truth pointers
 
 - `src/lib/db/jobs.ts` — `createJob`, `createWorkflow`, `updateJob`, `triggerJobRun`, `advanceJobSchedule`.
-- `src/lib/db/runs.ts` — the polling ladder (`getAgentNextRun`, `getNextWorkflowRun`), `failStaleRuns`, `updateRunStatus`, `requestKillRun`, `buildRunPayload`.
+- `src/lib/db/runs.ts` — the unified claim (`claimNextRun`, `peekClaim`), `reapStaleRuns`, `updateRunStatus`, `requestKillRun`, `mintExecToken`, `buildRunPayload`.
 - `src/lib/schedule.ts` — `normalizeSchedule` (the human-readable / cron parser) and `getNextRunTime` (timezone-aware advancer).
 - `src/lib/db/schema.ts` — the `runs` CHECK constraint and the `jobs` columns that drive triggers.
 - `src/app/api/runs/[id]/status/route.ts` — status transitions.

@@ -16,6 +16,7 @@ import { apiFetch, scoped } from "@/lib/api/client";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useRunnerHealth } from "@/lib/hooks/use-runner-health";
 
 type AgentLite = { id: string; name: string };
 type JobLite = { id: string; name: string; agent_id: string | null };
@@ -93,6 +94,9 @@ export default function RunsHistoryPage() {
 
   const { data: jobsData = [] } = useJobs();
   const jobs = jobsData as unknown as JobLite[];
+
+  const { data: runnerHealth } = useRunnerHealth();
+  const stalled = runnerHealth?.stalled ?? [];
 
   const jobsForAgent = useMemo(() => {
     if (!agentId) return jobs;
@@ -190,6 +194,26 @@ export default function RunsHistoryPage() {
       {showBackLink && <BackLink href="/" label="Runs" />}
 
       <PageHeader title="All Runs" subtitle="Full run history, filterable." />
+
+      {stalled.length > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-600">No runner connected</p>
+          <div className="text-muted-foreground mt-0.5 space-y-0.5">
+            {stalled.map((s) => (
+              <p key={s.placement}>
+                {s.count} run(s) waiting — no runner is serving placement{" "}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">{s.placement}</code>.
+              </p>
+            ))}
+            <p>
+              Start the local runner (
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour run</code>/
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour install</code>) or mint
+              a runner for this placement in Settings → Runners.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="rounded-lg border p-3 space-y-3">

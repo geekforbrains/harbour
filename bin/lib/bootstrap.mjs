@@ -20,6 +20,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { Algorithm, hashSync, verifySync } from "@node-rs/argon2";
 import Database from "better-sqlite3";
+import { saveRunnerCredentials } from "./config.mjs";
+import { installRunner } from "./install.mjs";
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id };
 
@@ -37,8 +39,10 @@ function openDb() {
   const db = new Database(dbPath());
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  // Mirror the users-table DDL from src/lib/db/schema.ts exactly. Idempotent:
-  // a no-op if the server has already created the full schema.
+  // Mirror the users + runners DDL from src/lib/db/schema.ts exactly. Idempotent:
+  // a no-op if the server has already created the full schema. We need `runners`
+  // here so setup can auto-provision the local runner before the server's first
+  // boot. Keep these byte-identical to schema.ts.
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -49,6 +53,21 @@ function openDb() {
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS runners (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
+      labels TEXT NOT NULL DEFAULT '[]',
+      capabilities TEXT,
+      scope TEXT,
+      last_polled_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runners_token ON runners(token_hash);
   `);
   return db;
 }
@@ -71,6 +90,28 @@ export function insertInstanceAdmin(db, { email, displayName, password }) {
      VALUES (?, ?, ?, ?, 1)`,
   ).run(id, email, passwordHash, displayName);
   return id;
+}
+
+/**
+ * Provision the local runner if one doesn't exist yet: insert a `tier='local'`
+ * row into the registry and write its token to ~/.harbour/runner.token (0600).
+ * Idempotent — a second call is a no-op once a local runner exists, so it's safe
+ * to run on every setup / admin-create. This is what makes a fresh install "just
+ * work": no minting, no connect blobs. Returns { provisioned, id }.
+ */
+export function provisionLocalRunner(db) {
+  const existing = db.prepare(`SELECT id FROM runners WHERE tier = 'local' LIMIT 1`).get();
+  if (existing) return { provisioned: false, id: existing.id };
+
+  const id = crypto.randomUUID();
+  const token = `hbrn_${crypto.randomBytes(32).toString("hex")}`;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  db.prepare(
+    `INSERT INTO runners (id, name, token_hash, tier, labels) VALUES (?, ?, ?, 'local', ?)`,
+  ).run(id, "Local runner", tokenHash, JSON.stringify(["local"]));
+
+  saveRunnerCredentials({ token }); // URL defaults to http://localhost:3000
+  return { provisioned: true, id };
 }
 
 // Re-export the hashing for parity checks / tests.
@@ -176,7 +217,32 @@ export async function runSetup(argv = []) {
 
     const { email: created } = createAdmin({ email, displayName, password, force });
     console.log(`\nInstance admin created: ${created}`);
-    console.log("Log in at the dashboard, then create your first org, project, and users.");
+
+    // Auto-provision the local runner so a fresh install "just works".
+    const rdb = openDb();
+    let provisioned;
+    try {
+      provisioned = provisionLocalRunner(rdb);
+    } finally {
+      rdb.close();
+    }
+    if (provisioned.provisioned) {
+      console.log("Local runner provisioned — token at ~/.harbour/runner.token (0600).");
+      const answer = (
+        await prompt(rl, "Install the runner service to poll for work every 60s? [Y/n]: ")
+      )
+        .trim()
+        .toLowerCase();
+      if (answer === "" || answer === "y" || answer === "yes") {
+        installRunner();
+      } else {
+        console.log(
+          "Skipped. Start it later with `harbour install` (service) or `harbour run` (one-shot).",
+        );
+      }
+    }
+
+    console.log("\nLog in at the dashboard, then create your first org, project, and users.");
   } finally {
     rl.close();
   }
@@ -225,6 +291,16 @@ export async function runAdminCreate(argv = []) {
   try {
     const { email: created } = createAdmin({ email, displayName, password, force });
     console.log(`Instance admin created: ${created}`);
+    // Auto-provision the local runner (no service install in the non-interactive
+    // path — the caller schedules it with `harbour install` when ready).
+    const rdb = openDb();
+    try {
+      if (provisionLocalRunner(rdb).provisioned) {
+        console.log("Local runner provisioned — token at ~/.harbour/runner.token (0600).");
+      }
+    } finally {
+      rdb.close();
+    }
   } catch (err) {
     console.error(err.message || String(err));
     process.exit(1);

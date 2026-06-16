@@ -1,23 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withRunExecutorOrUser } from "@/lib/auth";
 import { getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { publicBaseUrl } from "@/lib/request-url";
 
 export const runtime = "nodejs";
 
-export const GET = withAgentOrUser(
-  async (req, auth, { params }) => {
+export const GET = withRunExecutorOrUser(
+  async (req, _auth, { params }) => {
     const { id, aid } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const processing = getProcessingByAttachment(aid);
     if (!processing?.screenshots_dir) {
@@ -55,5 +50,5 @@ export const GET = withAgentOrUser(
 
     return NextResponse.json({ screenshots, total, page, pages, limit });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
+  { role: "viewer" },
 );

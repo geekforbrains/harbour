@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   hashPassword as cliHash,
   insertInstanceAdmin,
   instanceAdminExists,
+  provisionLocalRunner,
 } from "../../bin/lib/bootstrap.mjs";
 
 const CLI = path.resolve(__dirname, "../../bin/harbour.mjs");
@@ -24,6 +26,18 @@ function memDb(): Database.Database {
       password_hash TEXT,
       display_name TEXT NOT NULL,
       is_instance_admin INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE TABLE IF NOT EXISTS runners (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
+      labels TEXT NOT NULL DEFAULT '[]',
+      capabilities TEXT,
+      scope TEXT,
+      last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -48,6 +62,40 @@ describe("CLI bootstrap helpers", () => {
     expect(hash).toMatch(/^\$argon2id\$/);
     expect(serverVerify(hash, "supersecret123")).toBe(true);
     expect(serverVerify(hash, "wrong")).toBe(false);
+  });
+
+  it("provisionLocalRunner registers a local runner + writes the token, idempotently", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-prov-"));
+    const prev = process.env.HARBOUR_HOME;
+    process.env.HARBOUR_HOME = home;
+    try {
+      const db = memDb();
+      const first = provisionLocalRunner(db);
+      expect(first.provisioned).toBe(true);
+
+      // One local runner row exists, and its token was written (0600).
+      const rows = db.prepare(`SELECT tier, token_hash FROM runners`).all() as {
+        tier: string;
+        token_hash: string;
+      }[];
+      expect(rows.length).toBe(1);
+      expect(rows[0].tier).toBe("local");
+      const tokenPath = path.join(home, "runner.token");
+      const token = fs.readFileSync(tokenPath, "utf-8").trim();
+      expect(token).toMatch(/^hbrn_[0-9a-f]{64}$/);
+      expect(fs.statSync(tokenPath).mode & 0o777).toBe(0o600);
+      // The stored hash matches the written token (sha256).
+      const sha = createHash("sha256").update(token).digest("hex");
+      expect(rows[0].token_hash).toBe(sha);
+
+      // Idempotent: a second call provisions nothing and adds no row.
+      const second = provisionLocalRunner(db);
+      expect(second.provisioned).toBe(false);
+      expect((db.prepare(`SELECT COUNT(*) AS n FROM runners`).get() as { n: number }).n).toBe(1);
+    } finally {
+      process.env.HARBOUR_HOME = prev;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -75,7 +123,7 @@ describe("CLI `harbour admin create` (subprocess)", () => {
     }
   }
 
-  it("creates the first instance admin", () => {
+  it("creates the first instance admin and auto-provisions the local runner", () => {
     const r = run([
       "admin",
       "create",
@@ -88,6 +136,9 @@ describe("CLI `harbour admin create` (subprocess)", () => {
     ]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("Instance admin created");
+    expect(r.stdout).toContain("Local runner provisioned");
+    // The runner token is on disk — a fresh install can run work immediately.
+    expect(fs.readFileSync(path.join(home, "runner.token"), "utf-8").trim()).toMatch(/^hbrn_/);
   });
 
   it("rejects a password under 12 characters", () => {

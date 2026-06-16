@@ -13,7 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
-import { useWorkflowRunners } from "@/lib/hooks/use-workflow-runners";
 import { timeAgo } from "@/lib/time";
 
 type WorkflowJob = {
@@ -38,16 +37,8 @@ export default function WorkflowsPage() {
   const activeOrgId = useActiveOrgId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
-  const { data: runners = [] } = useWorkflowRunners();
   // Workflows share the jobs API; agent jobs (kind === "agent") live at /jobs.
   const workflows = (jobsData as WorkflowJob[]).filter((j) => j.kind === "workflow");
-
-  // Workflows are claimed only by a workflow runner (agent runners ignore them),
-  // so a workflow with no runner polling sits scheduled forever. Mirror the
-  // Agents page banner: warn when workflows exist but none has polled recently.
-  const showRunnerBanner =
-    workflows.length > 0 &&
-    !runners.some((r) => r.last_polled_at && Date.now() / 1000 - r.last_polled_at < 300);
 
   if (loading) return <PageLoading />;
 
@@ -66,25 +57,6 @@ export default function WorkflowsPage() {
           </ActionTooltip>
         }
       />
-
-      {activeOrgId && showRunnerBanner && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
-          <p className="font-medium text-amber-600">Workflow runner not active</p>
-          <p className="text-muted-foreground mt-0.5">
-            You have workflows but no workflow runner is polling, so none will run. Mint a runner
-            credential (
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">POST /api/workflow-runners</code>
-            ), then on the runner host connect it with{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              npm run harbour -- workflow connect &lt;blob&gt;
-            </code>{" "}
-            and start it with{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              npm run harbour -- workflow install
-            </code>
-          </p>
-        </div>
-      )}
 
       <ListState
         scope={activeOrgId}

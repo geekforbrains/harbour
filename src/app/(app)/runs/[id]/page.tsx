@@ -18,6 +18,7 @@ import {
   Play,
   RotateCcw,
   Send,
+  Server,
   Terminal,
   Trash2,
   User,
@@ -38,6 +39,7 @@ import { OrgBadge } from "@/components/app/org-badge";
 import { PageLoading } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/run-status";
 import { SectionHeader } from "@/components/app/section-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -98,6 +100,9 @@ type Run = {
   agent_name: string | null;
   agent_color: string | null;
   agent_cli: string | null;
+  /** Runner that claimed this run; null until claimed. */
+  claimed_by_name: string | null;
+  claimed_by_tier: "local" | "remote" | null;
   session_id: string | null;
   session_cwd: string | null;
   created_at: number;
@@ -781,6 +786,17 @@ export default function RunDetailPage() {
             {run.completed_at ? timeAgo(run.completed_at) : "\u2014"}
           </span>
         </div>
+        {run.claimed_by_name && (
+          <div className="flex items-center gap-2 text-sm min-w-0">
+            <Server className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{run.claimed_by_name}</span>
+            {run.claimed_by_tier && (
+              <Badge variant="outline" className="shrink-0">
+                {run.claimed_by_tier}
+              </Badge>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Activity Log — for workflow runs this is captured runner output, not

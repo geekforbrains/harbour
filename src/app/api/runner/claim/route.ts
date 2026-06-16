@@ -1,14 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { type SerializedAttachment, serializeAttachment } from "@/lib/attachments-serialize";
-import { requireAgentSelf, withAgentAuth } from "@/lib/auth";
+import { type RunnerAuth, withRunnerAuth } from "@/lib/auth";
 import {
-  getAgentById,
-  getAgentNextRun,
+  claimNextRun,
   getProcessingByAttachment,
-  peekAgentNext,
+  peekClaim,
   type RunAttachment,
-  touchAgentPolled,
+  touchRunnerPolled,
 } from "@/lib/db/queries";
+import type { RunnerCapabilities } from "@/lib/db/runners";
+import { readJson } from "@/lib/http";
 import { publicBaseUrl } from "@/lib/request-url";
 import {
   isVideoFile,
@@ -17,14 +18,23 @@ import {
   TRANSCRIPT_CAP,
 } from "@/lib/video-processing";
 
+/**
+ * The per-run `api` block. Endpoints are pre-resolved for this run; the runner
+ * (and the CLI it spawns) authenticate every call below with the run's
+ * `exec_token` (returned alongside this block), never the runner token.
+ */
 function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
   return {
     base_url: base,
+    auth: "Bearer <exec_token> (from this claim) on every /api/runs/:id/* call",
     endpoints: {
       set_title: `PUT ${base}/api/runs/${runId}/title`,
       update_status: `PUT ${base}/api/runs/${runId}/status`,
       post_activity: `POST ${base}/api/runs/${runId}/activity`,
+      post_output: `POST ${base}/api/runs/${runId}/output`,
+      poll_kill: `GET ${base}/api/runs/${runId}/kill`,
+      save_session: `PUT ${base}/api/runs/${runId}/session`,
       upload_attachment: `POST ${base}/api/runs/${runId}/attachments`,
       create_doc: `POST ${base}/api/docs`,
       update_doc: `PUT ${base}/api/docs/:id`,
@@ -44,58 +54,77 @@ function buildApiSection(req: NextRequest, runId: string) {
   };
 }
 
-export const GET = withAgentAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const ownerError = requireAgentSelf(auth, id);
-  if (ownerError) return ownerError;
+/** Validate the capabilities a runner advertises on every claim. */
+function parseCapabilities(body: Record<string, unknown>): RunnerCapabilities | null {
+  const caps = body.capabilities;
+  if (!caps || typeof caps !== "object") return null;
+  const c = caps as Record<string, unknown>;
+  const arr = (v: unknown): string[] | null =>
+    Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null;
+  const kinds = arr(c.kinds);
+  const clis = arr(c.clis ?? []);
+  const labels = arr(c.labels);
+  if (!kinds || !clis || !labels) return null;
+  return { kinds, clis, labels };
+}
 
-  const existing = getAgentById(id);
-  if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
-
-  touchAgentPolled(id);
-
-  const peek = req.nextUrl.searchParams.get("peek") === "true";
-  if (peek) {
-    const result = peekAgentNext(id);
-    return NextResponse.json(result);
+/**
+ * The unified claim — the one execution entry point. A runner POSTs its
+ * capabilities; the server hands back the next claimable run (kind-tagged, with
+ * its exec token and a pre-resolved `api` block) or `{ run: null }`. `?peek=true`
+ * proves liveness and reports availability without claiming.
+ */
+export const POST = withRunnerAuth(async (req, auth: RunnerAuth) => {
+  const body = await readJson(req);
+  const capabilities = parseCapabilities(body);
+  if (!capabilities) {
+    return NextResponse.json(
+      { error: "capabilities { kinds: string[], clis: string[], labels: string[] } required" },
+      { status: 400 },
+    );
   }
 
-  const payload = getAgentNextRun(id);
-  if (!payload) {
-    return NextResponse.json(null);
+  // Every claim/peek proves liveness and records advertised capabilities.
+  touchRunnerPolled(auth.runnerId, capabilities);
+
+  const runner = {
+    id: auth.runnerId,
+    tier: auth.tier,
+    labels: auth.labels,
+    scope: auth.scope,
+  };
+
+  if (req.nextUrl.searchParams.get("peek") === "true") {
+    return NextResponse.json(peekClaim(runner, capabilities));
   }
+
+  const payload = claimNextRun(runner, capabilities);
+  if (!payload) return NextResponse.json({ run: null });
 
   const base = publicBaseUrl(req);
   const serialized = (payload.attachments as RunAttachment[]).map((a) =>
     serializeAttachment(a, base),
   );
-
   const enriched = serialized.map((att: SerializedAttachment) => {
     if (!isVideoFile(att.mime_type, att.filename)) return att;
     const proc = getProcessingByAttachment(att.id);
     if (!proc) return att;
-
     const processing: Record<string, unknown> = {
       status: proc.status,
       screenshot_count: proc.screenshot_count,
       screenshots_url: `${base}/api/runs/${payload.run.id}/attachments/${att.id}/screenshots`,
       duration_seconds: proc.duration_seconds,
     };
-
     if (proc.status === "done") {
-      // Prefer storyboard (interleaved screenshots + transcript) over plain transcript
       if (proc.screenshots_dir) {
         const storyboard = readStoryboard(proc.screenshots_dir, base, TRANSCRIPT_CAP);
-        if (storyboard) {
-          processing.storyboard = storyboard;
-        }
+        if (storyboard) processing.storyboard = storyboard;
       }
       if (proc.transcript_path) {
         processing.transcript = readTranscript(proc.transcript_path, TRANSCRIPT_CAP);
         processing.transcript_url = `${base}/api/runs/${payload.run.id}/attachments/${att.id}/transcript`;
       }
     }
-
     return { ...att, processing };
   });
 

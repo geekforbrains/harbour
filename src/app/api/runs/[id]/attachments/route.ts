@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { serializeAttachment } from "@/lib/attachments-serialize";
-import { type AuthContext, withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { type AuthContext, withRunExecutorOrUser } from "@/lib/auth";
 import {
   createEmbedAttachment,
   createFileAttachment,
@@ -19,47 +18,31 @@ import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
-const runOrg = (p: Record<string, string>) => orgIdForResource("run", p.id);
-
 function uploaderFromAuth(auth: AuthContext): Uploader {
   if (auth.type === "user") return { type: "user", id: auth.userId, name: auth.displayName };
-  if (auth.type === "workflow_runner")
-    return { type: "agent", id: auth.runnerId, name: auth.runnerName };
+  if (auth.type === "executor")
+    return { type: "agent", id: auth.agentId ?? auth.runId, name: auth.agentName ?? "Runner" };
   return { type: "agent", id: auth.agentId, name: auth.agentName };
 }
 
-export const GET = withAgentOrUser(
-  async (req, auth, { params }) => {
+export const GET = withRunExecutorOrUser(
+  async (req, _auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const rows = listAttachmentsByRun(id);
     const base = publicBaseUrl(req);
     return NextResponse.json(rows.map((r) => serializeAttachment(r, base)));
   },
-  { role: "viewer", allowWorkflowRunner: true, orgFromParams: runOrg },
+  { role: "viewer" },
 );
 
-export const POST = withAgentOrUser(
+export const POST = withRunExecutorOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const contentType = req.headers.get("content-type") || "";
     const uploader = uploaderFromAuth(auth);
@@ -116,5 +99,5 @@ export const POST = withAgentOrUser(
       return NextResponse.json({ error: "Upload failed" }, { status: 500 });
     }
   },
-  { role: "editor", allowWorkflowRunner: true, orgFromParams: runOrg },
+  { role: "editor" },
 );

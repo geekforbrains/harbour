@@ -13,6 +13,7 @@ import {
   createUser,
   getRunById,
   listRunActivity,
+  mintExecToken,
   updateRunStatus,
 } from "@/lib/db/queries";
 import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
@@ -43,9 +44,11 @@ function userReq(userId: string, url: string, init: ReqInit = {}): NextRequest {
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
-function agentReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
+// Run-lifecycle routes authenticate with the run's exec token (the runner/CLI
+// credential), not a permanent agent key.
+function execReq(runId: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${apiKey}`);
+  headers.set("authorization", `Bearer ${mintExecToken(runId)}`);
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
@@ -114,13 +117,24 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
     expect(res.status).toBe(200);
     expect(getRunById(run.id)!.status).toBe("failed");
   });
+
+  it("forbids an executor from setting 'pending' (resurrect is a human action)", async () => {
+    const { run } = fixture();
+    updateRunStatus(run.id, "waiting"); // waiting -> pending is a legal edge for users
+    const res = await runStatusPUT(
+      execReq(run.id, "http://x/", statusBody("pending")),
+      ctx({ id: run.id }),
+    );
+    expect(res.status).toBe(403);
+    expect(getRunById(run.id)!.status).toBe("waiting"); // unchanged
+  });
 });
 
 describe("PUT /api/runs/:id/status — activity logging", () => {
   it("logs a 'Status changed' activity on a real transition", async () => {
-    const { run, agent } = fixture();
+    const { run } = fixture();
     const res = await runStatusPUT(
-      agentReq(agent.apiKey, "http://x/", statusBody("done")),
+      execReq(run.id, "http://x/", statusBody("done")),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(200);
@@ -130,9 +144,9 @@ describe("PUT /api/runs/:id/status — activity logging", () => {
   });
 
   it("does NOT log a 'Status changed' activity for a no-op self-transition", async () => {
-    const { run, agent } = fixture(); // already 'running'
+    const { run } = fixture(); // already 'running'
     const res = await runStatusPUT(
-      agentReq(agent.apiKey, "http://x/", statusBody("running")),
+      execReq(run.id, "http://x/", statusBody("running")),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(200);

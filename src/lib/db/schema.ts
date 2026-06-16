@@ -119,6 +119,25 @@ export function initializeSchema(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Instance-level runner registry. One row per runner (local or remote);
+    -- replaces the file-based agent runner config and the per-org
+    -- workflow_runners table. The local runner is one auto-provisioned row.
+    -- Tenancy never reaches here — runners are org-agnostic; a 'local' runner
+    -- claims any placement='local' work across all orgs. 'remote' runners are
+    -- scoped by their authorized labels (+ optional org/agent scope).
+    CREATE TABLE IF NOT EXISTS runners (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,       -- sha256 of the bearer token (hbrn_…)
+      tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
+      labels TEXT NOT NULL DEFAULT '[]',     -- JSON: placement labels this token is authorized to serve
+      capabilities TEXT,                     -- JSON {kinds,clis,labels}: last-advertised host capabilities (health/display)
+      scope TEXT,                            -- JSON {orgId?,agentId?} or NULL (unscoped — local tier)
+      last_polled_at INTEGER,                -- updated on every claim/peek; drives the health surface
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- ── Hierarchy ────────────────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS projects (
@@ -147,18 +166,7 @@ export function initializeSchema(db: Database.Database) {
       eager INTEGER NOT NULL DEFAULT 0,
       remote INTEGER NOT NULL DEFAULT 0,  -- runner lives on another machine
       runner_fingerprint TEXT,            -- one-runtime-per-agent guard
-      last_polled_at INTEGER,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS workflow_runners (
-      id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      api_key_hash TEXT NOT NULL UNIQUE,
-      labels TEXT NOT NULL DEFAULT '[]',
-      enabled INTEGER NOT NULL DEFAULT 1,
+      placement TEXT NOT NULL DEFAULT 'local', -- routes this agent's runs to a runner tier/label
       last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -184,6 +192,7 @@ export function initializeSchema(db: Database.Database) {
       postrun_gates INTEGER NOT NULL DEFAULT 0, -- 0 = informational (never changes status), 1 = enforcing (nonzero overrides done->failed)
       workflow_runtime TEXT CHECK(workflow_runtime IS NULL OR workflow_runtime IN ('bash','python','node')),
       workflow_script TEXT,                 -- workflow job command: no agent/LLM involved
+      placement TEXT NOT NULL DEFAULT 'local', -- workflow jobs: routes runs to a runner tier/label (agent jobs inherit from their agent)
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       model TEXT,
       thinking TEXT,
@@ -205,6 +214,9 @@ export function initializeSchema(db: Database.Database) {
       status TEXT NOT NULL DEFAULT 'running'
         CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped','killed')),
       title TEXT,
+      placement TEXT NOT NULL DEFAULT 'local', -- denormalized at creation from agent/job; keeps the claim query flat
+      claimed_by TEXT REFERENCES runners(id) ON DELETE SET NULL, -- which runner claimed this run
+      exec_token_hash TEXT,                -- sha256 of the per-run executor token (hbx_…); minted at claim, the CLI's callback credential
       scheduled_for INTEGER,
       claimed_at INTEGER,
       completed_at INTEGER,
@@ -398,7 +410,7 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_slug ON agents(project_id, slug);
-    CREATE INDEX IF NOT EXISTS idx_workflow_runners_org ON workflow_runners(org_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runners_token ON runners(token_hash);
     CREATE INDEX IF NOT EXISTS idx_jobs_org ON jobs(org_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
@@ -409,6 +421,7 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
     CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    CREATE INDEX IF NOT EXISTS idx_runs_claimed_by ON runs(claimed_by);
 
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);

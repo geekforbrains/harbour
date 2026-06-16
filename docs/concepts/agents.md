@@ -1,22 +1,22 @@
 # Agents
 
-An agent is the thing that picks up runs and does work. It has a name, a description, an API key, and — for harbour-managed agents — a CLI tool, model, and thinking level. That's the whole shape. Everything else (jobs, schedules, docs, env vars) lives outside the agent and gets attached to runs at poll time.
+An agent is the thing that picks up runs and does work. It has a name, a description, a [placement](#remote-agents) that routes its runs to a runner, and — for harbour-managed agents — a CLI tool, model, and thinking level. That's the whole shape. Everything else (jobs, schedules, docs, env vars) lives outside the agent and gets attached to runs at claim time.
 
 ## The mental model
 
-Every agent in Harbour is one of two kinds:
+Every agent in Harbour runs in one of two places, decided entirely by its `placement`:
 
-| Kind | What it is | How it works |
+| Where | What it is | How it works |
 |---|---|---|
-| **External** | Any HTTP client with a Bearer token | You bring the runtime. Harbour issues an API key, you write the polling loop, you do the work. |
-| **Harbour** | A built-in CLI (Claude Code, Codex, or Gemini CLI) | The local `harbour-runner` launchd job polls Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
+| **Local** | A built-in CLI (Claude Code, Codex, or Gemini CLI) claimed by the runner on this host | The local `harbour run` launchd job claims work from Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
+| **Remote** | The same built-in CLI, but pinned to a runner on another machine | The agent's [placement](#remote-agents) names a label; a remote runner you've enrolled for that label claims and drives its runs exactly as the local one does. |
 
-The wire contract is identical either way. A harbour agent is just an external agent whose runtime happens to ship in this repo. If you replaced the runner with curl + bash you'd get the same observable behavior on Harbour's side.
+The work a run carries and the callbacks it owes back are identical either way — the only difference is which runner host claims it, decided by the agent's `placement` (see [Remote agents](#remote-agents)).
 
 This is deliberate. Two of Harbour's load-bearing decisions follow from it:
 
 - **Agents pull, Harbour never pushes.** No webhooks, no callbacks, no agent-side HTTP listener required. An agent on a yacht with intermittent Wi-Fi is no different from one running locally — it polls when it can.
-- **One run at a time per agent.** Step 1 of `getAgentNextRun` checks for an existing `running` run on this agent and bails out with `null` if there is one. Two parallel polls won't trip over each other; queued work waits its turn. See [Jobs and runs](jobs-and-runs.md) for the polling ladder in full.
+- **One run at a time per agent.** The lock is enforced server-side at claim time: a run is claimable only if its agent has nothing in flight (lock unit = `agent_id`, where in-flight = `running | waiting | pending`). Two parallel claims won't trip over each other; queued work waits its turn. See [Jobs and runs](jobs-and-runs.md) for the polling ladder in full.
 
 ## Per-agent settings
 
@@ -28,67 +28,56 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `slug` | Creation-time, immutable workspace path segment — see [Workspaces](#workspaces) |
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
-| `eager` | drain the queue back-to-back instead of waiting 60s between runs |
+| `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
 | `cli` | `claude`, `codex`, or `gemini` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
-| `remote` | `1` if the runner runs on a different machine; harbour skips writing local runner config |
-| `api_key_hash` | SHA-256 of the API key — the plaintext is never stored |
-| `last_polled_at` | Updated every time `/next` is hit; powers the "active" indicator on the dashboard |
+| `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
+| `remote` | Legacy boolean retained alongside `placement`; routing is decided by `placement`, not this flag |
+| `api_key_hash` | SHA-256 of the API key — the plaintext is never stored. Scopes the management API surface, not run claiming (the runner claims with its own token) |
+| `last_polled_at` | Updated whenever the agent is claimed/peeked at; powers the "active" indicator on the dashboard |
 
-`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs (`payload.job.model || agentModel` in the runner).
+`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`).
 
 ## API keys
 
 Each agent gets one API key, format `hbr_<64 hex chars>`. The plaintext is shown once at creation and never again — only the SHA-256 hash is stored. Authentication does the same hash and looks up by `api_key_hash`.
 
-Rotate via `POST /api/agents/:id/rotate-key`. The old key stops working immediately; the new key is shown once. For harbour agents the runner config (in `~/.harbour/runners.json`) holds the plaintext, so a rotation also means re-saving that file — for local agents, deleting and recreating the agent is usually easier; for remote agents, the dashboard's **Connect Remote Runner** panel generates a fresh `harbour agent connect <blob>` command that includes the new key.
+The agent API key is *not* how runs get claimed — neither a local nor a remote runner ever uses it. Every runner claims work with its own [runner token](#harbour-agents) and drives the CLI with a per-run exec token. The agent key scopes the management API surface to that agent; run execution rides entirely on runner and exec tokens.
 
-## The polling loop
+## Claiming work
+
+A run never reaches a CLI by being addressed directly. The runner claims the next runnable unit:
 
 ```
-GET /api/agents/:id/next            # claim work (state-changing)
-GET /api/agents/:id/next?peek=true  # check, no claim
+POST /api/runner/claim            # claim work (state-changing)
+POST /api/runner/claim?peek=true  # check liveness / availability, no claim
 ```
 
-The agent posts work back through endpoints baked into the `/next` payload's `api.endpoints` map — no URL construction needed. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle and [guide.md](../guide.md) for the wire contract.
+The claim response carries the run, its job, the agent's live config, the workspace block, env vars, a per-run `exec_token`, and an `api.endpoints` map of pre-resolved callback URLs — no URL construction needed. Everything the runner posts back goes through those endpoints, authenticated with the `exec_token`. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle, the [Runner Protocol](../runner-guide.md) for the claim contract, and [guide.md](../guide.md) for the CLI-facing wire contract.
 
 ## Harbour agents
 
-A harbour agent is the same agent record with a `cli` set — there's no stored `type` flag; a runner-backed agent is simply one that has a CLI (and a local or remote runner) configured. When you create one, the dashboard writes an entry to `~/.harbour/runners.json`:
+A harbour agent is the same agent record with a `cli` set — there's no stored `type` flag; a runner-backed agent is simply one that has a CLI configured. Nothing about the agent is cached on disk: the runner discovers it at claim time. One runner host runs **one** command, `harbour run`, which serves every agent (and workflow) whose work it's eligible to claim.
 
-```json
-{
-  "runners": [
-    {
-      "agentId": "uuid", "name": "Writer",
-      "apiKey": "hbr_...", "cli": "claude",
-      "model": "sonnet", "thinking": null,
-      "eager": false,
-      "url": "http://localhost:3000"
-    }
-  ]
-}
-```
+`harbour run` loads the runner's bearer token from `~/.harbour/runner.token` (the only secret on disk, 0600) and a base URL (`HARBOUR_URL` env > `~/.harbour/runner.url` > `http://localhost:3000`), detects what the host can execute (installed CLIs on PATH; `kinds` = `[agent, workflow]` when a CLI is present, else `[workflow]`; `labels` = `[local]`, overridable via `HARBOUR_RUNNER_LABELS`), and POSTs `/api/runner/claim` advertising those capabilities. Each cycle **drains** all currently-due work, running distinct lock units in parallel up to a pool cap (`POOL_SIZE`, default 4, override `HARBOUR_POOL_SIZE`), then exits. It branches on the claimed run's `job.kind`: drive a CLI session for `agent`, run the gate script for `workflow`.
 
-`harbour agent run` reads this file and polls every configured agent in parallel (`Promise.allSettled`). `harbour agent install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires the same `agent run` command. The systemd variant (`harbour-agent-runner.service`, see [Deploying to production](../guides/deploy-to-production.md#3-systemd-units)) uses `while true; do … sleep 60; done`, which gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+`harbour install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires `harbour run`. The systemd variant on Linux (see [Deploying to production](../guides/deploy-to-production.md#3-systemd-units)) gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`. (The DB `runners` table is the registry; there's no per-agent config file.)
 
-For each agent on each tick, the runner:
+For each agent run it claims, the runner:
 
-1. `GET /api/agents/:id/next` — claim a run if one exists.
+1. Reads the agent's live `cli`/`model`/`thinking` from the claim payload (per-job override wins) and resolves the workspace.
 2. If the run's job has a prerun command, run it as a gate before invoking the LLM (see [Workflows](workflows.md)).
 3. Spawn the CLI tool with the prompt — instructions, docs, data, env vars, activity, attachments, and the API cheat-sheet.
 4. Stream JSONL output back via `POST /api/runs/:id/output` in 750ms-batched flushes.
-5. After the CLI exits, post the final summary as activity. If the agent didn't already set a terminal status, mark the run `failed` (the failsafe).
+5. After the CLI exits, post the final summary as activity. If the agent didn't already set a terminal status, the harness drives a dedicated finalize turn to set one (forcing `failed` only as a backstop).
 6. Save or clear the CLI session ID in `~/.harbour/sessions.json` keyed by run ID — used to resume on `waiting` and to allow comment-resume after a kill.
 
-### Eager polling
+Every callback above (`/api/runs/:id/*`) is authenticated with the run's per-run `exec_token` from the claim payload — the high-value runner token never reaches the CLI or a gate.
 
-The `eager` flag on a harbour agent (off by default) changes step 1 into a loop. After a run finishes cleanly — `done`, `waiting`, or `skipped` — the runner immediately re-polls instead of returning to launchd's 60s wait. The loop drains until `/next` returns null (no more queued/scheduled/due work), and then the agent falls back to the normal 60s cadence.
+### Eager
 
-A `failed` or `killed` outcome breaks the loop. Failures are usually transient (network, rate limits, OOM, timeouts), so the 60s gap acts as a free backoff. Kills mean the user explicitly said stop. There's also a hard cap of 50 iterations per launchd tick (`EAGER_MAX_ITERATIONS` in `bin/lib/runner.mjs`) as a safety net against bugs in `getAgentNextRun`.
-
-The flag travels two places: `~/.harbour/runners.json` (cached on the runner host, written by the dashboard for local agents and by `harbour agent connect <blob>` for remote ones), and the `agent.eager` field on every `/next` response payload (read live from the DB). The runner prefers the live value, so toggling Eager from the dashboard takes effect on the next poll without needing to reconnect a remote runner. See `shouldContinueEagerLoop` and `processNextRun` in `bin/lib/runner.mjs` for the decision logic.
+Eager is a legacy concept — the runner no longer needs it. Each `harbour run` cycle already drains all currently-due work in parallel up to the pool cap, so there is no per-agent loop to opt into and no 60s gap between back-to-back runs of the same agent within a cycle. The `eager` flag/column still exists on the agent record and is carried on the claim payload, but it does not change runner behavior (its full removal is a later chunk).
 
 ### CLI providers
 
@@ -110,7 +99,7 @@ Each harbour agent gets a workspace directory at `~/.harbour/workspaces/<org-slu
 
 Each path segment is a **slug**, assigned at creation from the entity's name (lowercase; runs of anything outside `a-z0-9` collapse to a single `-`; edges trimmed) and **immutable on rename** — renaming an org, project, or agent never moves or orphans a workspace; the folder keeps its creation-time name. Names must be unique per scope ignoring case and punctuation (orgs instance-wide, projects per org, agents per project): "Dev Agent" and "Dev_Agent" produce the same slug, and creating the second is rejected with a clear error. Uniqueness is enforced at creation only, on the slug — after renames, display names may come to duplicate. Archived orgs and projects keep holding their slug, so a later same-name entity can't inherit leftover workspace directories on runner machines. Enforcement details in [database-schema.md](../reference/database-schema.md#slugs).
 
-The runner never derives the path from display names — the `/next` payload carries a `workspace` block of the three slugs (see [guide.md](../guide.md)), and the runner validates each segment against `^[a-z0-9-]+$`, refusing the run (rather than transforming the path) if any segment is malformed. Against an older server that sends no workspace block, it falls back to the legacy flat `workspaces/<agent>/` layout with a logged warning. Runs paused after the upgrade resume in the cwd pinned in `sessions.json` when they ran, so renames and layout changes never move them; runs already waiting when the runner was upgraded have no pinned cwd and resume in the legacy flat directory derived from the agent's current name — avoid renaming an agent while it has pre-upgrade waiting runs. After upgrading, old flat directories are inert and can be deleted once no waiting/running runs remain. Deleting an org, project, or agent doesn't clean its workspace directories on runner machines either — disk cleanup is manual.
+The runner never derives the path from display names — the claim payload carries a `workspace` block of the three slugs (see [guide.md](../guide.md)), and the runner validates each segment against `^[a-z0-9-]+$`, refusing the run (rather than transforming the path) if any segment is malformed. Against an older server that sends no workspace block, it falls back to the legacy flat `workspaces/<agent>/` layout with a logged warning. Runs paused after the upgrade resume in the cwd pinned in `sessions.json` when they ran, so renames and layout changes never move them; runs already waiting when the runner was upgraded have no pinned cwd and resume in the legacy flat directory derived from the agent's current name — avoid renaming an agent while it has pre-upgrade waiting runs. After upgrading, old flat directories are inert and can be deleted once no waiting/running runs remain. Deleting an org, project, or agent doesn't clean its workspace directories on runner machines either — disk cleanup is manual.
 
 The workspace root defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_HOME` to relocate the whole tree. There's no per-agent override; if you want one agent in a different directory, point its job instructions at it.
 
@@ -142,36 +131,26 @@ Kill is two-tier: when the user clicks **Kill** the server sets `runs.kill_reque
 
 Killed harbour-agent runs save their session ID and post an activity message: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context." Commenting flips the run back to `pending` and the next poll resumes the CLI session.
 
-External agents can't be killed from Harbour — they don't poll the kill signal, so there's no process to stop. Kill is meaningful only for runner-backed (Harbour-run) agents.
-
-## External agents in practice
-
-For an external agent the polling loop is whatever you want it to be. The reference shape from [guide.md](../guide.md):
-
-```bash
-RESPONSE=$(curl -s -H "Authorization: Bearer $KEY" \
-  "$HARBOUR_URL/api/agents/$AGENT_ID/next")
-[ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ] && exit 0
-RUN_ID=$(echo "$RESPONSE" | jq -r '.run.id')
-# … your runtime … then post status / activity using endpoints in $RESPONSE.api
-```
-
-The `api.endpoints` map in the response gives you every URL pre-resolved with this run's ID — `update_status`, `post_activity`, `upload_attachment`, etc. You don't construct paths yourself; you read them out of the payload.
-
-To get an agent's credentials, create it with **Runs on a different machine** checked — the connect command's base64 blob decodes to `{url, agentId, apiKey, name}` (you can rotate the key later from the agent's detail page). Hand your runtime the key and URL, and treat the wire contract at `/api/guide` ([guide.md](../guide.md)) as the agent's onboarding doc — it covers the polling loop, statuses, and what the agent owes back.
-
-External agents are scoped — the API key authenticates a single agent and can only mutate that agent's runs. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`admin-guide.md`](../admin-guide.md).
+Kill works the same whether the run was claimed by the local pool or a remote runner — both poll the kill signal between flushes. A [remote agent](#remote-agents) on another machine is killed identically; the remote runner driving it picks up the same signal.
 
 ## Remote agents
 
-Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac, GPU work needs a workstation, scraping behind a residential IP needs a particular box. Mark an agent **remote** at creation and Harbour skips writing local runner config. You then run `harbour agent connect <base64-blob>` on the target machine; the blob is identity-only — `{url, agentId, apiKey, name}` — and writes the runner entry into the *target's* `~/.harbour/runners.json`. The agent's cli/model/thinking are resolved live from `/next`, so dashboard changes take effect without reconnecting.
+Sometimes a job has to run on a specific machine — Xcode/iOS builds need a Mac, GPU work needs a workstation, scraping behind a residential IP needs a particular box. "Running an agent elsewhere" isn't a separate kind of agent and isn't a self-hosted HTTP poller: it's an ordinary agent whose `placement` names a label, plus a runner you've enrolled on that machine and authorized to serve that label. Work routes by matching a run's placement against the labels a runner advertises (`r.placement IN (runner labels)` in `claimNextRun`), so the right host claims it; everything the run carries and owes back is identical to a local run.
+
+Enrolling one is three steps:
+
+1. **Set the agent's placement.** Give the agent a `placement` label other than `local` — say `gpu` or `mac`. (Workflow jobs carry their own placement; agent jobs inherit the agent's.)
+2. **Mint a remote runner.** As an instance admin, hit `POST /api/runners` with `{ name, labels: ["gpu"], scope? }` — or use **Settings → Runners → New Runner**. The response includes a ready-to-paste `npm run harbour -- connect <blob>`, where the base64 blob carries the harbour URL, the runner's bearer token, and its name. An optional `scope` (`{ orgId?, agentId? }`) restricts the token to one org's or one agent's work. `GET /api/runners` lists them; `DELETE /api/runners/:id` revokes (the next claim 401s).
+3. **Connect on the remote host.** Run `harbour connect <blob>` there: it peek-verifies the token against `/api/runner/claim?peek=true` and writes `~/.harbour/runner.token` + `runner.url` (0600). Then `harbour install` (or a one-shot `harbour run`) starts the same drain-claim loop, which now claims the `gpu`/`mac` work that local runners can't.
+
+A remote runner advertises its labels via `HARBOUR_RUNNER_LABELS` on the host (the row's `labels` is what the token is *authorized* to serve; the advertised set is intersected with it). One runner credential covers both agent and workflow work — there's no separate per-agent or per-workflow credential.
+
+Remote agents are still scoped — a run can only mutate itself. If you want a separate agent that can manage Harbour itself (create agents, edit jobs, attach docs), use an **admin API key** instead. See [`admin-guide.md`](../admin-guide.md). [guide.md](../guide.md) remains the wire contract for the run payload — its shape, the statuses, and what each run owes back — whether a local or remote runner is driving the CLI.
 
 Two operational notes:
 
-- **Reachability.** The remote machine has to reach the harbour URL embedded in the blob. Tailscale or any private mesh is the common pattern.
-- **Gate runtimes must be installed on the runner.** A prerun/postrun gate is a `{ runtime, content }` script stored in Harbour; the agent runner materializes its body and runs it via the runtime's interpreter before/after the LLM. Nothing is hand-placed — but the runtime the gate names (`bash`, `python3`, or `node`) must be installed on the runner's machine. See [Workflows](workflows.md).
-
-Deterministic workflows use separate workflow runners and are not polled by agent runners.
+- **Reachability.** The remote machine has to reach the harbour URL it's pointed at. Tailscale or any private mesh is the common pattern.
+- **Gate runtimes must be installed on the runner.** A prerun/postrun gate is a `{ runtime, content }` script stored in Harbour; the runner materializes its body and runs it via the runtime's interpreter before/after the LLM. Nothing is hand-placed — but the runtime the gate names (`bash`, `python3`, or `node`) must be installed on the runner's machine. See [Workflows](workflows.md).
 
 ## Designing an agent team
 
@@ -184,11 +163,12 @@ Docs, secrets, and tables are shared at the **org** level (or scoped to a projec
 
 ## Source-of-truth pointers
 
-- `src/lib/db/agents.ts` — agent CRUD, API key hashing, rotation.
-- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `slug`, `cli`, `model`, `thinking`, `color`, `eager`, `remote`, `runner_fingerprint`).
+- `src/lib/db/agents.ts` — agent CRUD and API key hashing.
+- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `slug`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`, `remote`, `runner_fingerprint`).
 - `src/lib/slug.ts` — the canonical slug algorithm and the name-collision errors.
-- `src/app/api/agents/[id]/next/route.ts` — the polling endpoint and the `api.endpoints` builder for run payloads.
-- `src/app/api/agents/[id]/rotate-key/route.ts` — key rotation.
-- `bin/lib/runner.mjs` — the local runner: poll, spawn, stream, kill, finalize.
-- `bin/lib/providers.mjs` — Claude, Codex, and Gemini command builders and JSONL parsers.
-- `bin/lib/connect.mjs` — the `harbour agent connect <blob>` flow for remote runners.
+- `src/app/api/runner/claim/route.ts` — the unified claim endpoint and the `api.endpoints` builder for run payloads.
+- `src/lib/db/runs.ts` — `claimNextRun` / `claimableLabels`: placement-to-label routing and remote-token scoping.
+- `src/app/api/runners/route.ts` + `[id]/route.ts` — mint (`POST`), list (`GET`), and revoke (`DELETE`) remote runner credentials; `src/lib/db/runners.ts` is the registry.
+- `bin/lib/runner.mjs` — the runner: `runPool` (claim, drain, dispatch), then spawn, stream, kill, finalize per run.
+- `bin/lib/providers.mjs` — Claude, Codex, and Gemini command builders and JSONL parsers; `detectCapabilities` and `resolveRunConfig`.
+- `bin/lib/connect.mjs` — the `harbour connect <blob>` flow for enrolling a remote runner.

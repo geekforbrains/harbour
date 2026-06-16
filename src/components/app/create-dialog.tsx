@@ -203,6 +203,9 @@ export function CreateDialog({
   const [titleFormat, setTitleFormat] = useState("");
   // Workflow-only: scope is fixed at creation. Agent jobs are always project-level.
   const [workflowScope, setWorkflowScope] = useState<"project" | "org">("project");
+  // Workflow-only: which runner pool claims this workflow's runs (default 'local').
+  // Agent jobs inherit their agent's placement, so this isn't shown for them.
+  const [placement, setPlacement] = useState("");
 
   // Without an active project, "This project" isn't an option — force org level.
   const orgScoped = kind === "workflow" && (workflowScope === "org" || !activeProjectId);
@@ -245,6 +248,7 @@ export function CreateDialog({
     setPostrunGates(false);
     setTitleFormat("");
     setWorkflowScope("project");
+    setPlacement("");
   }
 
   function handleClose(value: boolean) {
@@ -277,6 +281,10 @@ export function CreateDialog({
       instructions: !isWorkflow ? instructions || undefined : undefined,
       schedule: serializeSchedule(schedule),
       command: isWorkflow ? (workflowGate ?? undefined) : undefined,
+      placement:
+        isWorkflow && placement.trim() && placement.trim() !== "local"
+          ? placement.trim()
+          : undefined,
       prerun: !isWorkflow ? (prerun ?? undefined) : undefined,
       postrun: !isWorkflow ? (postrun ?? undefined) : undefined,
       postrunGates: !isWorkflow && postrun ? postrunGates : undefined,
@@ -431,16 +439,29 @@ export function CreateDialog({
             </div>
 
             {kind === "workflow" && (
-              <GateField
-                label="Command"
-                value={workflowGate}
-                onChange={setWorkflowGate}
-                required
-                description="The script this workflow runs. Pick a runtime and write the body."
-                placeholder={
-                  "#!/usr/bin/env bash\nset -euo pipefail\n# do the work, exit 77 to skip"
-                }
-              />
+              <>
+                <GateField
+                  label="Command"
+                  value={workflowGate}
+                  onChange={setWorkflowGate}
+                  required
+                  description="The script this workflow runs. Pick a runtime and write the body."
+                  placeholder={
+                    "#!/usr/bin/env bash\nset -euo pipefail\n# do the work, exit 77 to skip"
+                  }
+                />
+                <div className="space-y-2">
+                  <Label>Placement</Label>
+                  <Input
+                    value={placement}
+                    onChange={(e) => setPlacement(e.target.value)}
+                    placeholder="local"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Which runner pool runs this workflow (default: local).
+                  </p>
+                </div>
+              </>
             )}
 
             {kind === "agent" && (

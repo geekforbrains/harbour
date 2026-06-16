@@ -30,6 +30,7 @@ export function createAgent(
     color?: string;
     eager?: boolean;
     remote?: boolean;
+    placement?: string;
   },
 ) {
   const db = getDb();
@@ -51,10 +52,11 @@ export function createAgent(
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
   const remote = opts?.remote ? 1 : 0;
+  const placement = opts?.placement?.trim() || "local";
   try {
     db.prepare(
-      `INSERT INTO agents (id, project_id, name, slug, description, api_key_hash, cli, model, thinking, color, eager, remote)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agents (id, project_id, name, slug, description, api_key_hash, cli, model, thinking, color, eager, remote, placement)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       projectId,
@@ -68,6 +70,7 @@ export function createAgent(
       color,
       eager,
       remote,
+      placement,
     );
   } catch (err) {
     // Race backstop: a concurrent create can slip past the pre-check; the
@@ -93,6 +96,7 @@ export function createAgent(
     color,
     eager: !!eager,
     remote: !!remote,
+    placement,
   };
 }
 
@@ -105,23 +109,12 @@ export function authenticateAgent(apiKey: string) {
   return agent || null;
 }
 
-export function rotateAgentKey(agentId: string) {
-  const db = getDb();
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
-  db.prepare(`UPDATE agents SET api_key_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(
-    apiKeyHash,
-    agentId,
-  );
-  return apiKey;
-}
-
 export function getAgentById(id: string) {
   const db = getDb();
   return (
     (db
       .prepare(
-        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, remote, runner_fingerprint, last_polled_at, created_at, updated_at
+        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, remote, runner_fingerprint, placement, last_polled_at, created_at, updated_at
      FROM agents WHERE id = ?`,
       )
       .get(id) as any) || null
@@ -153,7 +146,7 @@ export function listAgents(projectId: string) {
   const db = getDb();
   return db
     .prepare(`
-    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.placement, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -175,6 +168,7 @@ export function updateAgent(
     thinking?: string;
     color?: string;
     eager?: boolean;
+    placement?: string;
   },
 ) {
   const db = getDb();
@@ -209,39 +203,15 @@ export function updateAgent(
     fields.push("eager = ?");
     values.push(data.eager ? 1 : 0);
   }
+  if (data.placement !== undefined) {
+    fields.push("placement = ?");
+    values.push(data.placement.trim() || "local");
+  }
   if (fields.length === 0) return getAgentById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
   db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...values);
   return getAgentById(id);
-}
-
-/**
- * Record the runner fingerprint that first claimed this agent (one-runtime-
- * per-agent guard). Returns true if accepted (matched or first set), false if
- * a different fingerprint already owns the agent.
- */
-export function claimAgentRunner(id: string, fingerprint: string): boolean {
-  const db = getDb();
-  const row = db.prepare(`SELECT runner_fingerprint FROM agents WHERE id = ?`).get(id) as
-    | { runner_fingerprint: string | null }
-    | undefined;
-  if (!row) return false;
-  if (row.runner_fingerprint && row.runner_fingerprint !== fingerprint) return false;
-  if (!row.runner_fingerprint) {
-    db.prepare(
-      `UPDATE agents SET runner_fingerprint = ?, updated_at = unixepoch() WHERE id = ?`,
-    ).run(fingerprint, id);
-  }
-  return true;
-}
-
-/** Clear the runner fingerprint (admin clicks Reconnect to migrate runtimes). */
-export function resetAgentRunner(id: string) {
-  const db = getDb();
-  db.prepare(
-    `UPDATE agents SET runner_fingerprint = NULL, updated_at = unixepoch() WHERE id = ?`,
-  ).run(id);
 }
 
 export function deleteAgent(id: string) {

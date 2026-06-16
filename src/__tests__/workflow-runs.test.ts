@@ -4,7 +4,6 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  authenticateWorkflowRunner,
   buildRunPayload,
   createDoc,
   createEnvVar,
@@ -13,15 +12,13 @@ import {
   createRun,
   createTable,
   createWorkflow,
-  createWorkflowRunner,
-  getNextWorkflowRun,
   getRunById,
   insertRows,
   linkTableToJob,
   listRunActivity,
-  peekWorkflowNext,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { claim, localRunner, peek } from "./support/claim";
 
 // ---------------------------------------------------------------------------
 // Setup / Teardown — fresh in-memory v2 DB per test (mirrors the other suites)
@@ -71,14 +68,14 @@ function runsForJob(jobId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// getNextWorkflowRun — recurring-job materialization + NOT EXISTS de-dup
+// Unified claim — recurring workflow-job materialization + NOT EXISTS de-dup
 // ---------------------------------------------------------------------------
-describe("getNextWorkflowRun: recurring workflow job materialization", () => {
+describe("claim: recurring workflow job materialization", () => {
   it("materializes a run from a due recurring workflow job and advances its schedule", () => {
-    const { org, wf } = workflowJob();
+    const { wf } = workflowJob();
     makeJobDue(wf.id);
 
-    const payload = getNextWorkflowRun(org.id)!;
+    const payload = claim(localRunner())!;
     expect(payload).toBeTruthy();
     expect(payload.job.kind).toBe("workflow");
     expect(payload.job.command).toEqual({ runtime: "bash", content: "echo sync" });
@@ -96,52 +93,53 @@ describe("getNextWorkflowRun: recurring workflow job materialization", () => {
   });
 
   it("NOT EXISTS guard: does not re-fire while an active (running) run exists", () => {
-    const { org, wf } = workflowJob();
+    const { wf } = workflowJob();
+    const runner = localRunner();
     makeJobDue(wf.id);
 
-    // First poll materializes a running run.
-    expect(getNextWorkflowRun(org.id)).toBeTruthy();
+    // First claim materializes a running run.
+    expect(claim(runner)).toBeTruthy();
     expect(runsForJob(wf.id).length).toBe(1);
 
     // Re-backdate the job so the schedule alone would make it due again — the
     // only thing that should suppress a second run is the active run guard.
     makeJobDue(wf.id);
-    const second = getNextWorkflowRun(org.id);
+    const second = claim(runner);
 
     expect(second).toBeNull();
     expect(runsForJob(wf.id).length).toBe(1); // no duplicate run
   });
 
   it("does not materialize a run for an inactive workflow job", () => {
-    const { org, wf } = workflowJob(false);
+    const { wf } = workflowJob(false);
     makeJobDue(wf.id); // even if forced due, active = 0 excludes it
     getDb().prepare(`UPDATE jobs SET active = 0 WHERE id = ?`).run(wf.id);
 
-    expect(getNextWorkflowRun(org.id)).toBeNull();
+    expect(claim(localRunner())).toBeNull();
     expect(runsForJob(wf.id).length).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// getNextWorkflowRun — scheduled claim (verifies the guarded claim still works)
+// Unified claim — scheduled claim (verifies the guarded claim still works)
 // ---------------------------------------------------------------------------
-describe("getNextWorkflowRun: scheduled run claim", () => {
+describe("claim: scheduled workflow run claim", () => {
   it("claims a due scheduled workflow run and flips it to running", () => {
-    const { org, wf } = workflowJob();
+    const { wf } = workflowJob();
     const run = createRun(wf.id, null)!;
     // createRun starts a run as 'running'; rewind it to a due 'scheduled' run.
     getDb()
       .prepare(`UPDATE runs SET status = 'scheduled', scheduled_for = ? WHERE id = ?`)
       .run(HOUR_AGO(), run.id);
 
-    const payload = getNextWorkflowRun(org.id)!;
+    const payload = claim(localRunner())!;
     expect(payload.run.id).toBe(run.id);
     expect(getRunById(run.id)!.status).toBe("running");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Stale-run timeout-fail — present in getNextWorkflowRun, absent in peek
+// Stale-run reaping — claim AND peek both reap (peekClaim calls reapStaleRuns)
 // ---------------------------------------------------------------------------
 describe("workflow stale-run reaping", () => {
   function staleRunningRun() {
@@ -156,10 +154,10 @@ describe("workflow stale-run reaping", () => {
     return { org, wf, run };
   }
 
-  it("getNextWorkflowRun fails a run that ran past its timeout and records a system note", () => {
-    const { org, run } = staleRunningRun();
+  it("claim fails a run that ran past its timeout and records a system note", () => {
+    const { run } = staleRunningRun();
 
-    getNextWorkflowRun(org.id);
+    claim(localRunner());
 
     expect(getRunById(run.id)!.status).toBe("failed");
     const activity = listRunActivity(run.id);
@@ -168,14 +166,16 @@ describe("workflow stale-run reaping", () => {
     );
   });
 
-  it("peekWorkflowNext is read-only — it does NOT reap a stale run", () => {
-    const { org, run } = staleRunningRun();
+  it("peek also reaps a stale run, then reports nothing claimable", () => {
+    const { run } = staleRunningRun();
 
-    const peek = peekWorkflowNext(org.id);
+    const result = peek(localRunner());
 
-    expect(getRunById(run.id)!.status).toBe("running"); // untouched
-    expect(peek.available).toBe(false);
-    expect(peek.reason).toBe("nothing_to_do");
+    // In the unified model peekClaim runs the same reaper as the claim path,
+    // so a stale run is failed even on a read-only availability check.
+    expect(getRunById(run.id)!.status).toBe("failed");
+    expect(result.available).toBe(false);
+    expect(result.reason).toBe("nothing_to_do");
   });
 });
 
@@ -223,42 +223,21 @@ describe("buildRunPayload: workflow run shape", () => {
 });
 
 // ---------------------------------------------------------------------------
-// authenticateWorkflowRunner — disabled runners must be rejected
-// ---------------------------------------------------------------------------
-describe("authenticateWorkflowRunner", () => {
-  it("authenticates an enabled runner and rejects it once disabled", () => {
-    const org = createOrg("Acme")!;
-    const runner = createWorkflowRunner(org.id, "CI");
-
-    expect(authenticateWorkflowRunner(runner.apiKey)?.id).toBe(runner.id);
-
-    getDb().prepare(`UPDATE workflow_runners SET enabled = 0 WHERE id = ?`).run(runner.id);
-
-    expect(authenticateWorkflowRunner(runner.apiKey)).toBeNull();
-  });
-
-  it("rejects an unknown key", () => {
-    createOrg("Acme");
-    expect(authenticateWorkflowRunner("hwf_nope")).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Claim-race hardening — the guarded UPDATE makes a lost claim a no-op
 // ---------------------------------------------------------------------------
 describe("claim-race guard", () => {
   it("a guarded scheduled-claim UPDATE only wins once (second attempt is a no-op)", () => {
-    // Mirrors the claim guard in getNextWorkflowRun/getAgentNextRun: two runners
-    // can both SELECT a 'scheduled' run, but only the one whose UPDATE still sees
-    // status='scheduled' wins. The loser sees changes === 0 and backs off.
+    // Mirrors the claim guard in claimNextRun: two runners can both SELECT a
+    // 'scheduled' run, but only the one whose UPDATE still sees status='scheduled'
+    // wins. The loser sees changes === 0 and backs off.
     const { wf } = workflowJob();
     const run = createRun(wf.id, null)!;
     const db = getDb();
     db.prepare(`UPDATE runs SET status = 'scheduled' WHERE id = ?`).run(run.id);
 
-    const claim = `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`;
-    const first = db.prepare(claim).run(run.id);
-    const second = db.prepare(claim).run(run.id);
+    const claimSql = `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`;
+    const first = db.prepare(claimSql).run(run.id);
+    const second = db.prepare(claimSql).run(run.id);
 
     expect(first.changes).toBe(1);
     expect(second.changes).toBe(0);

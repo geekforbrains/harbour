@@ -6,6 +6,7 @@ import { orgIdForProject } from "./access";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { listPinnedDocIds } from "./docs";
 import { linkEnvVarToJob, listPinnedEnvVarIds } from "./env-vars";
+import { resolveRunPlacement } from "./runs";
 import { getDb } from "./schema";
 import { getTimezone } from "./settings";
 import { linkTableToJob, listPinnedTableIds } from "./tables";
@@ -81,8 +82,8 @@ export function createJob(
 /**
  * Create a workflow job. Dual-tier like docs/env_vars/tables: pass projectId
  * for a project-level workflow, or null for an org-level one shared across the
- * org's workflow runners. Scope is fixed at creation — updateJob cannot move a
- * job between tiers. Agent jobs are always project-level (see createJob).
+ * org. Scope is fixed at creation — updateJob cannot move a job between tiers.
+ * Agent jobs are always project-level (see createJob).
  */
 export function createWorkflow(
   orgId: string,
@@ -93,6 +94,7 @@ export function createWorkflow(
     schedule: string;
     workflow: Gate;
     timeoutMinutes?: number;
+    placement?: string;
     docIds?: string[];
     envVarIds?: string[];
     tableIds?: string[];
@@ -103,11 +105,12 @@ export function createWorkflow(
   const id = uuid();
   const nextRunAt =
     data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
+  const placement = data.placement?.trim() || "local";
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, timeout_minutes, active, next_run_at)
-      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, placement, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       orgId,
@@ -117,6 +120,7 @@ export function createWorkflow(
       data.schedule,
       data.workflow.runtime,
       data.workflow.content,
+      placement,
       data.timeoutMinutes ?? 30,
       data.active !== false ? 1 : 0,
       nextRunAt,
@@ -257,6 +261,7 @@ export function updateJob(
     thinking?: string;
     titleFormat?: string;
     timeoutMinutes?: number;
+    placement?: string;
     docIds?: string[];
     envVarIds?: string[];
     tableIds?: string[];
@@ -314,6 +319,12 @@ export function updateJob(
   if (data.timeoutMinutes !== undefined) {
     fields.push("timeout_minutes = ?");
     values.push(data.timeoutMinutes);
+  }
+  if (data.placement !== undefined) {
+    // Workflow jobs route by their own placement; agent jobs inherit the agent's
+    // (this is a no-op for them).
+    fields.push("placement = ?");
+    values.push(data.placement.trim() || "local");
   }
 
   if (data.active !== undefined) {
@@ -378,27 +389,32 @@ export function deleteJob(id: string) {
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
   const job = db
-    .prepare(`SELECT id, org_id, project_id, agent_id, name FROM jobs WHERE id = ?`)
+    .prepare(`SELECT id, org_id, project_id, agent_id, name, placement FROM jobs WHERE id = ?`)
     .get(jobId) as any;
   if (!job) return null;
 
   const runId = uuid();
   const now = Math.floor(Date.now() / 1000);
   const title = defaultRunTitle(job.name, now);
+  // Denormalize placement onto the run: agent runs route by their agent's
+  // placement, workflow runs by the job's. Shared resolver keeps this in lockstep
+  // with createRun's recurring-materialization path.
+  const placement = resolveRunPlacement(job.agent_id || null, job.placement);
 
   // Run + its seeded activity log must land atomically (repo convention: run
   // creation is transactional) — otherwise a failed activity insert leaves a
   // scheduled run with silently-dropped instructions.
   db.transaction(() => {
     db.prepare(`
-      INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, scheduled_for, extra_instructions, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, placement, scheduled_for, extra_instructions, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
     `).run(
       runId,
       job.org_id,
       job.project_id,
       jobId,
       job.agent_id || null,
+      placement,
       now,
       extraInstructions || null,
       title,

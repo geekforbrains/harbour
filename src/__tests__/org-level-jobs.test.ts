@@ -18,7 +18,6 @@ import {
   getComposedTablesForJob,
   getDecryptedEnvVarsForJob,
   getJobById,
-  getNextWorkflowRun,
   linkDocToJob,
   linkEnvVarToJob,
   linkTableToJob,
@@ -28,6 +27,7 @@ import {
   updateJob,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { claim, localRunner } from "./support/claim";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -350,7 +350,7 @@ describe("listAllJobs dual-tier", () => {
 });
 
 // ===========================================================================
-// getNextWorkflowRun — org-level workflows are claimable, runs are dual-tier
+// Unified claim — org-level workflows are claimable, runs are dual-tier
 // ===========================================================================
 
 describe("org-level workflow runs", () => {
@@ -364,7 +364,7 @@ describe("org-level workflow runs", () => {
   it("claims an org-level workflow run with org_id set and project_id NULL", () => {
     const { org, wf } = dueOrgWorkflow();
 
-    const payload = getNextWorkflowRun(org.id)!;
+    const payload = claim()!;
     expect(payload.job.id).toBe(wf.id);
     expect(payload.job.kind).toBe("workflow");
 
@@ -376,15 +376,23 @@ describe("org-level workflow runs", () => {
     expect(run.status).toBe("running");
   });
 
-  it("another org's runner cannot claim it", () => {
+  it("a runner scoped to another org cannot claim it", () => {
     dueOrgWorkflow();
     const otherOrg = createOrg("Rival")!;
-    expect(getNextWorkflowRun(otherOrg.id)).toBeNull();
+    // Execution is org-agnostic: a plain local runner would claim across all
+    // orgs. The old per-org getNextWorkflowRun(otherOrg) maps to a remote runner
+    // scoped to that org, which the jScope filter keeps off Acme's work.
+    const otherRunner = localRunner({
+      tier: "remote",
+      labels: ["local"],
+      scope: { orgId: otherOrg.id },
+    });
+    expect(claim(otherRunner)).toBeNull();
   });
 
   it("org-level runs appear in project-filtered run lists (dual-tier display)", () => {
     const { org, project } = dueOrgWorkflow();
-    const payload = getNextWorkflowRun(org.id)!;
+    const payload = claim()!;
 
     const running = (listRunningRuns(org.id, project.id) as { id: string }[]).map((r) => r.id);
     expect(running).toContain(payload.run.id);

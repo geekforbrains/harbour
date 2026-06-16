@@ -3,7 +3,6 @@ import { withResourceAuth } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
 import { deleteAgent, getAgentById, getAgentWorkspace, updateAgent } from "@/lib/db/queries";
 import { optionalBoolean, optionalString, readJson } from "@/lib/http";
-import { loadRunners, removeRunnerConfig, saveRunnerConfig } from "@/lib/runners";
 
 export const GET = withResourceAuth("agent", "id", { role: "viewer" })(
   async (_req, _auth, { params }) => {
@@ -29,6 +28,7 @@ export const PUT = withResourceAuth("agent", "id", { role: "editor" })(
     const color = optionalString(body.color, "color");
     const thinking = optionalString(body.thinking, "thinking");
     const eager = optionalBoolean(body.eager, "eager");
+    const placement = optionalString(body.placement, "placement");
     // `remote` is accepted but not a stored agent field — validate it anyway so a
     // wrong-typed value is a clean 400 rather than silently ignored.
     optionalBoolean(body.remote, "remote");
@@ -47,26 +47,19 @@ export const PUT = withResourceAuth("agent", "id", { role: "editor" })(
       if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
     }
 
-    const updates = { name, description, cli, model, thinking, color, eager };
+    const updates = {
+      name,
+      description,
+      cli,
+      model,
+      thinking,
+      color,
+      eager,
+      placement: placement ?? undefined,
+    };
     const updated = updateAgent(id, updates);
-
-    // Sync runner config when any synced field changed.
-    if (
-      model !== undefined ||
-      name !== undefined ||
-      thinking !== undefined ||
-      eager !== undefined
-    ) {
-      const runner = loadRunners().find((r) => r.agentId === id);
-      if (runner) {
-        if (model !== undefined) runner.model = model;
-        if (name !== undefined) runner.name = name;
-        if (thinking !== undefined) runner.thinking = thinking || null;
-        if (eager !== undefined) runner.eager = eager;
-        saveRunnerConfig(runner);
-      }
-    }
-
+    // No runner config to sync — the runner reads cli/model/thinking live from
+    // the claim payload, so dashboard edits take effect on the next claim.
     return NextResponse.json(updated);
   },
 );
@@ -75,7 +68,6 @@ export const DELETE = withResourceAuth("agent", "id", { role: "editor" })(
   async (_req, _auth, { params }) => {
     const { id } = await params;
     deleteAgent(id);
-    removeRunnerConfig(id);
     return NextResponse.json({ ok: true });
   },
 );

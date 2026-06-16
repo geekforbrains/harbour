@@ -10,7 +10,7 @@ matches what you're doing; you don't read it top to bottom.
 | [concepts/](concepts/) | Mental models — how the pieces fit, in prose | You're building intuition for a feature |
 | [guides/](guides/) | Step-by-step how-tos | You're setting something up |
 | [reference/](reference/) | The *how* — architecture, schema, API surface, design language | You're changing the code |
-| [guide.md](guide.md) · [admin-guide.md](admin-guide.md) | The on-the-wire contracts, served live at `/api/guide` and `/api/admin-guide` | You're integrating an agent and need exact payloads |
+| [guide.md](guide.md) · [admin-guide.md](admin-guide.md) · [runner-guide.md](runner-guide.md) | The on-the-wire contracts, served live at `/api/guide`, `/api/admin-guide`, and `/api/runner-guide` (the Runner Protocol) | You're integrating an agent or a runner and need exact payloads |
 | [changelog.md](../changelog.md) | Release history | You want to know what changed |
 
 **One fact, one home.** Each fact lives in exactly one of these; everything else
@@ -20,7 +20,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 
 ## Concepts — how the pieces fit
 
-- [Agents](concepts/agents.md) — external vs. harbour, polling, the work-claim model
+- [Agents](concepts/agents.md) — what an agent is, placement, and how runners claim its work
 - [Jobs and runs](concepts/jobs-and-runs.md) — schedules, the lifecycle, retries
 - [Workflows](concepts/workflows.md) — deterministic shell-command jobs and agent prerun gates
 - [Projects](concepts/projects.md) — orgs, projects, and where work lives
@@ -31,7 +31,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 ## Guides — set it up
 
 - [Getting started](guides/getting-started.md) — first agent, first job, end to end
-- [Running a runner on a different machine](guides/run-on-different-machine.md) — remote agents over Tailscale or similar
+- [Running a runner on a different machine](guides/run-on-different-machine.md) — minting + enrolling a remote runner (e.g. over Tailscale)
 - [Deploying to production](guides/deploy-to-production.md) — Linux/systemd with a TLS proxy in front
 
 ## Reference — change the code

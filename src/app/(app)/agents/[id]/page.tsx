@@ -7,8 +7,6 @@ import {
   Brain,
   Briefcase,
   Calendar,
-  Check,
-  Copy,
   Cpu,
   Folder,
   Settings,
@@ -41,7 +39,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
-import { apiFetch } from "@/lib/api/client";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import {
@@ -54,9 +51,9 @@ import {
 import { statusStyle } from "@/lib/status";
 import { timeAgo } from "@/lib/time";
 
-// Every v2 agent is a harbour CLI agent. There is no `type` or per-agent
-// `remote` flag — any agent can run on another machine via the runtime, so the
-// connect-runner command is always available.
+// Every v2 agent is a harbour CLI agent. Where it runs is controlled by
+// `placement` — a label routed to whichever runner advertises it. Remote runners
+// are minted in Settings → Runners, not per-agent.
 type Agent = {
   id: string;
   name: string;
@@ -68,7 +65,8 @@ type Agent = {
   thinking: string | null;
   color: string | null;
   eager: number | null;
-  remote: number | null;
+  /** Runner label this agent's runs route to; defaults to "local". */
+  placement: string | null;
   last_polled_at: number | null;
   created_at: number;
   /** Slug path segments for the agent's on-disk workspace on the runner. */
@@ -127,9 +125,7 @@ export default function AgentDetailPage() {
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editEager, setEditEager] = useState(false);
-  const [showConnect, setShowConnect] = useState(false);
-  const [connectKey, setConnectKey] = useState<string | null>(null);
-  const [connectCopied, setConnectCopied] = useState(false);
+  const [editPlacement, setEditPlacement] = useState("");
 
   async function handleUpdateAgent() {
     try {
@@ -140,6 +136,7 @@ export default function AgentDetailPage() {
         model: editModel,
         thinking: editThinking,
         eager: editEager,
+        placement: editPlacement.trim() || "local",
       });
     } catch {
       return; // surfaced inline from updateAgent.error; leave dialog open
@@ -157,37 +154,6 @@ export default function AgentDetailPage() {
       return;
     }
     router.push("/agents");
-  }
-
-  async function handleGenerateConnect() {
-    try {
-      const data = await apiFetch<{ apiKey: string }>(`/api/agents/${id}/rotate-key`, {
-        method: "POST",
-      });
-      setConnectKey(data.apiKey);
-    } catch {
-      alert("Failed to generate connect command");
-    }
-  }
-
-  function connectCommand() {
-    if (!agent || !connectKey || typeof window === "undefined") return "";
-    // Identity-only blob — cli/model/thinking come live from /next.
-    const payload = {
-      url: window.location.origin,
-      agentId: agent.id,
-      apiKey: connectKey,
-      name: agent.name,
-    };
-    return `npm run harbour -- agent connect ${btoa(JSON.stringify(payload))}`;
-  }
-
-  function handleCopyConnect() {
-    const cmd = connectCommand();
-    if (!cmd) return;
-    navigator.clipboard.writeText(cmd);
-    setConnectCopied(true);
-    setTimeout(() => setConnectCopied(false), 2000);
   }
 
   if (loading) return <PageLoading />;
@@ -217,11 +183,6 @@ export default function AgentDetailPage() {
                   {agent.cli}
                 </span>
               )}
-              {agent.remote ? (
-                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                  remote
-                </span>
-              ) : null}
             </div>
             {agent.description && (
               <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>
@@ -234,25 +195,13 @@ export default function AgentDetailPage() {
             size="icon"
             className="h-8 w-8"
             onClick={() => {
-              setConnectKey(null);
-              setConnectCopied(false);
-              setShowConnect(true);
-            }}
-            title="Connect Runner"
-          >
-            <Wifi className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => {
               setEditName(agent.name);
               setEditDesc(agent.description || "");
               setEditColor(agent.color || "");
               setEditModel(agent.model || "");
               setEditThinking(agent.thinking || "");
               setEditEager(!!agent.eager);
+              setEditPlacement(agent.placement || "local");
               updateAgent.reset();
               setShowSettings(true);
             }}
@@ -310,6 +259,11 @@ export default function AgentDetailPage() {
           </div>
         )}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Runs on another machine? Mint a runner in Settings → Runners and enroll it with{" "}
+        <code>harbour connect</code>.
+      </p>
 
       {/* Jobs */}
       <section>
@@ -510,6 +464,18 @@ export default function AgentDetailPage() {
                 </div>
               </label>
             </div>
+            <div className="space-y-1">
+              <Label>Placement</Label>
+              <Input
+                value={editPlacement}
+                onChange={(e) => setEditPlacement(e.target.value)}
+                placeholder="local"
+              />
+              <p className="text-xs text-muted-foreground">
+                Runner label this agent's runs route to. Leave as <code>local</code> for the local
+                runner; use a custom label to target a runner minted in Settings → Runners.
+              </p>
+            </div>
             {updateAgent.isError && (
               <p className="text-xs text-destructive">
                 {mutationErrorMessage(updateAgent.error, "Failed to update agent")}
@@ -525,76 +491,6 @@ export default function AgentDetailPage() {
             </Button>
             <Button onClick={handleUpdateAgent}>Save</Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Connect Runner Dialog — any agent can run on another machine. Generating
-          a command rotates the API key, which embeds in the connect blob. */}
-      <Dialog
-        open={showConnect}
-        onOpenChange={(open) => {
-          setShowConnect(open);
-          if (!open) {
-            setConnectKey(null);
-            setConnectCopied(false);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Connect Runner</DialogTitle>
-          </DialogHeader>
-          {connectKey ? (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Run this on the target machine. The command embeds a fresh API key — any
-                previously-connected runner for this agent has been invalidated.
-              </p>
-              <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
-                {connectCommand()}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                The command contains the agent API key. Treat it like a password. Prerun/postrun
-                gate scripts are stored in Harbour and materialized onto the runner automatically —
-                just make sure their runtime (bash, python3, or node) is installed on that machine.
-              </p>
-              <DialogFooter>
-                <Button variant="outline" onClick={handleCopyConnect}>
-                  {connectCopied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-1.5" /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 mr-1.5" /> Copy Command
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowConnect(false);
-                    setConnectKey(null);
-                  }}
-                >
-                  Done
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {agent.remote
-                  ? "Generate a connect command to register (or re-register) the machine that runs this agent. This rotates the API key — any previously-connected runner stops working until you reconnect it with the new command."
-                  : "This agent runs on the local machine. Generating a connect command lets you run it elsewhere instead — it rotates the API key, so the local runner stops picking it up until reconnected."}
-              </p>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setShowConnect(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleGenerateConnect}>Generate Command</Button>
-              </DialogFooter>
-            </div>
-          )}
         </DialogContent>
       </Dialog>
     </div>

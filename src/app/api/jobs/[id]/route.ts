@@ -41,6 +41,9 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
     if (body.timeoutMinutes !== undefined) {
       body.timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
     }
+    if (body.placement !== undefined) {
+      body.placement = optionalString(body.placement, "placement") ?? undefined;
+    }
     if (body.schedule) {
       const normalized = normalizeSchedule(body.schedule);
       if (!normalized) {

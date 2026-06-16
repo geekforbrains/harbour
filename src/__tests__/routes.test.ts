@@ -12,13 +12,14 @@ import { POST as jobTablesPOST } from "@/app/api/jobs/[id]/tables/route";
 import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { PUT as orgsPUT } from "@/app/api/orgs/route";
+import { POST as claimPOST } from "@/app/api/runner/claim/route";
+import { DELETE as runnerDELETE } from "@/app/api/runners/[id]/route";
+import { GET as runnersGET, POST as runnersPOST } from "@/app/api/runners/route";
 import { POST as activityPOST } from "@/app/api/runs/[id]/activity/route";
 import { DELETE as runDELETE, GET as runGET } from "@/app/api/runs/[id]/route";
 import { GET as runStatusGET, PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
 import { GET as runsHistoryGET } from "@/app/api/runs/history/route";
 import { GET as runsGET } from "@/app/api/runs/route";
-import { POST as workflowRunnersPOST } from "@/app/api/workflow-runners/route";
-import { GET as workflowsNextGET } from "@/app/api/workflows/next/route";
 import {
   addMembership,
   createAgent,
@@ -28,12 +29,13 @@ import {
   createOrg,
   createProject,
   createRun,
+  createRunner,
   createSession,
   createTable,
   createUser,
   createWorkflow,
-  createWorkflowRunner,
   getOrgSettings,
+  mintExecToken,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
@@ -69,11 +71,30 @@ function agentReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest 
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
-function workflowRunnerReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
+/** A request carrying any bearer token (runner token or run exec token). */
+function bearerReq(token: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${apiKey}`);
+  headers.set("authorization", `Bearer ${token}`);
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
+
+/** Mint a run's exec token (the credential the runner/CLI use for its lifecycle). */
+function execToken(runId: string): string {
+  return mintExecToken(runId);
+}
+
+/** A JSON body wrapping advertised runner capabilities for a claim POST. */
+function claimBody(caps?: Partial<{ kinds: string[]; clis: string[]; labels: string[] }>): string {
+  return JSON.stringify({
+    capabilities: {
+      kinds: caps?.kinds ?? ["agent", "workflow"],
+      clis: caps?.clis ?? ["claude", "codex", "gemini"],
+      labels: caps?.labels ?? ["local"],
+    },
+  });
+}
+
+const JSON_HEADERS = { "content-type": "application/json" };
 
 function ctx(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
@@ -258,11 +279,11 @@ describe("cross-org isolation (negative tests)", () => {
     expect(ids).not.toContain(other.run.id);
   });
 
-  it("GET /api/workflows/next requires workflow-runner auth and respects org scope", async () => {
-    const { agent: agentA } = fixture(); // org-A agent
-    const other = otherOrgFixture();
+  it("POST /api/runner/claim: an org-scoped remote runner ignores other orgs' work", async () => {
+    fixture(); // org A (no due work)
+    const other = otherOrgFixture(); // org B
 
-    // Make org-B a ready workflow job, due in the past.
+    // org B has a ready workflow job, due in the past.
     const db = getDb();
     const wfJobId = createWorkflow(other.org.id, other.project.id, {
       name: "wf",
@@ -271,38 +292,49 @@ describe("cross-org isolation (negative tests)", () => {
     })!.id;
     db.prepare(`UPDATE jobs SET next_run_at = 1 WHERE id = ?`).run(wfJobId);
 
-    const agentRes = await workflowsNextGET(
-      agentReq(agentA.apiKey, "http://x/api/workflows/next"),
+    // A remote runner scoped to org B's sibling (a different org) must not see it.
+    const elsewhere = createOrg("Elsewhere")!;
+    const scopedAway = createRunner({
+      name: "Away",
+      tier: "remote",
+      labels: ["local"],
+      scope: { orgId: elsewhere.id },
+    });
+    const awayRes = await claimPOST(
+      bearerReq(scopedAway.token, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody(),
+        headers: JSON_HEADERS,
+      }),
       ctx({}),
     );
-    expect(agentRes.status).toBe(403);
+    expect(awayRes.status).toBe(200);
+    expect((await awayRes.json()).run).toBeNull();
+    expect(
+      (db.prepare(`SELECT COUNT(*) n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number }).n,
+    ).toBe(0);
 
-    const runnerA = createWorkflowRunner(other.org.id, "Server")!;
-    const peekRes = await workflowsNextGET(
-      workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next?peek=true"),
-      ctx({}),
-    );
-    expect(peekRes.status).toBe(200);
-    const peekBody = await peekRes.json();
-    expect(peekBody.available).toBe(true);
-    const afterPeek = db
-      .prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`)
-      .get(wfJobId) as { n: number };
-    expect(afterPeek.n).toBe(0);
-
-    const res = await workflowsNextGET(
-      workflowRunnerReq(runnerA.apiKey, "http://x/api/workflows/next"),
+    // A remote runner scoped to org B claims it.
+    const scopedB = createRunner({
+      name: "B-only",
+      tier: "remote",
+      labels: ["local"],
+      scope: { orgId: other.org.id },
+    });
+    const res = await claimPOST(
+      bearerReq(scopedB.token, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody(),
+        headers: JSON_HEADERS,
+      }),
       ctx({}),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.run).toBeDefined();
     expect(body.job.kind).toBe("workflow");
-
-    const claimed = db.prepare(`SELECT COUNT(*) as n FROM runs WHERE job_id = ?`).get(wfJobId) as {
-      n: number;
-    };
-    expect(claimed.n).toBe(1);
+    expect(
+      (db.prepare(`SELECT COUNT(*) n FROM runs WHERE job_id = ?`).get(wfJobId) as { n: number }).n,
+    ).toBe(1);
   });
 
   it("rejects linking an org-B doc to an org-A job", async () => {
@@ -390,15 +422,31 @@ describe("POST /api/runs/[id]/activity (viewer may comment)", () => {
     expect(res.status).toBe(201);
   });
 
-  it("the run's own agent can post activity", async () => {
-    const { run, agent } = fixture();
-    const req = agentReq(agent.apiKey, "http://x/", {
+  it("the run's executor can post activity", async () => {
+    const { run } = fixture();
+    const req = bearerReq(execToken(run.id), "http://x/", {
       method: "POST",
       body: JSON.stringify({ content: "working" }),
-      headers: { "content-type": "application/json" },
+      headers: JSON_HEADERS,
     });
     const res = await activityPOST(req, ctx({ id: run.id }));
     expect(res.status).toBe(201);
+  });
+
+  it("an exec token cannot post to a different run's thread (403)", async () => {
+    const { project, run } = fixture();
+    const otherJob = createJob(project.id, createAgent(project.id, "DevB").id, {
+      name: "K",
+      schedule: '{"every":60}',
+    })!;
+    const otherRun = createRun(otherJob.id, null)!;
+    const req = bearerReq(execToken(otherRun.id), "http://x/", {
+      method: "POST",
+      body: JSON.stringify({ content: "intruder" }),
+      headers: JSON_HEADERS,
+    });
+    const res = await activityPOST(req, ctx({ id: run.id }));
+    expect(res.status).toBe(403);
   });
 
   it("an outsider cannot comment", async () => {
@@ -468,10 +516,10 @@ describe("job creation: workflows vs agent prerun gates", () => {
   });
 });
 
-describe("workflow run reporting", () => {
-  // Workflow runs have agent_id = null. A workflow runner scoped to the org
-  // can report their status even though no agent owns them.
-  it("an in-org workflow runner can set status on a workflow run", async () => {
+describe("workflow run reporting (exec token)", () => {
+  // Workflow runs have agent_id = null. The run's executor (its exec token)
+  // reports status even though no agent owns the run.
+  it("the run's executor can set status on a workflow run", async () => {
     const { project } = fixture();
     const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
@@ -479,60 +527,38 @@ describe("workflow run reporting", () => {
       workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const run = createRun(wfJob.id, null)!;
-    const runner = createWorkflowRunner(project.org_id, "Server")!;
-    // status route is PUT
-    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", {
+    const putReq = bearerReq(execToken(run.id), "http://x/", {
       method: "PUT",
       body: JSON.stringify({ status: "done" }),
-      headers: { "content-type": "application/json" },
+      headers: JSON_HEADERS,
     });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(200);
   });
 
-  it("a workflow runner cannot set status on an agent run", async () => {
-    const { org, run } = fixture();
-    const runner = createWorkflowRunner(org.id, "Server")!;
-    const putReq = workflowRunnerReq(runner.apiKey, "http://x/", {
-      method: "PUT",
-      body: JSON.stringify({ status: "done" }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
-    expect(res.status).toBe(403);
-  });
-
-  it("an agent cannot set status on a workflow run", async () => {
-    const { project, agent } = fixture();
-    const wfJob = createWorkflow(project.org_id, project.id, {
-      name: "WF",
-      schedule: '{"every":60}',
-      workflow: { runtime: "bash", content: "echo hi" },
-    })!;
-    const run = createRun(wfJob.id, null)!;
+  it("an agent key cannot set run status (lifecycle is exec-token only)", async () => {
+    const { agent, run } = fixture();
     const putReq = agentReq(agent.apiKey, "http://x/", {
       method: "PUT",
       body: JSON.stringify({ status: "done" }),
-      headers: { "content-type": "application/json" },
+      headers: JSON_HEADERS,
     });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
   });
 
-  it("an out-of-org workflow runner cannot touch a workflow run", async () => {
-    const { project } = fixture();
+  it("an exec token for one run cannot set status on another run", async () => {
+    const { project, run } = fixture();
     const wfJob = createWorkflow(project.org_id, project.id, {
       name: "WF",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo hi" },
     })!;
-    const run = createRun(wfJob.id, null)!;
-    const other = otherOrgFixture();
-    const runner = createWorkflowRunner(other.org.id, "Other")!;
-    const putReq = new NextRequest("http://x/", {
+    const otherRun = createRun(wfJob.id, null)!;
+    const putReq = bearerReq(execToken(otherRun.id), "http://x/", {
       method: "PUT",
       body: JSON.stringify({ status: "done" }),
-      headers: { authorization: `Bearer ${runner.apiKey}`, "content-type": "application/json" },
+      headers: JSON_HEADERS,
     });
     const res = await runStatusPUT(putReq, ctx({ id: run.id }));
     expect(res.status).toBe(403);
@@ -540,18 +566,6 @@ describe("workflow run reporting", () => {
 });
 
 describe("agent self-ownership (within an org)", () => {
-  it("a workflow runner cannot trigger an agent job", async () => {
-    const { org, job } = fixture();
-    const runner = createWorkflowRunner(org.id, "Server")!;
-    const req = workflowRunnerReq(runner.apiKey, "http://x/", {
-      method: "POST",
-      body: JSON.stringify({}),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await jobTriggerPOST(req, ctx({ id: job.id }));
-    expect(res.status).toBe(403);
-  });
-
   it("an agent cannot trigger another agent's job in the same org", async () => {
     const { project, job } = fixture(); // job belongs to agent A
     const agentB = createAgent(project.id, "DevB"); // same project/org, different agent
@@ -577,20 +591,26 @@ describe("agent self-ownership (within an org)", () => {
 
   // Regression: the runner reads GET /api/runs/:id/status after a CLI exits to
   // see whether the agent set a final status. The full run detail (GET
-  // /api/runs/:id) is user/admin-only, so without this agent-readable endpoint
-  // the runner always read "running" and wrongly force-failed every run.
-  it("an agent can read its own run's status", async () => {
-    const { agent, run } = fixture();
-    const req = agentReq(agent.apiKey, "http://x/");
+  // /api/runs/:id) is user/admin-only, so without this executor-readable
+  // endpoint the runner always read "running" and wrongly force-failed every run.
+  it("the run's executor can read its own status", async () => {
+    const { run } = fixture();
+    const req = bearerReq(execToken(run.id), "http://x/");
     const res = await runStatusGET(req, ctx({ id: run.id }));
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe("running");
   });
 
-  it("an agent cannot read another agent's run status in the same org", async () => {
+  it("an exec token cannot read another run's status", async () => {
     const { project, run } = fixture();
-    const agentB = createAgent(project.id, "DevB");
-    const req = agentReq(agentB.apiKey, "http://x/");
+    const otherRun = createRun(
+      createJob(project.id, createAgent(project.id, "DevB").id, {
+        name: "K",
+        schedule: '{"every":60}',
+      })!.id,
+      null,
+    )!;
+    const req = bearerReq(execToken(otherRun.id), "http://x/");
     const res = await runStatusGET(req, ctx({ id: run.id }));
     expect(res.status).toBe(403);
   });
@@ -608,63 +628,136 @@ describe("agent self-ownership (within an org)", () => {
   });
 });
 
-describe("POST /api/workflow-runners (create runner)", () => {
-  it("editor creates a runner; the connect blob decodes to {url,runnerId,apiKey,name}", async () => {
-    const { org, editor } = fixture();
-    const req = userReq(editor.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
-      method: "POST",
-      body: JSON.stringify({ name: "CI", labels: ["linux"] }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await workflowRunnersPOST(req, ctx({}));
-    expect(res.status).toBe(201);
+describe("POST /api/runner/claim", () => {
+  it("a local runner claims a due agent run and gets an exec token", async () => {
+    const { project } = fixture();
+    const agent = createAgent(project.id, "ClaudeDev", undefined, { cli: "claude" });
+    const job = createJob(project.id, agent.id, { name: "Daily", schedule: '{"every":60}' })!;
+    getDb().prepare(`UPDATE jobs SET next_run_at = 1 WHERE id = ?`).run(job.id);
+
+    const runner = createRunner({ name: "Local", tier: "local" });
+    const res = await claimPOST(
+      bearerReq(runner.token, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody(),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.name).toBe("CI");
-    expect(body.connect).toMatch(/^npm run harbour -- workflow connect /);
-
-    const blob = body.connect.replace("npm run harbour -- workflow connect ", "");
-    const decoded = JSON.parse(Buffer.from(blob, "base64").toString("utf-8"));
-    expect(decoded).toMatchObject({
-      runnerId: body.id,
-      apiKey: body.apiKey,
-      name: "CI",
-    });
-    expect(typeof decoded.url).toBe("string");
+    expect(body.job.kind).toBe("agent");
+    expect(body.run.status).toBe("running");
+    expect(body.exec_token).toMatch(/^hbx_/);
+    // The exec token is the only credential surfaced — never the runner token.
+    expect(JSON.stringify(body)).not.toContain(runner.token);
   });
 
-  it("rejects an empty name with 400", async () => {
-    const { org, editor } = fixture();
-    const req = userReq(editor.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
-      method: "POST",
-      body: JSON.stringify({ name: "   " }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await workflowRunnersPOST(req, ctx({}));
+  it("returns { run: null } when nothing is due", async () => {
+    fixture();
+    const runner = createRunner({ name: "Local", tier: "local" });
+    const res = await claimPOST(
+      bearerReq(runner.token, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody(),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).run).toBeNull();
+  });
+
+  it("rejects a non-runner caller (agent key / user) with 403", async () => {
+    const { agent, editor } = fixture();
+    const agentRes = await claimPOST(
+      agentReq(agent.apiKey, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody({ kinds: ["workflow"], clis: [] }),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(agentRes.status).toBe(403);
+    const userRes = await claimPOST(
+      userReq(editor.id, "http://x/api/runner/claim", {
+        method: "POST",
+        body: claimBody({ kinds: ["workflow"], clis: [] }),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(userRes.status).toBe(403);
+  });
+
+  it("rejects a missing/invalid capabilities body with 400", async () => {
+    const runner = createRunner({ name: "Local", tier: "local" });
+    const res = await claimPOST(
+      bearerReq(runner.token, "http://x/api/runner/claim", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
     expect(res.status).toBe(400);
-  });
-
-  it("a viewer cannot create a runner (editor role enforced)", async () => {
-    const { org, viewer } = fixture();
-    const req = userReq(viewer.id, `http://x/api/workflow-runners?orgId=${org.id}`, {
-      method: "POST",
-      body: JSON.stringify({ name: "CI" }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await workflowRunnersPOST(req, ctx({}));
-    expect(res.status).toBe(403);
   });
 });
 
-describe("POST /api/runs/:id/activity (workflow_runner guard)", () => {
-  it("a workflow runner cannot post to an agent run's thread (403)", async () => {
-    const { org, run } = fixture(); // run belongs to an agent job (kind 'agent')
-    const runner = createWorkflowRunner(org.id, "CI");
-    const req = workflowRunnerReq(runner.apiKey, "http://x/", {
-      method: "POST",
-      body: JSON.stringify({ content: "hello" }),
-      headers: { "content-type": "application/json" },
-    });
-    const res = await activityPOST(req, ctx({ id: run.id }));
-    expect(res.status).toBe(403);
+describe("/api/runners (mint remote runner credentials — instance admin)", () => {
+  it("an admin mints a labeled/scoped remote runner; the connect blob decodes to {url,token,name}", async () => {
+    const { org } = fixture();
+    const admin = createUser("admin@x.com", "pw", "Admin", { isInstanceAdmin: true })!;
+    const res = await runnersPOST(
+      userReq(admin.id, "http://x/api/runners", {
+        method: "POST",
+        body: JSON.stringify({ name: "GPU box", labels: ["gpu"], scope: { orgId: org.id } }),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.tier).toBe("remote");
+    expect(body.labels).toEqual(["gpu"]);
+    expect(body.token).toMatch(/^hbrn_/);
+    expect(body.connect).toMatch(/^npm run harbour -- connect /);
+    const blob = body.connect.replace("npm run harbour -- connect ", "");
+    const decoded = JSON.parse(Buffer.from(blob, "base64").toString("utf-8"));
+    expect(decoded).toMatchObject({ token: body.token, name: "GPU box" });
+    expect(typeof decoded.url).toBe("string");
+  });
+
+  it("lists runners (no token leaks) and revokes one; non-admins are forbidden", async () => {
+    const { editor } = fixture();
+    const admin = createUser("admin@x.com", "pw", "Admin", { isInstanceAdmin: true })!;
+    const minted = createRunner({ name: "Box", tier: "remote", labels: ["gpu"] });
+
+    // A non-admin (org editor) cannot mint, list, or revoke.
+    const editorMint = await runnersPOST(
+      userReq(editor.id, "http://x/api/runners", {
+        method: "POST",
+        body: JSON.stringify({ name: "X" }),
+        headers: JSON_HEADERS,
+      }),
+      ctx({}),
+    );
+    expect(editorMint.status).toBe(403);
+
+    const listRes = await runnersGET(userReq(admin.id, "http://x/api/runners"), ctx({}));
+    expect(listRes.status).toBe(200);
+    const list = await listRes.json();
+    expect(list.some((r: { id: string }) => r.id === minted.id)).toBe(true);
+    for (const r of list) expect(r.token).toBeUndefined();
+
+    const del = await runnerDELETE(
+      userReq(admin.id, "http://x/", { method: "DELETE" }),
+      ctx({ id: minted.id }),
+    );
+    expect(del.status).toBe(200);
+    const after = await (
+      await runnersGET(userReq(admin.id, "http://x/api/runners"), ctx({}))
+    ).json();
+    expect(after.some((r: { id: string }) => r.id === minted.id)).toBe(false);
   });
 });

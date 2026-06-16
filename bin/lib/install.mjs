@@ -7,20 +7,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const harbourBin = path.resolve(__dirname, "..", "harbour.mjs");
 
-const PLIST_LABEL = "com.harbour.agent-runner";
-const WORKFLOW_PLIST_LABEL = "com.harbour.workflow-runner";
+const PLIST_LABEL = "com.harbour.runner";
 const PLIST_PATH = path.join(os.homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
-const WORKFLOW_PLIST_PATH = path.join(
-  os.homedir(),
-  "Library",
-  "LaunchAgents",
-  `${WORKFLOW_PLIST_LABEL}.plist`,
-);
 const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 const LOG_PATH = path.join(HARBOUR_DIR, "runner.log");
 const ERR_LOG_PATH = path.join(HARBOUR_DIR, "runner.err.log");
-const WORKFLOW_LOG_PATH = path.join(HARBOUR_DIR, "workflow-runner.log");
-const WORKFLOW_ERR_LOG_PATH = path.join(HARBOUR_DIR, "workflow-runner.err.log");
 
 // Resolve node path
 let nodePath;
@@ -30,31 +21,27 @@ try {
   nodePath = process.execPath;
 }
 
-function buildPlist({
-  label = PLIST_LABEL,
-  args = ["agent", "run"],
-  logPath = LOG_PATH,
-  errLogPath = ERR_LOG_PATH,
-} = {}) {
-  // launchd runs in the user's login session — full keychain & env access
+function buildPlist() {
+  // launchd runs in the user's login session — full keychain & env access. One
+  // service, `harbour run`, claims and drains all due work each tick.
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${label}</string>
+  <string>${PLIST_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${nodePath}</string>
     <string>${harbourBin}</string>
-    ${args.map((arg) => `<string>${arg}</string>`).join("\n    ")}
+    <string>run</string>
   </array>
   <key>StartInterval</key>
   <integer>60</integer>
   <key>StandardOutPath</key>
-  <string>${logPath}</string>
+  <string>${LOG_PATH}</string>
   <key>StandardErrorPath</key>
-  <string>${errLogPath}</string>
+  <string>${ERR_LOG_PATH}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -66,76 +53,35 @@ function buildPlist({
 </plist>`;
 }
 
-function installLaunchAgent({ plistPath, label, args, logPath, errLogPath, noun, command }) {
-  if (fs.existsSync(plistPath)) {
-    console.log(`Harbour ${noun} runner is already installed.`);
-    console.log(`To reinstall, run: harbour ${command} uninstall && harbour ${command} install`);
-    return;
-  }
-
-  // Ensure log directory exists
-  const logDir = path.dirname(logPath);
-  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-
-  // Write plist
-  fs.writeFileSync(plistPath, buildPlist({ label, args, logPath, errLogPath }));
-
-  // Load with launchctl
-  try {
-    execSync(`launchctl load ${plistPath}`, { stdio: "inherit" });
-  } catch {
-    console.error(`Failed to load launch agent. Try manually: launchctl load ${plistPath}`);
-    return;
-  }
-
-  console.log(`Installed. Harbour ${noun} runner will be polled every 60 seconds.`);
-  console.log(`Logs: ${logPath}`);
-}
-
-function uninstallLaunchAgent({ plistPath, noun }) {
-  if (!fs.existsSync(plistPath)) {
-    console.log(`Harbour ${noun} runner is not installed.`);
-    return;
-  }
-
-  try {
-    execSync(`launchctl unload ${plistPath}`, { stdio: "inherit" });
-  } catch {
-    /* may already be unloaded */
-  }
-
-  fs.unlinkSync(plistPath);
-  console.log(`Uninstalled. Harbour ${noun} runner removed.`);
-}
-
 export function installRunner() {
-  installLaunchAgent({
-    plistPath: PLIST_PATH,
-    label: PLIST_LABEL,
-    args: ["agent", "run"],
-    logPath: LOG_PATH,
-    errLogPath: ERR_LOG_PATH,
-    noun: "agent",
-    command: "agent",
-  });
+  if (fs.existsSync(PLIST_PATH)) {
+    console.log("Harbour runner is already installed.");
+    console.log("To reinstall, run: harbour uninstall && harbour install");
+    return;
+  }
+  const logDir = path.dirname(LOG_PATH);
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(PLIST_PATH, buildPlist());
+  try {
+    execSync(`launchctl load ${PLIST_PATH}`, { stdio: "inherit" });
+  } catch {
+    console.error(`Failed to load launch agent. Try manually: launchctl load ${PLIST_PATH}`);
+    return;
+  }
+  console.log("Installed. Harbour runner will poll for work every 60 seconds.");
+  console.log(`Logs: ${LOG_PATH}`);
 }
 
 export function uninstallRunner() {
-  uninstallLaunchAgent({ plistPath: PLIST_PATH, noun: "agent" });
-}
-
-export function installWorkflowRunner() {
-  installLaunchAgent({
-    plistPath: WORKFLOW_PLIST_PATH,
-    label: WORKFLOW_PLIST_LABEL,
-    args: ["workflow", "run"],
-    logPath: WORKFLOW_LOG_PATH,
-    errLogPath: WORKFLOW_ERR_LOG_PATH,
-    noun: "workflow",
-    command: "workflow",
-  });
-}
-
-export function uninstallWorkflowRunner() {
-  uninstallLaunchAgent({ plistPath: WORKFLOW_PLIST_PATH, noun: "workflow" });
+  if (!fs.existsSync(PLIST_PATH)) {
+    console.log("Harbour runner is not installed.");
+    return;
+  }
+  try {
+    execSync(`launchctl unload ${PLIST_PATH}`, { stdio: "inherit" });
+  } catch {
+    /* may already be unloaded */
+  }
+  fs.unlinkSync(PLIST_PATH);
+  console.log("Uninstalled. Harbour runner removed.");
 }

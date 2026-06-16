@@ -2,15 +2,13 @@ import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  requireAgentProject,
-  requireAgentSelf,
-  withAgentAuth,
   withAgentOrUser,
   withAuthenticatedUser,
   withInstanceAdmin,
   withOrgAuth,
   withProjectAuth,
   withResourceAuth,
+  withRunExecutorOrUser,
 } from "@/lib/auth";
 import {
   addMembership,
@@ -22,6 +20,8 @@ import {
   createRun,
   createSession,
   createUser,
+  mintExecToken,
+  updateRunStatus,
 } from "@/lib/db/queries";
 import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
@@ -247,85 +247,6 @@ describe("withAuthenticatedUser", () => {
 });
 
 // ===========================================================================
-// withAgentAuth — scoped to the agent's project
-// ===========================================================================
-
-describe("withAgentAuth", () => {
-  it("passes a valid agent key and exposes its org/project", async () => {
-    const { org, project } = fixture();
-    const agent = createAgent(project.id, "Dev");
-    let captured: { orgId: string; projectId: string } | null = null;
-    const handler = withAgentAuth(async (_req, auth) => {
-      captured = { orgId: auth.orgId, projectId: auth.projectId };
-      return ok();
-    });
-    const res = await handler(agentReq(agent.apiKey, "http://x/"), ctx({}));
-    expect(res.status).toBe(200);
-    expect(captured!).toEqual({ orgId: org.id, projectId: project.id });
-  });
-
-  it("403 for a user (agent-only)", async () => {
-    const { viewer } = fixture();
-    const handler = withAgentAuth(ok);
-    expect((await handler(userReq(viewer.id, "http://x/"), ctx({}))).status).toBe(403);
-  });
-
-  it("401 for a bad key", async () => {
-    fixture();
-    const handler = withAgentAuth(ok);
-    expect((await handler(agentReq("hbr_bogus", "http://x/"), ctx({}))).status).toBe(401);
-  });
-
-  it("requireAgentSelf rejects a different agent id", async () => {
-    const { project } = fixture();
-    const agent = createAgent(project.id, "Dev");
-    const handler = withAgentAuth(async (_req, auth, { params }) => {
-      const { id } = await params;
-      const err = requireAgentSelf(auth, id);
-      return err ?? ok();
-    });
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: agent.id }))).status).toBe(
-      200,
-    );
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: "other" }))).status).toBe(
-      403,
-    );
-  });
-
-  it("requireAgentProject rejects a resource in another project's org", async () => {
-    const { org, project } = fixture();
-    const agent = createAgent(project.id, "Dev");
-
-    // A run in the same org/project — allowed.
-    const job = createJob(project.id, agent.id, { name: "J", schedule: '{"every":60}' })!;
-    const run = createRun(job.id, agent.id)!;
-
-    // A run in a different org — denied.
-    const otherOrg = createOrg("Other")!;
-    const otherProject = createProject(otherOrg.id, "P2")!;
-    const otherAgent = createAgent(otherProject.id, "Dev2");
-    const otherJob = createJob(otherProject.id, otherAgent.id, {
-      name: "J2",
-      schedule: '{"every":60}',
-    })!;
-    const otherRun = createRun(otherJob.id, otherAgent.id)!;
-
-    const handler = withAgentAuth(async (_req, auth, { params }) => {
-      const { id } = await params;
-      const err = requireAgentProject(auth, "run", id);
-      return err ?? ok();
-    });
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: run.id }))).status).toBe(
-      200,
-    );
-    expect(
-      (await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: otherRun.id }))).status,
-    ).toBe(403);
-    expect(org.id).toBeTruthy();
-  });
-});
-
-// ===========================================================================
 // withAgentOrUser — dual-identity resource routes
 // ===========================================================================
 
@@ -370,5 +291,92 @@ describe("withAgentOrUser", () => {
     fixture();
     const handler = withAgentOrUser(ok, { role: "viewer" });
     expect((await handler(anonReq("http://x/"), ctx({}))).status).toBe(401);
+  });
+
+  it("an agent-run executor acts as its agent while running, but is denied once terminal", async () => {
+    const { org, project } = fixture();
+    const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
+    const job = createJob(project.id, agent.id, { name: "J", schedule: '{"every":60}' })!;
+    const run = createRun(job.id, agent.id)!; // born 'running'
+    const doc = createDoc(org.id, project.id, "Spec")!;
+    const handler = withAgentOrUser(ok, { role: "editor", orgFromParams: () => doc.org_id });
+
+    // While the run executes, its exec token can write the agent's resources.
+    const token = mintExecToken(run.id);
+    expect((await handler(agentReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(200);
+
+    // Once the run is terminal, a lingering/leaked token can no longer write
+    // org data (the executor goes inert for resource routes).
+    updateRunStatus(run.id, "done");
+    expect((await handler(agentReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(403);
+  });
+});
+
+// ===========================================================================
+// withRunExecutorOrUser — run-lifecycle routes (exec token bound to one run, or user)
+// ===========================================================================
+
+describe("withRunExecutorOrUser", () => {
+  function runFixture() {
+    const base = fixture();
+    const agent = createAgent(base.project.id, "Dev", undefined, { cli: "claude" });
+    const job = createJob(base.project.id, agent.id, { name: "J", schedule: '{"every":60}' })!;
+    const run = createRun(job.id, agent.id)!;
+    return { ...base, agent, job, run };
+  }
+
+  it("a run's exec token, bound to that run id, passes", async () => {
+    const { run } = runFixture();
+    const handler = withRunExecutorOrUser(ok, { role: "editor" });
+    const res = await handler(agentReq(mintExecToken(run.id), "http://x/"), ctx({ id: run.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it("an exec token presented for a DIFFERENT run id is forbidden", async () => {
+    const { project, run } = runFixture();
+    const otherRun = createRun(
+      createJob(project.id, createAgent(project.id, "DevB", undefined, { cli: "claude" }).id, {
+        name: "K",
+        schedule: '{"every":60}',
+      })!.id,
+      null,
+    )!;
+    const handler = withRunExecutorOrUser(ok, { role: "viewer" });
+    const res = await handler(
+      agentReq(mintExecToken(otherRun.id), "http://x/"),
+      ctx({ id: run.id }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("a terminal run's exec token still reaches lifecycle routes (trailing postrun)", async () => {
+    const { run } = runFixture();
+    const token = mintExecToken(run.id);
+    updateRunStatus(run.id, "done");
+    // The token stays valid for the run's own lifecycle routes — the runner's
+    // postrun gate posts activity / may override done->failed after the run
+    // reports terminal. (The org-data gate lives on withAgentOrUser, below.)
+    const handler = withRunExecutorOrUser(ok, { role: "viewer" });
+    const res = await handler(agentReq(token, "http://x/"), ctx({ id: run.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it("a user meeting the role in the run's org passes; a viewer is denied editor", async () => {
+    const { run, editor, viewer } = runFixture();
+    const editorH = withRunExecutorOrUser(ok, { role: "editor" });
+    expect((await editorH(userReq(editor.id, "http://x/"), ctx({ id: run.id }))).status).toBe(200);
+    expect((await editorH(userReq(viewer.id, "http://x/"), ctx({ id: run.id }))).status).toBe(403);
+  });
+
+  it("an outsider and an agent key are both forbidden", async () => {
+    const { run, outsider, agent } = runFixture();
+    const handler = withRunExecutorOrUser(ok, { role: "viewer" });
+    expect((await handler(userReq(outsider.id, "http://x/"), ctx({ id: run.id }))).status).toBe(
+      403,
+    );
+    // A permanent agent key is neither this run's executor nor a user → 403.
+    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: run.id }))).status).toBe(
+      403,
+    );
   });
 });

@@ -8,11 +8,11 @@ A workflow's command and an agent job's prerun/postrun are each a **gate**: a `{
 
 ## The Boundary
 
-| Feature | Own schedule | Own runner auth | Uses an agent | Uses an LLM | Purpose |
-|---|---:|---:|---:|---:|---|
-| Agent job | Yes | No | Yes | Yes | LLM-driven recurring work |
-| Agent prerun gate | No | No | Yes | No | Cheap gate before the LLM |
-| Workflow | Yes | Yes | No | No | Deterministic recurring work |
+| Feature | Own schedule | Uses an agent | Uses an LLM | Purpose |
+|---|---:|---:|---:|---|
+| Agent job | Yes | Yes | Yes | LLM-driven recurring work |
+| Agent prerun gate | No | Yes | No | Cheap gate before the LLM |
+| Workflow | Yes | No | No | Deterministic recurring work |
 
 Use a workflow when the script itself can finish the job: poll an API, reconcile a local file, sync a dataset, send a webhook, run a health check, or maintain a table.
 
@@ -27,7 +27,7 @@ Workflow jobs are stored in `jobs`:
 | `kind = 'workflow'` | This job is a deterministic workflow |
 | `agent_id = NULL` | No agent owns or runs it |
 | `workflow_runtime` | The runtime the command is run with: `bash`, `python`, or `node` |
-| `workflow_script` | The command's script body, run by the workflow runner |
+| `workflow_script` | The command's script body, run by the runner |
 | `timeout_minutes` | Maximum runtime before stale runs are failed |
 
 Agent jobs use the same table, but with a different shape:
@@ -50,7 +50,7 @@ Workflow jobs are dual-tier, like docs, env vars, and tables: every job carries 
 
 An org-level workflow may link only **org-level** docs, env vars, and tables — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Injection is attachment-driven (like every job): the run carries only the resources the workflow is actually linked to, never the org tier at large.
 
-Workflow runner credentials live in `workflow_runners`. They are org-scoped, enabled or disabled independently, and authenticate only workflow polling plus allowed workflow-run reporting endpoints. A runner claims every due workflow in its org, org-level and project-level alike.
+Workflows are claimed by the **same** unified runner as agent jobs — any runner advertising the `workflow` kind whose placement label matches the workflow's. The runner registry is the DB `runners` table; there is no separate workflow-runner credential. A runner claims every due workflow it's eligible for, org-level and project-level alike. See the [Runner Protocol](../runner-guide.md).
 
 ## Creating Workflows
 
@@ -77,67 +77,27 @@ Content-Type: application/json
 
 `POST /api/jobs` only creates workflows. Agent jobs are created under an agent with `POST /api/agents/:id/jobs`, whose body takes `prerun` and `postrun` as `{ runtime, content }` objects plus a `postrunGates` boolean.
 
-## Workflow Runners
+## Runners And Claiming
 
-Workflow runners are separate from agent runners. Agent runners do not claim workflow jobs.
+There is one runner — `harbour run` — and it claims both agent runs and workflows. A workflow is claimed by any runner advertising the `workflow` kind whose placement label matches the workflow's. On every claim the runner advertises its capabilities (`kinds`, the CLIs it found on PATH, and its `labels`); a host with no agent CLI installed still advertises `workflow`, so a plain box runs deterministic scripts.
 
-Create runner credentials:
+All runners — local and remote — claim through one endpoint:
 
 ```http
-POST /api/workflow-runners?orgId=<org-id>
+POST /api/runner/claim
+Authorization: Bearer <runner-token>
 Content-Type: application/json
 
-{
-  "name": "Ops Mac Mini",
-  "labels": ["local", "ops"]
-}
+{ "capabilities": { "kinds": ["workflow"], "labels": ["local"] } }
 ```
 
-The response includes a connect command:
+The response is `{ "run": null }` when there's no claimable work, or a full run payload — kind-tagged, so the runner branches on `job.kind` and runs the gate script for a workflow. Each claimed run carries its own per-run **exec token**, which the runner uses as the Bearer for every `/api/runs/:id/*` callback — the high-value runner token never reaches the gate script. The protocol (claim, capabilities, exec token, payload shape) is documented in the [Runner Protocol](../runner-guide.md).
 
-```bash
-harbour workflow connect <blob>
-```
-
-On the runner host:
-
-```bash
-harbour workflow connect <blob>
-harbour workflow run
-harbour workflow install
-```
-
-The CLI stores workflow runner identity in:
-
-```text
-~/.harbour/workflow-runners.json
-```
-
-`harbour workflow install` creates a separate launchd service from `harbour agent install`, so deterministic workflows and agent jobs can be operated independently.
-
-## Polling And Claiming
-
-Workflow runners poll:
-
-```http
-GET /api/workflows/next
-Authorization: Bearer <workflow-runner-api-key>
-```
-
-The endpoint returns `null` when there is no work, or a single run payload when a workflow is claimed.
-
-Use `peek=true` to verify auth or check availability without claiming work:
-
-```http
-GET /api/workflows/next?peek=true
-Authorization: Bearer <workflow-runner-api-key>
-```
-
-Agent API keys are rejected by `/api/workflows/next`. Workflow runner keys are denied by default on generic agent-or-user resource routes and opted in only where workflow-run reporting needs them.
+Because claiming is placement-aware, a workflow whose placement label no runner advertises just sits `scheduled` — nothing claims it. The runner's claim updates its `last_polled_at`, the signal behind the health surface that flags work with no eligible runner connected.
 
 ## Execution Contract
 
-The workflow runner materializes the command gate to a file in the job's per-job scripts directory and runs it there (see [Gates](#gates)):
+The runner materializes the command gate to a file in the job's per-job scripts directory and runs it there (see [Gates](#gates)):
 
 | Item | Value |
 |---|---|
@@ -147,7 +107,7 @@ The workflow runner materializes the command gate to a file in the job's per-job
 | stdout | Captured at process exit, posted as the final `workflow` activity entry |
 | stderr | Captured at process exit |
 | timeout | `job.timeout_minutes`, default 30 |
-| env | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY`, `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME` |
+| env | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY` (the run's exec token), `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME` |
 
 Example command body (a `python` gate):
 
@@ -171,7 +131,7 @@ Workflow runs have no message thread — but a long-running script can still pos
 | Variable | Value |
 |---|---|
 | `HARBOUR_RUN_ID` | The current run's id |
-| `HARBOUR_API_KEY` | The workflow runner's API key |
+| `HARBOUR_API_KEY` | The run's exec token (scoped to this run's callbacks; the runner token never reaches the script) |
 | `HARBOUR_URL` | Base URL of the Harbour server |
 
 Post an update any time during the run:
@@ -187,7 +147,7 @@ Each call appends a `workflow`-authored entry to the run's Output, visible on th
 
 Note that stdout is *always* posted at exit. If you post breadcrumbs **and** also print the same lines to stdout, they appear twice in the Output. To avoid that, either post breadcrumbs and keep stdout quiet (or for skip/error detail only), or skip breadcrumbs and let the single stdout summary stand.
 
-This is the same `POST /api/runs/:id/activity` endpoint agents use, but on a workflow run only the workflow runner key is accepted (user comments return 400). Keep updates terse and never echo secrets — Output is visible in the dashboard.
+This is the same `POST /api/runs/:id/activity` endpoint agents use, posted with the run's exec token, but on a workflow run user comments return 400 (the activity log is captured runner output only). Keep updates terse and never echo secrets — Output is visible in the dashboard.
 
 ## Payload Shape
 
@@ -236,7 +196,7 @@ Stdout is not streamed line-by-line; the trimmed buffer is posted once when the 
 
 ## Status, Kill, And Retry
 
-Workflow runs can be killed from the dashboard. The workflow runner polls the run kill endpoint while the command is running and terminates the child process when a kill is requested.
+Workflow runs can be killed from the dashboard. The runner polls the run kill endpoint while the command is running and terminates the child process when a kill is requested.
 
 Terminal statuses:
 
@@ -251,11 +211,11 @@ These are the only statuses a workflow run moves through (plus `scheduled` and `
 
 Workflow runs also have no message thread. The activity log on a workflow run is captured runner output (stdout/stderr, recorded with author type `workflow`); user comments are rejected. If a workflow needs a human decision, that's a sign the work belongs in an agent job.
 
-Retrying a workflow run requeues the same run as `scheduled` with an immediate `scheduled_for`, so the next workflow runner poll claims a fresh attempt of the command. There is no agent session to resume.
+Retrying a workflow run requeues the same run as `scheduled` with an immediate `scheduled_for`, so the next runner poll claims a fresh attempt of the command. There is no agent session to resume.
 
 ## Agent Prerun And Postrun Gates
 
-Agent jobs can define a `prerun` gate. The agent runner materializes it and runs it before invoking the LLM.
+Agent jobs can define a `prerun` gate. The runner materializes it and runs it before invoking the LLM.
 
 | Exit | Result |
 |---:|---|
@@ -263,9 +223,9 @@ Agent jobs can define a `prerun` gate. The agent runner materializes it and runs
 | `77` | Mark run `skipped`; no LLM is invoked |
 | other | Mark run `failed`; no LLM is invoked |
 
-The prerun runs from the job's per-job scripts directory (`$HARBOUR_HOME/workflows/<scripts_dir>`, see [Gates](#gates)) and receives the same stdin payload shape, but it is not independently scheduled and does not use workflow-runner credentials.
+The prerun runs from the job's per-job scripts directory (`$HARBOUR_HOME/workflows/<scripts_dir>`, see [Gates](#gates)) and receives the same stdin payload shape, but it is not independently scheduled — it runs inline as part of its agent run, gated by the run's exec token like the rest of the run's callbacks.
 
-Agent jobs can also define a `postrun` gate, a hook the agent runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun runs from the same place the prerun did). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
+Agent jobs can also define a `postrun` gate, a hook the runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun runs from the same place the prerun did). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
 
 ## Gates
 
@@ -297,6 +257,6 @@ Right before running a gate, the runner `mkdir -p`s the per-job directory (`$HAR
 - Prefer exit `77` for "checked successfully, nothing to do".
 - Use stdout for useful run summaries and stderr for skip/failure details.
 - Do not put secrets in stdout or stderr. Activity is visible in the dashboard.
-- Run `harbour workflow run` manually before installing the scheduler.
-- Use `harbour workflow list` to see configured workflow runners on the host.
-- Use separate runner hosts when workflows depend on machine-specific tools, local files, VPN access, Xcode, browser profiles, or hardware.
+- Run `harbour run` manually to drain due work once before installing the scheduler.
+- Use `harbour status` to check the runner's provisioning on the host.
+- Use separate runner hosts (a label-scoped remote runner) when workflows depend on machine-specific tools, local files, VPN access, Xcode, browser profiles, or hardware.

@@ -2,23 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
-import { withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withRunExecutorOrUser } from "@/lib/auth";
 import { getAttachmentById, getRunById } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { contentDisposition, isInlineSafe } from "@/lib/upload";
 
 export const runtime = "nodejs";
 
-export const GET = withAgentOrUser(
-  async (_req, auth, { params }) => {
+export const GET = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
     const { id, aid } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const att = getAttachmentById(aid);
     if (!att || att.run_id !== id || att.kind !== "file" || !att.storage_path) {
@@ -51,5 +46,5 @@ export const GET = withAgentOrUser(
       },
     });
   },
-  { role: "viewer", orgFromParams: (p) => orgIdForResource("run", p.id) },
+  { role: "viewer" },
 );

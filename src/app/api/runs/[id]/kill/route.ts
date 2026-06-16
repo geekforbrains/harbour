@@ -1,32 +1,20 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser, withResourceAuth } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withResourceAuth, withRunExecutorOrUser } from "@/lib/auth";
 import { addRunActivity, getRunById, isKillRequested, requestKillRun } from "@/lib/db/queries";
 
 /**
  * Lightweight kill-check endpoint for the runner's fallback poll. Returns just
- * the kill flag so the runner can poll cheaply without pulling the whole run.
+ * the kill flag so the executor can poll cheaply without pulling the whole run.
  */
-export const GET = withAgentOrUser(
-  async (_req, auth, { params }) => {
+export const GET = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner" && run.job_kind !== "workflow") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
     return NextResponse.json({ kill_requested: isKillRequested(id), status: run.status });
   },
-  {
-    role: "viewer",
-    allowWorkflowRunner: true,
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "viewer" },
 );
 
 export const POST = withResourceAuth("run", "id", { role: "editor" })(

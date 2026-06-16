@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
 import { DEFAULT_RUNTIME, type Gate, isRuntime } from "../runtimes";
@@ -7,8 +8,14 @@ import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
 import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
+import { listRunners, type RunnerCapabilities, type RunnerScope, type RunnerTier } from "./runners";
 import { getDb } from "./schema";
 import { getComposedTablesForJob } from "./tables";
+
+/** sha256 a bearer token for storage / lookup (exec tokens, like runner tokens). */
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 
 /**
  * Shape a gate's stored `(runtime, script)` columns into the run payload's gate
@@ -28,17 +35,92 @@ export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
   // Resolve org_id/project_id (denormalized; project_id is NULL for org-level
-  // workflow jobs) and a placeholder title from the job.
-  const job = db.prepare(`SELECT name, org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { name: string; org_id: string; project_id: string | null }
+  // workflow jobs), the run's placement, and a placeholder title from the job.
+  const job = db
+    .prepare(`SELECT name, org_id, project_id, placement FROM jobs WHERE id = ?`)
+    .get(jobId) as
+    | { name: string; org_id: string; project_id: string | null; placement: string }
     | undefined;
   if (!job) return null;
+  // Placement is denormalized onto the run so the hot claim query stays flat:
+  // agent runs inherit the agent's placement, workflow runs the job's.
+  const placement = resolveRunPlacement(agentId, job.placement);
   const title = defaultRunTitle(job.name, Math.floor(Date.now() / 1000));
   db.prepare(`
-    INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, claimed_at, title)
-    VALUES (?, ?, ?, ?, ?, 'running', unixepoch(), ?)
-  `).run(id, job.org_id, job.project_id, jobId, agentId || null, title);
+    INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, placement, claimed_at, title)
+    VALUES (?, ?, ?, ?, ?, 'running', ?, unixepoch(), ?)
+  `).run(id, job.org_id, job.project_id, jobId, agentId || null, placement, title);
   return getRunById(id);
+}
+
+/**
+ * The placement to stamp on a new run. Agent runs route by their agent's
+ * placement; workflow runs by the job's. Falls back to 'local' so a run is
+ * always claimable by the local pool even if a source row is mid-migration.
+ * Shared by createRun (recurring materialization) and triggerJobRun ("Run now").
+ */
+export function resolveRunPlacement(agentId: string | null, jobPlacement: string): string {
+  if (!agentId) return jobPlacement || "local";
+  const db = getDb();
+  const agent = db.prepare(`SELECT placement FROM agents WHERE id = ?`).get(agentId) as
+    | { placement: string }
+    | undefined;
+  return agent?.placement || "local";
+}
+
+// ── Per-run executor token (exec token) ──────────────────────────────────────
+//
+// Minted when a run is claimed (enters 'running'); carried in the claim payload
+// and used by the runner + the CLI it spawns as the credential for that run's
+// lifecycle endpoints (title/status/activity/output/kill/attachments). It keeps
+// the high-value runner token off the CLI and scopes the executor credential to
+// a single run. Re-minted on every claim (resume), so a prior attempt's token
+// stops working the moment the run is re-claimed.
+
+function generateExecToken(): string {
+  return `hbx_${crypto.randomBytes(32).toString("hex")}`;
+}
+
+/** Mint (or rotate) a run's executor token; returns the plaintext exactly once. */
+export function mintExecToken(runId: string): string {
+  const db = getDb();
+  const token = generateExecToken();
+  db.prepare(`UPDATE runs SET exec_token_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(
+    hashToken(token),
+    runId,
+  );
+  return token;
+}
+
+/**
+ * Resolve a run from an executor token. Returns the run joined with the bits the
+ * auth layer needs to build an executor identity (job kind, agent, org/project).
+ * Dedicated query so the token hash never travels through getRunById.
+ */
+export function getRunByExecToken(token: string) {
+  const db = getDb();
+  const row = db
+    .prepare(`
+      SELECT r.id, r.org_id, r.project_id, r.agent_id, r.status, r.job_id,
+             j.kind AS job_kind, a.name AS agent_name
+      FROM runs r
+      JOIN jobs j ON r.job_id = j.id
+      LEFT JOIN agents a ON r.agent_id = a.id
+      WHERE r.exec_token_hash = ?
+    `)
+    .get(hashToken(token)) as
+    | {
+        id: string;
+        org_id: string;
+        project_id: string | null;
+        agent_id: string | null;
+        status: string;
+        job_id: string;
+        job_kind: string;
+        agent_name: string | null;
+      }
+    | undefined;
+  return row || null;
 }
 
 export function getRunById(id: string) {
@@ -46,14 +128,22 @@ export function getRunById(id: string) {
   const run = db
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_script as job_prerun_script,
-           j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color, a.cli as agent_cli
+           j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color, a.cli as agent_cli,
+           cr.name as claimed_by_name, cr.tier as claimed_by_tier
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     LEFT JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN runners cr ON r.claimed_by = cr.id
     WHERE r.id = ?
   `)
     .get(id) as any;
-  return run || null;
+  if (!run) return null;
+  // exec_token_hash is the per-run executor credential's hash — never surface it
+  // through the generic run reader (it rides along in SELECT r.*, and getRunById
+  // feeds many viewer-role API responses). The claim path mints/returns the
+  // plaintext token directly; auth resolution uses the dedicated lookup below.
+  run.exec_token_hash = undefined;
+  return run;
 }
 
 export function getRunWithActivity(id: string) {
@@ -139,6 +229,11 @@ export function updateRunStatus(id: string, status: string) {
   // fresh running attempt, so stamp claimed_at — the timeout hard cap measures
   // from here. Self-transitions (running -> running) already returned above as
   // no-ops, so this never resets the clock on a re-reported status.
+  // Note: the exec token is deliberately NOT cleared here — the runner's postrun
+  // gate (#29) posts activity and may override done->failed AFTER finalization,
+  // so the token must stay valid for that trailing window. A leaked token's blast
+  // radius is bounded instead by the executor gates in the auth layer (it can't
+  // resurrect a run or write docs/tables once the run is terminal).
   const enterRunning = status === "running" ? ", claimed_at = unixepoch()" : "";
   db.prepare(
     `UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`,
@@ -158,22 +253,25 @@ export function updateRunStatus(id: string, status: string) {
 /**
  * Requeue a workflow run for a fresh attempt. Workflow runs have no agent to
  * resume a 'pending' run, so retries go back to 'scheduled' with
- * scheduled_for = now — the next workflow runner poll claims it.
+ * scheduled_for = now — the next runner claim picks it up.
  *
  * Deliberate bypass of updateRunStatus's transition guard: this is a
- * multi-column reset (status + scheduled_for + completed_at + kill_requested_at)
- * the single-column guard can't express, and the terminal → scheduled edge
- * exists only here. Routing it through the guard would mean adding a
- * terminal → scheduled edge AND still doing the column resets separately, so we
- * keep it as one documented write.
+ * multi-column reset (status + scheduled_for + completed_at + kill_requested_at
+ * + exec_token_hash) the single-column guard can't express, and the
+ * terminal → scheduled edge exists only here. Routing it through the guard would
+ * mean adding a terminal → scheduled edge AND still doing the column resets
+ * separately, so we keep it as one documented write.
  */
 export function requeueWorkflowRun(id: string) {
   const db = getDb();
   // claimed_at = NULL: a scheduled run has not been claimed — the next runner
   // poll stamps a fresh claimed_at, which the timeout hard cap measures from.
+  // exec_token_hash = NULL: the prior attempt's token is dead; the re-claim
+  // mints a fresh one.
   db.prepare(`
     UPDATE runs SET status = 'scheduled', scheduled_for = unixepoch(),
-      claimed_at = NULL, completed_at = NULL, kill_requested_at = NULL, updated_at = unixepoch()
+      claimed_at = NULL, completed_at = NULL, kill_requested_at = NULL,
+      exec_token_hash = NULL, updated_at = unixepoch()
     WHERE id = ?
   `).run(id);
   return getRunById(id);
@@ -443,7 +541,7 @@ export function listRunsHistory(
 function redactSensitiveContent(content: string): string {
   return content
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, "Bearer [REDACTED_TOKEN]")
-    .replace(/\bhbr_(?:adm_)?[A-Za-z0-9]+\b/g, "[REDACTED_HARBOUR_KEY]");
+    .replace(/\b(?:hbr_(?:adm_)?|hbrn_|hbx_|hwf_)[A-Za-z0-9]+\b/g, "[REDACTED_HARBOUR_KEY]");
 }
 
 // Activity log
@@ -560,323 +658,429 @@ export function failTimedOutRun(runId: string, timeoutMinutes: number): boolean 
   return fail();
 }
 
-// Fail runs that have exceeded their job's timeout
-function failStaleRuns(agentId: string) {
+/**
+ * Reap every run stuck in 'running' past its job's timeout. Janitorial and
+ * idempotent (failTimedOutRun's guarded UPDATE makes a lost race a no-op), so
+ * any claim/peek can trigger it across the whole instance. Hard cap is keyed on
+ * claimed_at (when the current running attempt began), NOT updated_at — streamed
+ * output refreshes updated_at, which would turn this into a sliding inactivity
+ * window that never fires for a chatty-but-stuck run. claimed_at resets on every
+ * entry into 'running' (createRun, the claim, updateRunStatus), so this is a
+ * true ceiling: a run cannot stay 'running' past timeout_minutes.
+ */
+function reapStaleRuns() {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
-  // Hard cap on wallclock-in-running, keyed on claimed_at (when the current
-  // running attempt began), NOT updated_at — streaming output refreshes
-  // updated_at, which would turn this into a sliding inactivity window that
-  // never fires for a chatty-but-stuck run. claimed_at is reset on every entry
-  // into 'running' (see createRun, the poll claims, and updateRunStatus), so
-  // this is a true ceiling: a run cannot stay 'running' past timeout_minutes.
   const stale = db
     .prepare(`
     SELECT r.id, j.timeout_minutes FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    WHERE r.agent_id = ? AND r.status = 'running'
-    AND r.claimed_at + (j.timeout_minutes * 60) < ?
+    WHERE r.status = 'running' AND r.claimed_at + (j.timeout_minutes * 60) < ?
   `)
-    .all(agentId, now) as { id: string; timeout_minutes: number }[];
-
+    .all(now) as { id: string; timeout_minutes: number }[];
   let failed = 0;
   for (const run of stale) {
     if (failTimedOutRun(run.id, run.timeout_minutes)) failed++;
   }
-
   return failed;
 }
 
-// Agent polling: get next run
+// ── The unified claim (Runner Protocol) ──────────────────────────────────────
+//
+// One org-agnostic claim path replacing the per-agent /next ladder and the
+// per-org workflow poll. A runner advertises its capabilities on every claim;
+// the server hands back only work that (1) is due, (2) matches the runner's
+// placement labels, (3) is a kind/CLI it can run, and (4) whose lock unit
+// (agent_id for agent runs, job_id for workflow runs) has nothing in flight.
+//
+// Atomicity: the whole select-and-claim runs in one IMMEDIATE transaction, so
+// concurrent claims serialize on the single SQLite writer — the lock-unit check
+// and the guarded status flip can't interleave across runners. This is the
+// "claims serialize for free" guarantee; no runner ever touches the DB directly.
 
-export function getAgentNextRun(agentId: string) {
+/** The authenticated runner facts the claim path needs (capabilities arrive per-claim). */
+export type ClaimRunner = {
+  id: string;
+  tier: RunnerTier;
+  labels: string[]; // authorized labels (remote tier); local tier serves whatever it advertises
+  scope: RunnerScope;
+};
+
+const IN_FLIGHT = "('running','waiting','pending')";
+
+/** Placement labels this runner may actually claim right now. */
+function claimableLabels(runner: ClaimRunner, capabilities: RunnerCapabilities): string[] {
+  const advertised = [...new Set((capabilities.labels || []).map((l) => l.trim()).filter(Boolean))];
+  // Remote tokens may only serve labels they're authorized for; local is trusted
+  // to serve anything it advertises.
+  return runner.tier === "remote"
+    ? advertised.filter((l) => runner.labels.includes(l))
+    : advertised;
+}
+
+function placeholders(arr: unknown[]): string {
+  return arr.map(() => "?").join(", ");
+}
+
+/** Extra `AND <alias>.org_id/agent_id = ?` clauses for a scoped (remote) token. */
+function scopeClause(scope: RunnerScope, alias: "r" | "j"): { sql: string; params: string[] } {
+  const sql: string[] = [];
+  const params: string[] = [];
+  if (scope?.orgId) {
+    sql.push(`AND ${alias}.org_id = ?`);
+    params.push(scope.orgId);
+  }
+  if (scope?.agentId) {
+    sql.push(`AND ${alias}.agent_id = ?`);
+    params.push(scope.agentId);
+  }
+  return { sql: sql.join(" "), params };
+}
+
+/**
+ * Claim the next runnable unit for this runner, or null when nothing matches.
+ * Returns the full kind-tagged run payload plus the freshly-minted `exec_token`
+ * the runner (and the CLI it spawns) uses for this run's lifecycle endpoints.
+ */
+export function claimNextRun(runner: ClaimRunner, capabilities: RunnerCapabilities) {
   const db = getDb();
+  reapStaleRuns();
 
-  // 0. Fail any stale running runs that exceeded their timeout
-  failStaleRuns(agentId);
+  const labels = claimableLabels(runner, capabilities);
+  if (labels.length === 0) return null;
+  const clis = [...new Set((capabilities.clis || []).filter(Boolean))];
+  // Agent work needs at least one usable CLI; a remote token scoped to a single
+  // agent never claims (agentless) workflow jobs.
+  const canAgent = capabilities.kinds.includes("agent") && clis.length > 0;
+  const canWorkflow = capabilities.kinds.includes("workflow") && !runner.scope?.agentId;
+  if (!canAgent && !canWorkflow) return null;
 
-  // Wrap in a transaction so run assignment is atomic
-  const assignRun = db.transaction(() => {
-    // 1. Agent already has a running run? Return nothing (busy)
-    const running = db
-      .prepare(`
-      SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-    `)
-      .get(agentId) as any;
-    if (running) return null;
-
-    // 2. Pending run? (human responded, ready for agent to resume)
-    const pendingRun = db
-      .prepare(`
-      SELECT id FROM runs
-      WHERE agent_id = ? AND status = 'pending'
-      ORDER BY updated_at ASC LIMIT 1
-    `)
-      .get(agentId) as any;
-
-    if (pendingRun) {
-      // Guard the claim: only flip it if it is still 'pending'. If a concurrent
-      // runner already claimed it, changes === 0 — back off this poll rather
-      // than double-claim a run another runner is now executing.
-      // Reset claimed_at: this resume starts a fresh running attempt, and the
-      // timeout hard cap (failStaleRuns) measures from here — without the reset
-      // a run that sat in 'pending' (human wait, retry) would be capped on the
-      // very next poll. See failStaleRuns for the claimed_at contract.
-      const claimed = db
-        .prepare(
-          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'pending'`,
-        )
-        .run(pendingRun.id);
-      if (claimed.changes !== 1) return null;
-      return pendingRun.id as string;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-
-    // 3. Scheduled run ready to start? (manually triggered via dashboard)
-    const scheduledRun = db
-      .prepare(`
-      SELECT id FROM runs
-      WHERE agent_id = ? AND status = 'scheduled' AND scheduled_for <= ?
-      ORDER BY scheduled_for ASC LIMIT 1
-    `)
-      .get(agentId, now) as any;
-
-    if (scheduledRun) {
-      // Guarded claim — see the pending branch above.
-      const claimed = db
-        .prepare(
-          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`,
-        )
-        .run(scheduledRun.id);
-      if (claimed.changes !== 1) return null;
-      db.prepare(
-        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`,
-      ).run(scheduledRun.id);
-      return scheduledRun.id as string;
-    }
-
-    // 4. Any recurring job past its schedule time without an active run?
-    const readyJob = db
-      .prepare(`
-      SELECT j.id, j.agent_id FROM jobs j
-      WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
-      AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-      AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
+  const claimUpdate = (id: string, from: "scheduled" | "pending") =>
+    db
+      .prepare(
+        `UPDATE runs SET status = 'running', claimed_by = ?, claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = ?`,
       )
-      ORDER BY j.next_run_at ASC LIMIT 1
-    `)
-      .get(agentId, now) as any;
+      .run(runner.id, id, from);
 
-    if (readyJob) {
-      const run = createRun(readyJob.id, agentId);
-      db.prepare(
-        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
-      ).run(readyJob.id);
-      // Advance next_run_at immediately so the job doesn't re-fire on the next poll
-      advanceJobSchedule(readyJob.id);
-      return run!.id as string;
+  let execToken = "";
+  const assign = db.transaction(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const rScope = scopeClause(runner.scope, "r");
+    const jScope = scopeClause(runner.scope, "j");
+
+    // 1. Resume an agent run a human nudged back to 'pending'. Lock unit (the
+    //    agent) must have nothing else running/waiting — the pending row itself
+    //    is in flight but it's the one we're claiming.
+    if (canAgent) {
+      const pending = db
+        .prepare(`
+          SELECT r.id FROM runs r
+          JOIN jobs j ON r.job_id = j.id
+          JOIN agents a ON r.agent_id = a.id
+          WHERE r.status = 'pending' AND j.kind = 'agent'
+            AND r.placement IN (${placeholders(labels)})
+            AND a.cli IN (${placeholders(clis)})
+            ${rScope.sql}
+            AND NOT EXISTS (
+              SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ('running','waiting')
+            )
+          ORDER BY r.updated_at ASC LIMIT 1
+        `)
+        .get(...labels, ...clis, ...rScope.params) as { id: string } | undefined;
+      if (pending && claimUpdate(pending.id, "pending").changes === 1) {
+        execToken = mintExecToken(pending.id);
+        return pending.id;
+      }
+    }
+
+    // 2. A scheduled run (either kind) due now whose lock unit is idle.
+    const kinds = [canAgent && "agent", canWorkflow && "workflow"].filter(Boolean) as string[];
+    if (kinds.length > 0) {
+      const scheduled = db
+        .prepare(`
+          SELECT r.id, j.kind FROM runs r
+          JOIN jobs j ON r.job_id = j.id
+          LEFT JOIN agents a ON r.agent_id = a.id
+          WHERE r.status = 'scheduled' AND r.scheduled_for <= ?
+            AND r.placement IN (${placeholders(labels)})
+            AND j.kind IN (${placeholders(kinds)})
+            AND (j.kind = 'workflow' OR a.cli IN (${placeholders(clis)}))
+            ${rScope.sql}
+            AND (
+              (j.kind = 'agent' AND NOT EXISTS (
+                SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ${IN_FLIGHT}))
+              OR
+              (j.kind = 'workflow' AND NOT EXISTS (
+                SELECT 1 FROM runs rr WHERE rr.job_id = r.job_id AND rr.status IN ${IN_FLIGHT}))
+            )
+          ORDER BY r.scheduled_for ASC LIMIT 1
+        `)
+        .get(now, ...labels, ...kinds, ...clis, ...rScope.params) as
+        | { id: string; kind: string }
+        | undefined;
+      if (scheduled && claimUpdate(scheduled.id, "scheduled").changes === 1) {
+        db.prepare(
+          `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`,
+        ).run(scheduled.id);
+        execToken = mintExecToken(scheduled.id);
+        return scheduled.id;
+      }
+    }
+
+    // 3. Materialize a due recurring agent job (lock unit = the agent).
+    if (canAgent) {
+      const job = db
+        .prepare(`
+          SELECT j.id, j.agent_id FROM jobs j
+          JOIN agents a ON j.agent_id = a.id
+          WHERE j.kind = 'agent' AND j.active = 1
+            AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+            AND a.placement IN (${placeholders(labels)})
+            AND a.cli IN (${placeholders(clis)})
+            ${jScope.sql}
+            AND NOT EXISTS (
+              SELECT 1 FROM runs rr WHERE rr.agent_id = j.agent_id AND rr.status IN ${IN_FLIGHT}
+              UNION ALL
+              SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status = 'scheduled'
+            )
+          ORDER BY j.next_run_at ASC LIMIT 1
+        `)
+        .get(now, ...labels, ...clis, ...jScope.params) as
+        | { id: string; agent_id: string }
+        | undefined;
+      if (job) {
+        const id = materializeRun(db, job.id, job.agent_id, runner.id);
+        execToken = mintExecToken(id);
+        return id;
+      }
+    }
+
+    // 4. Materialize a due recurring workflow job (lock unit = the job).
+    if (canWorkflow) {
+      const job = db
+        .prepare(`
+          SELECT j.id FROM jobs j
+          WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
+            AND j.workflow_script IS NOT NULL
+            AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+            AND j.placement IN (${placeholders(labels)})
+            ${jScope.sql}
+            AND NOT EXISTS (
+              SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status IN ('scheduled','running','waiting','pending')
+            )
+          ORDER BY j.next_run_at ASC LIMIT 1
+        `)
+        .get(now, ...labels, ...jScope.params) as { id: string } | undefined;
+      if (job) {
+        const id = materializeRun(db, job.id, null, runner.id);
+        execToken = mintExecToken(id);
+        return id;
+      }
     }
 
     return null;
   });
 
-  const runId = assignRun();
+  const runId = assign.immediate() as string | null;
   if (!runId) return null;
-  return buildRunPayload(runId);
+  const payload = buildRunPayload(runId);
+  if (!payload) return null;
+  return { ...payload, exec_token: execToken };
 }
 
-// Workflow polling: get next deterministic workflow run (no agent assigned).
-// MANDATORY org scope: candidate runs/jobs are constrained to the caller's org
-// via the denormalized org_id so a runner never claims another org's work.
-// Org-level workflows (project_id NULL) are claimed the same way as
-// project-level ones — runners are org-scoped either way.
-export function getNextWorkflowRun(orgId: string) {
-  const db = getDb();
+/** createRun + stamp claimed_by + advance the job's schedule, in one place. */
+function materializeRun(
+  db: ReturnType<typeof getDb>,
+  jobId: string,
+  agentId: string | null,
+  claimedBy?: string,
+): string {
+  const run = createRun(jobId, agentId);
+  if (!run) throw new Error("materializeRun: job vanished");
+  db.prepare(`UPDATE runs SET claimed_by = ? WHERE id = ?`).run(claimedBy ?? null, run.id);
+  db.prepare(
+    `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
+  ).run(jobId);
+  advanceJobSchedule(jobId);
+  return run.id as string;
+}
 
-  // Fail stale workflow runs (scoped to this org)
-  const now = Math.floor(Date.now() / 1000);
-  // Hard cap keyed on claimed_at, not updated_at — see failStaleRuns for why.
-  const stale = db
+/**
+ * Non-claiming availability check for a runner — the `?peek=true` path. Proves
+ * liveness and reports whether claimable work exists, without taking it. Mirrors
+ * the claim's filters but selects only (never UPDATEs).
+ */
+// A runner is considered live if it polled within this window (the runner polls
+// ~every 60s, so 3 missed polls = disconnected). Drives the absent-runner surface.
+const RUNNER_LIVE_WINDOW_S = 180;
+
+/** In-flight (running|waiting|pending) run counts keyed by claiming runner id. */
+export function runningCountsByRunner(): Record<string, number> {
+  const db = getDb();
+  const rows = db
     .prepare(`
-    SELECT r.id, j.timeout_minutes FROM runs r
-    JOIN jobs j ON r.job_id = j.id
-    WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'running' AND r.org_id = ?
-    AND r.claimed_at + (j.timeout_minutes * 60) < ?
-  `)
-    .all(orgId, now) as { id: string; timeout_minutes: number }[];
-  for (const run of stale) {
-    failTimedOutRun(run.id, run.timeout_minutes);
+      SELECT claimed_by AS id, COUNT(*) AS n
+      FROM runs
+      WHERE claimed_by IS NOT NULL AND status IN ('running','waiting','pending')
+      GROUP BY claimed_by
+    `)
+    .all() as { id: string; n: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.id] = r.n;
+  return out;
+}
+
+/**
+ * The anti-silent-stall surface: placements with queued work (scheduled/pending
+ * runs in scope) that NO live runner is serving. Mandatory per the PLAN — without
+ * it, a run pinned to an absent label/capability sits forever with no signal.
+ * A runner "serves" a placement when it polled recently AND last advertised that
+ * label (capabilities.labels). Returns [{ placement, count }] needing a runner.
+ */
+export function stalledPlacements(
+  orgId: string,
+  projectId?: string,
+): { placement: string; count: number }[] {
+  const db = getDb();
+  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
+  const params = projectId ? [orgId, projectId] : [orgId];
+  const pending = db
+    .prepare(`
+      SELECT r.placement AS placement, COUNT(*) AS count
+      FROM runs r
+      WHERE r.status IN ('scheduled','pending') AND r.org_id = ? ${projectFilter}
+      GROUP BY r.placement
+    `)
+    .all(...params) as { placement: string; count: number }[];
+  if (pending.length === 0) return [];
+
+  // Labels a live runner could ACTUALLY claim for this org — mirror the claim
+  // path's eligibility, not just raw advertised labels, or we'd hide real stalls:
+  //   - a remote runner only serves advertised ∩ its authorized labels;
+  //   - a runner scoped to another org can't serve this org's work at all.
+  // (Using raw advertised labels would let an over-advertising or cross-org
+  // runner suppress the banner while the claim endpoint refuses the work.)
+  const nowS = Math.floor(Date.now() / 1000);
+  const served = new Set<string>();
+  for (const runner of listRunners()) {
+    if (!runner.last_polled_at || nowS - runner.last_polled_at > RUNNER_LIVE_WINDOW_S) continue;
+    if (runner.scope?.orgId && runner.scope.orgId !== orgId) continue;
+    const advertised = runner.capabilities?.labels ?? [];
+    const claimable =
+      runner.tier === "remote" ? advertised.filter((l) => runner.labels.includes(l)) : advertised;
+    for (const label of claimable) served.add(label);
+  }
+  return pending.filter((p) => !served.has(p.placement));
+}
+
+export function peekClaim(runner: ClaimRunner, capabilities: RunnerCapabilities) {
+  const db = getDb();
+  reapStaleRuns();
+
+  const labels = claimableLabels(runner, capabilities);
+  if (labels.length === 0) return { available: false, reason: "no_matching_placement" };
+  const clis = [...new Set((capabilities.clis || []).filter(Boolean))];
+  const canAgent = capabilities.kinds.includes("agent") && clis.length > 0;
+  const canWorkflow = capabilities.kinds.includes("workflow") && !runner.scope?.agentId;
+  if (!canAgent && !canWorkflow) return { available: false, reason: "no_matching_capability" };
+
+  const now = Math.floor(Date.now() / 1000);
+  const rScope = scopeClause(runner.scope, "r");
+  const jScope = scopeClause(runner.scope, "j");
+
+  if (canAgent) {
+    const pending = db
+      .prepare(`
+        SELECT r.id, j.name AS job_name FROM runs r
+        JOIN jobs j ON r.job_id = j.id
+        JOIN agents a ON r.agent_id = a.id
+        WHERE r.status = 'pending' AND j.kind = 'agent'
+          AND r.placement IN (${placeholders(labels)})
+          AND a.cli IN (${placeholders(clis)})
+          ${rScope.sql}
+          AND NOT EXISTS (
+            SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ('running','waiting')
+          )
+        ORDER BY r.updated_at ASC LIMIT 1
+      `)
+      .get(...labels, ...clis, ...rScope.params) as { id: string; job_name: string } | undefined;
+    if (pending)
+      return {
+        available: true,
+        type: "pending_resume",
+        run_id: pending.id,
+        job_name: pending.job_name,
+      };
   }
 
-  const assignRun = db.transaction(() => {
-    // Scheduled run ready to start? (scoped to this org)
-    const scheduledRun = db
-      .prepare(`
-      SELECT r.id FROM runs r
+  const kinds = [canAgent && "agent", canWorkflow && "workflow"].filter(Boolean) as string[];
+  const scheduled = db
+    .prepare(`
+      SELECT r.id, j.name AS job_name FROM runs r
       JOIN jobs j ON r.job_id = j.id
-      WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
-      AND r.org_id = ?
+      LEFT JOIN agents a ON r.agent_id = a.id
+      WHERE r.status = 'scheduled' AND r.scheduled_for <= ?
+        AND r.placement IN (${placeholders(labels)})
+        AND j.kind IN (${placeholders(kinds)})
+        AND (j.kind = 'workflow' OR a.cli IN (${placeholders(clis)}))
+        ${rScope.sql}
+        AND (
+          (j.kind = 'agent' AND NOT EXISTS (
+            SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ${IN_FLIGHT}))
+          OR
+          (j.kind = 'workflow' AND NOT EXISTS (
+            SELECT 1 FROM runs rr WHERE rr.job_id = r.job_id AND rr.status IN ${IN_FLIGHT}))
+        )
       ORDER BY r.scheduled_for ASC LIMIT 1
     `)
-      .get(now, orgId) as any;
+    .get(now, ...labels, ...kinds, ...clis, ...rScope.params) as
+    | { id: string; job_name: string }
+    | undefined;
+  if (scheduled)
+    return {
+      available: true,
+      type: "scheduled_run",
+      run_id: scheduled.id,
+      job_name: scheduled.job_name,
+    };
 
-    if (scheduledRun) {
-      // Guarded claim — only if still 'scheduled', so a runner that lost the
-      // race to a sibling runner in the same org backs off instead of
-      // re-claiming a run that is already executing.
-      const claimed = db
-        .prepare(
-          `UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'scheduled'`,
-        )
-        .run(scheduledRun.id);
-      if (claimed.changes !== 1) return null;
-      db.prepare(
-        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`,
-      ).run(scheduledRun.id);
-      return scheduledRun.id as string;
-    }
-
-    // Any recurring workflow job past its schedule time? (scoped to this org)
-    const readyJob = db
+  if (canAgent) {
+    const job = db
       .prepare(`
-      SELECT j.id FROM jobs j
-      WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
-      AND j.workflow_script IS NOT NULL
-      AND j.org_id = ?
-      AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-      AND NOT EXISTS (
-        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
-      )
-      ORDER BY j.next_run_at ASC LIMIT 1
-    `)
-      .get(orgId, now) as any;
-
-    if (readyJob) {
-      const run = createRun(readyJob.id, null);
-      db.prepare(
-        `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
-      ).run(readyJob.id);
-      advanceJobSchedule(readyJob.id);
-      return run!.id as string;
-    }
-
-    return null;
-  });
-
-  const runId = assignRun();
-  if (!runId) return null;
-  return buildRunPayload(runId);
-}
-
-export function peekWorkflowNext(orgId: string) {
-  const db = getDb();
-  const now = Math.floor(Date.now() / 1000);
-
-  const scheduledRun = db
-    .prepare(`
-    SELECT r.id, j.name as job_name FROM runs r
-    JOIN jobs j ON r.job_id = j.id
-    WHERE j.kind = 'workflow' AND r.agent_id IS NULL AND r.status = 'scheduled' AND r.scheduled_for <= ?
-    AND r.org_id = ?
-    ORDER BY r.scheduled_for ASC LIMIT 1
-  `)
-    .get(now, orgId) as any;
-
-  if (scheduledRun) {
-    return {
-      available: true,
-      type: "scheduled_run",
-      run_id: scheduledRun.id,
-      job_name: scheduledRun.job_name,
-    };
+        SELECT j.id, j.name FROM jobs j
+        JOIN agents a ON j.agent_id = a.id
+        WHERE j.kind = 'agent' AND j.active = 1
+          AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+          AND a.placement IN (${placeholders(labels)})
+          AND a.cli IN (${placeholders(clis)})
+          ${jScope.sql}
+          AND NOT EXISTS (
+            SELECT 1 FROM runs rr WHERE rr.agent_id = j.agent_id AND rr.status IN ${IN_FLIGHT}
+            UNION ALL
+            SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status = 'scheduled'
+          )
+        ORDER BY j.next_run_at ASC LIMIT 1
+      `)
+      .get(now, ...labels, ...clis, ...jScope.params) as { id: string; name: string } | undefined;
+    if (job) return { available: true, type: "scheduled", job_id: job.id, job_name: job.name };
   }
 
-  const readyJob = db
-    .prepare(`
-    SELECT j.id, j.name FROM jobs j
-    WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
-    AND j.workflow_script IS NOT NULL
-    AND j.org_id = ?
-    AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-    AND NOT EXISTS (
-      SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending')
-    )
-    ORDER BY j.next_run_at ASC LIMIT 1
-  `)
-    .get(orgId, now) as any;
-
-  if (readyJob) {
-    return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
-  }
-
-  return { available: false, reason: "nothing_to_do" };
-}
-
-export function peekAgentNext(agentId: string) {
-  const db = getDb();
-
-  // Fail stale runs so peek accurately reflects availability
-  failStaleRuns(agentId);
-
-  const running = db
-    .prepare(`
-    SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-  `)
-    .get(agentId) as any;
-  if (running) return { available: false, reason: "busy" };
-
-  const pendingRun = db
-    .prepare(`
-    SELECT r.id, j.name as job_name FROM runs r
-    JOIN jobs j ON r.job_id = j.id
-    WHERE r.agent_id = ? AND r.status = 'pending'
-    ORDER BY r.updated_at ASC LIMIT 1
-  `)
-    .get(agentId) as any;
-
-  if (pendingRun) {
-    return {
-      available: true,
-      type: "pending_resume",
-      run_id: pendingRun.id,
-      job_name: pendingRun.job_name,
-    };
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-
-  const scheduledRun = db
-    .prepare(`
-    SELECT r.id, j.name as job_name FROM runs r
-    JOIN jobs j ON r.job_id = j.id
-    WHERE r.agent_id = ? AND r.status = 'scheduled' AND r.scheduled_for <= ?
-    ORDER BY r.scheduled_for ASC LIMIT 1
-  `)
-    .get(agentId, now) as any;
-
-  if (scheduledRun) {
-    return {
-      available: true,
-      type: "scheduled_run",
-      run_id: scheduledRun.id,
-      job_name: scheduledRun.job_name,
-    };
-  }
-
-  const readyJob = db
-    .prepare(`
-    SELECT j.id, j.name FROM jobs j
-    WHERE j.kind = 'agent' AND j.agent_id = ? AND j.active = 1
-    AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-    AND NOT EXISTS (SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'pending'))
-    ORDER BY j.next_run_at ASC LIMIT 1
-  `)
-    .get(agentId, now) as any;
-
-  if (readyJob) {
-    return { available: true, type: "scheduled", job_id: readyJob.id, job_name: readyJob.name };
+  if (canWorkflow) {
+    const job = db
+      .prepare(`
+        SELECT j.id, j.name FROM jobs j
+        WHERE j.kind = 'workflow' AND j.agent_id IS NULL AND j.active = 1
+          AND j.workflow_script IS NOT NULL
+          AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+          AND j.placement IN (${placeholders(labels)})
+          ${jScope.sql}
+          AND NOT EXISTS (
+            SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status IN ('scheduled','running','waiting','pending')
+          )
+        ORDER BY j.next_run_at ASC LIMIT 1
+      `)
+      .get(now, ...labels, ...jScope.params) as { id: string; name: string } | undefined;
+    if (job) return { available: true, type: "scheduled", job_id: job.id, job_name: job.name };
   }
 
   return { available: false, reason: "nothing_to_do" };

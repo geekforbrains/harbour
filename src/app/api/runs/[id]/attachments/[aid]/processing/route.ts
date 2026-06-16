@@ -1,41 +1,30 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withRunExecutorOrUser } from "@/lib/auth";
 import { getAttachmentById, getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { deleteProcessingRecord } from "@/lib/db/video-processing";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
-const runOrg = (p: Record<string, string>) => orgIdForResource("run", p.id);
-
-export const GET = withAgentOrUser(
-  async (_req, auth, { params }) => {
+export const GET = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
     const { id, aid } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const processing = getProcessingByAttachment(aid);
     if (!processing) return NextResponse.json({ error: "No processing record" }, { status: 404 });
 
     return NextResponse.json(processing);
   },
-  { role: "viewer", orgFromParams: runOrg },
+  { role: "viewer" },
 );
 
-export const POST = withAgentOrUser(
-  async (_req, auth, { params }) => {
+export const POST = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
     const { id, aid } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const att = getAttachmentById(aid);
     if (!att || att.run_id !== id) {
@@ -57,5 +46,5 @@ export const POST = withAgentOrUser(
     processVideoAttachment(aid, id);
     return NextResponse.json({ status: "queued" }, { status: 202 });
   },
-  { role: "editor", orgFromParams: runOrg },
+  { role: "editor" },
 );

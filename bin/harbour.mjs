@@ -4,20 +4,15 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAdminCreate, runSetup } from "./lib/bootstrap.mjs";
-import { listRunners, listWorkflowRunners } from "./lib/config.mjs";
-import { connectAgent, connectWorkflowRunner } from "./lib/connect.mjs";
-import {
-  installRunner,
-  installWorkflowRunner,
-  uninstallRunner,
-  uninstallWorkflowRunner,
-} from "./lib/install.mjs";
-import { runAgents, runWorkflows } from "./lib/runner.mjs";
+import { printRunnerStatus } from "./lib/config.mjs";
+import { connectRunner } from "./lib/connect.mjs";
+import { installRunner, uninstallRunner } from "./lib/install.mjs";
+import { runPool } from "./lib/runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 
-const [, , command, subcommand, ...rest] = process.argv;
+const [, , command, ...rest] = process.argv;
 
 function usage() {
   console.log(
@@ -27,19 +22,13 @@ harbour - Control plane for AI agents
 Usage:
   harbour start              Start the server (production)
   harbour dev                Start the server (development)
-  harbour setup              Create the first instance admin (interactive, first-run)
+  harbour setup              Create the first instance admin + local runner (first-run)
   harbour admin create       Create an instance admin (non-interactive flags)
-  harbour agent list         List configured harbour agents
-  harbour agent run          Poll all harbour agents once
-  harbour agent connect <blob>   Register a remote agent (paste the blob from
-                                 harbour's "Connect remote runner" panel)
-  harbour agent install      Install cron job for automatic polling
-  harbour agent uninstall    Remove the cron job
-  harbour workflow list      List configured workflow runners
-  harbour workflow run       Poll workflow jobs once
-  harbour workflow connect <blob> Register a workflow runner
-  harbour workflow install   Install cron job for workflow polling
-  harbour workflow uninstall Remove the workflow polling cron job
+  harbour run                Claim and run all due work once (the runner)
+  harbour connect <blob>     Enroll a remote runner from a minted credential blob
+  harbour install            Schedule the runner as a service (polls every 60s)
+  harbour uninstall          Remove the runner service
+  harbour status             Show the runner's provisioning status
   `.trim(),
   );
 }
@@ -60,69 +49,34 @@ async function main() {
       break;
     }
     case "setup": {
-      await runSetup([subcommand, ...rest].filter(Boolean));
+      await runSetup(rest.filter(Boolean));
       break;
     }
     case "admin": {
-      switch (subcommand) {
-        case "create":
-          await runAdminCreate(rest);
-          break;
-        default:
-          console.error(`Unknown admin command: ${subcommand}`);
-          usage();
-          process.exit(1);
+      if (rest[0] === "create") {
+        await runAdminCreate(rest.slice(1));
+      } else {
+        console.error(`Unknown admin command: ${rest[0]}`);
+        usage();
+        process.exit(1);
       }
       break;
     }
-    case "agent": {
-      switch (subcommand) {
-        case "list":
-          listRunners();
-          break;
-        case "run":
-          await runAgents();
-          break;
-        case "connect":
-          await connectAgent(rest[0]);
-          break;
-        case "install":
-          installRunner();
-          break;
-        case "uninstall":
-          uninstallRunner();
-          break;
-        default:
-          console.error(`Unknown agent command: ${subcommand}`);
-          usage();
-          process.exit(1);
-      }
+    case "run":
+      await runPool();
       break;
-    }
-    case "workflow": {
-      switch (subcommand) {
-        case "list":
-          listWorkflowRunners();
-          break;
-        case "run":
-          await runWorkflows();
-          break;
-        case "connect":
-          await connectWorkflowRunner(rest[0]);
-          break;
-        case "install":
-          installWorkflowRunner();
-          break;
-        case "uninstall":
-          uninstallWorkflowRunner();
-          break;
-        default:
-          console.error(`Unknown workflow command: ${subcommand}`);
-          usage();
-          process.exit(1);
-      }
+    case "connect":
+      await connectRunner(rest[0]);
       break;
-    }
+    case "install":
+      installRunner();
+      break;
+    case "uninstall":
+      uninstallRunner();
+      break;
+    case "status":
+      printRunnerStatus();
+      break;
     default:
       usage();
       break;

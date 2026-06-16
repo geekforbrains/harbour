@@ -9,9 +9,9 @@ import {
   createOrg,
   createProject,
   createRun,
+  createRunner,
   createUser,
   createWorkflow,
-  createWorkflowRunner,
   deleteAgent,
   deleteOrg,
   deleteProject,
@@ -287,10 +287,9 @@ describe("workflows", () => {
     expect(workflow.project_id).toBe(project.id);
   });
 
-  it("creates workflow runner credentials scoped to an org", () => {
-    const org = createOrg("Acme")!;
-    const runner = createWorkflowRunner(org.id, "Server")!;
-    expect(runner.org_id).toBe(org.id);
-    expect(runner.apiKey).toMatch(/^hwf_/);
+  it("registers a runner in the instance-level registry", () => {
+    const runner = createRunner({ name: "Local pool", tier: "local" });
+    expect(runner.tier).toBe("local");
+    expect(runner.token).toMatch(/^hbrn_/);
   });
 });

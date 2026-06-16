@@ -8,14 +8,13 @@ import {
   createRun,
   createWorkflow,
   failTimedOutRun,
-  getAgentNextRun,
-  getNextWorkflowRun,
   getRunById,
   listRunActivity,
   requeueWorkflowRun,
   updateRunStatus,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { claim, localRunner } from "./support/claim";
 
 // ---------------------------------------------------------------------------
 // Run lifecycle — reaper race dedupe + requeue claimed_at reset
@@ -64,7 +63,7 @@ function timeoutActivityRows(runId: string) {
 function agentSetup() {
   const org = createOrg("Acme")!;
   const project = createProject(org.id, "Website")!;
-  const agent = createAgent(project.id, "Dev");
+  const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
   const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
   return { org, project, agent, job };
 }
@@ -94,8 +93,9 @@ describe("stale-run reaper: timeout activity dedupe under concurrent polls", () 
     // SELECT happens on both polls before either fails the run).
     const candidate = { id: run.id, timeout_minutes: 30 };
 
-    // Reaper A: the real poll path fails the run and logs the timeout.
-    getAgentNextRun(agent.id);
+    // Reaper A: the real claim path reaps stale runs first, failing this run
+    // and logging the timeout.
+    claim(localRunner());
     expect(getRunById(run.id)!.status).toBe("failed");
     expect(timeoutActivityRows(run.id).length).toBe(1);
 
@@ -123,18 +123,18 @@ describe("stale-run reaper: timeout activity dedupe under concurrent polls", () 
     const run = createRun(job.id, agent.id)!;
     backdateClaim(run.id, 60); // claimed 1 min ago — well within the cap
 
-    getAgentNextRun(agent.id);
+    claim(localRunner());
 
     expect(getRunById(run.id)!.status).toBe("running");
     expect(timeoutActivityRows(run.id).length).toBe(0);
   });
 
   it("workflow reaper path also dedupes against a racing snapshot", () => {
-    const { org, wf } = workflowSetup();
+    const { wf } = workflowSetup();
     const run = createRun(wf.id, null)!;
     backdateClaim(run.id, 40 * 60);
 
-    getNextWorkflowRun(org.id); // reaps the stale workflow run
+    claim(localRunner()); // reaps the stale workflow run before claiming
     expect(getRunById(run.id)!.status).toBe("failed");
     expect(timeoutActivityRows(run.id).length).toBe(1);
 
@@ -161,12 +161,12 @@ describe("requeueWorkflowRun: resets claimed_at", () => {
   });
 
   it("a requeued run can be claimed normally and gets a fresh claimed_at", () => {
-    const { org, wf } = workflowSetup();
+    const { wf } = workflowSetup();
     const run = createRun(wf.id, null)!;
     updateRunStatus(run.id, "failed");
     requeueWorkflowRun(run.id);
 
-    const payload = getNextWorkflowRun(org.id);
+    const payload = claim(localRunner());
     expect(payload).toBeTruthy();
     expect(payload!.run.id).toBe(run.id);
 

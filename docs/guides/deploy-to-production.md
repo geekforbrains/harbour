@@ -6,7 +6,7 @@ Harbour is a single-process Next.js app with a SQLite file. Anything that can ru
 
 ## Linux (systemd)
 
-Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. You'll end with harbour running as two systemd services (server + agent runner) under a dedicated user, bound to localhost, with Caddy terminating TLS in front.
+Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. You'll end with harbour running as two systemd services (server + runner) under a dedicated user, bound to localhost, with Caddy terminating TLS in front.
 
 ### 1. Prerequisites
 
@@ -68,11 +68,11 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/harbour-agent-runner.service` — the runner (skip if this host won't run agents):
+`/etc/systemd/system/harbour-runner.service` — the runner (skip if this host won't run agents):
 
 ```ini
 [Unit]
-Description=Harbour agent runner (polls /next, spawns CLIs)
+Description=Harbour runner (claims and runs work via /api/runner/claim)
 After=harbour.service network-online.target
 # Wants (not Requires) so a harbour restart doesn't stop the runner.
 Wants=harbour.service network-online.target
@@ -83,7 +83,7 @@ User=harbour
 Group=harbour
 WorkingDirectory=/opt/harbour
 # Loop locally so one poll failure doesn't kill the service.
-ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs agent run || true; sleep 60; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs run || true; sleep 60; done'
 Environment=HARBOUR_HOME=/home/harbour/.harbour
 # Explicit PATH so the service session finds CLIs installed under the
 # harbour user's home (the claude installer puts itself in ~/.local/bin).
@@ -100,7 +100,7 @@ Enable both:
 ```bash
 systemctl daemon-reload
 systemctl enable --now harbour.service
-systemctl enable --now harbour-agent-runner.service
+systemctl enable --now harbour-runner.service
 ```
 
 ### 4. HTTPS in front
@@ -148,10 +148,10 @@ codex    # Browser sign-in — or: export OPENAI_API_KEY=...
 gemini   # OAuth device-code flow — or: export GEMINI_API_KEY=...
 exit
 # If the runner was started before the CLI was authed, kick it:
-systemctl restart harbour-agent-runner
+systemctl restart harbour-runner
 ```
 
-For API-key auth instead of OAuth, either put the keys in `/home/harbour/.bashrc` or use a systemd drop-in: `systemctl edit harbour-agent-runner` and add:
+For API-key auth instead of OAuth, either put the keys in `/home/harbour/.bashrc` or use a systemd drop-in: `systemctl edit harbour-runner` and add:
 
 ```ini
 [Service]
@@ -171,7 +171,7 @@ npm run build
 cp -r public .next/standalone/
 cp -r .next/static .next/standalone/.next/
 systemctl restart harbour
-systemctl restart harbour-agent-runner
+systemctl restart harbour-runner
 ```
 
 > Don't run `npm run release` here — that script is for macOS/launchd installs and refuses to run on Linux ([`scripts/release.sh`](../../scripts/release.sh) checks `uname -s`).
@@ -180,19 +180,19 @@ systemctl restart harbour-agent-runner
 
 ```bash
 journalctl -u harbour -f               # the Next.js server
-journalctl -u harbour-agent-runner -f  # the runner
+journalctl -u harbour-runner -f  # the runner
 journalctl -u caddy -f                 # the proxy / cert issuance
 ```
 
 ## macOS (launchd)
 
-macOS is the developer-machine path: `npm run build && npm start` from the repo, with the runner installed via `npm run harbour -- agent install` (a launchd plist that fires `agent run` every 60s — see [Getting started](getting-started.md)). If you run the server itself under launchd (label `com.harbour.server`), `npm run release` rebuilds and bounces the full stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
+macOS is the developer-machine path: `npm run build && npm start` from the repo, with the runner installed via `npm run harbour -- install` (a launchd plist that fires `run` every 60s — see [Getting started](getting-started.md)). If you run the server itself under launchd (label `com.harbour.server`), `npm run release` rebuilds and bounces the full stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
 
 ## State and backups
 
 Wherever it runs, harbour's state lives in one directory — `HARBOUR_HOME`, default `~/.harbour/` (so `/home/harbour/.harbour/` in the Linux setup above).
 
-What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runners.json` (runner config), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
+What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runner.token` (the runner credential, 0600), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
 
 Backup strategy: snapshot the directory. Restoring is "put it back, restart the service".
 

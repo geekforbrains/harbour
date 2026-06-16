@@ -480,6 +480,27 @@ export function getProvider(cli) {
   return provider;
 }
 
+/** The CLI providers this runtime knows how to drive. */
+export const KNOWN_CLIS = Object.keys(PROVIDERS);
+
+/**
+ * Detect what this host can execute, advertised on every claim (Runner Protocol).
+ *   clis   — installed CLIs (claude/codex/gemini) found on PATH.
+ *   kinds  — always "workflow" (shell gates need only bash/python/node); plus
+ *            "agent" when at least one CLI is present.
+ *   labels — placement labels this runner serves; default ["local"], overridable
+ *            via HARBOUR_RUNNER_LABELS (comma-separated) for a remote runner.
+ */
+export function detectCapabilities() {
+  const clis = KNOWN_CLIS.filter((cli) => !!resolveBinary(cli));
+  const kinds = clis.length > 0 ? ["agent", "workflow"] : ["workflow"];
+  const labels = (process.env.HARBOUR_RUNNER_LABELS || "local")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { kinds, clis, labels: labels.length > 0 ? labels : ["local"] };
+}
+
 /**
  * Guard the resolved thinking level against the provider's accepted list
  * (issue #39: `--effort off` failed every run at CLI launch). A level the

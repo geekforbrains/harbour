@@ -15,13 +15,13 @@ import {
   createSession,
   createUser,
   createWorkflow,
-  createWorkflowRunner,
-  getNextWorkflowRun,
   getRunById,
   listRunActivity,
+  mintExecToken,
   updateRunStatus,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { claim, localRunner } from "./support/claim";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -49,15 +49,13 @@ function userReq(userId: string, url: string, init: ReqInit = {}): NextRequest {
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
-function agentReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
+// A run's executor authenticates with that run's `hbx_` exec token (minted at
+// claim). It's the only credential the activity/status routes accept as the
+// run's executor — for both agent and workflow runs. The permanent agent key is
+// for resource routes only, and the old per-org workflow-runner key is gone.
+function executorReq(execToken: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${apiKey}`);
-  return new NextRequest(url, { method: init.method, body: init.body, headers });
-}
-
-function workflowRunnerReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
-  const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${apiKey}`);
+  headers.set("authorization", `Bearer ${execToken}`);
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
@@ -89,24 +87,42 @@ function fixture() {
   const viewer = createUser("v@x.com", "pw", "Viewer")!;
   addMembership(editor.id, org.id, "editor");
   addMembership(viewer.id, org.id, "viewer");
-  const agent = createAgent(project.id, "Dev");
+  const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
   const agentJob = createJob(project.id, agent.id, { name: "AJ", schedule: '{"every":60}' })!;
   const agentRun = createRun(agentJob.id, agent.id)!;
+  // The run's executor credential — what the runner hands its spawned CLI for
+  // this run's lifecycle endpoints (the permanent agent key is for resource
+  // routes only, never run status/activity).
+  const agentExec = mintExecToken(agentRun.id);
   const wfJob = createWorkflow(org.id, project.id, {
     name: "WF",
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo hi" },
   })!;
   const wfRun = createRun(wfJob.id, null)!;
-  const runner = createWorkflowRunner(org.id, "Server")!;
-  return { org, project, editor, viewer, agent, agentJob, agentRun, wfJob, wfRun, runner };
+  // The workflow run is born 'running'; mint its executor token so route-level
+  // tests can act as the run's executor (the runner's spawned process).
+  const wfExec = mintExecToken(wfRun.id);
+  return {
+    org,
+    project,
+    editor,
+    viewer,
+    agent,
+    agentJob,
+    agentRun,
+    agentExec,
+    wfJob,
+    wfRun,
+    wfExec,
+  };
 }
 
 describe("workflow run status isolation", () => {
   it("rejects 'waiting' on a workflow run from a workflow runner", async () => {
-    const { wfRun, runner } = fixture();
+    const { wfRun, wfExec } = fixture();
     const res = await runStatusPUT(
-      workflowRunnerReq(runner.apiKey, "http://x/", statusBody("waiting")),
+      executorReq(wfExec, "http://x/", statusBody("waiting")),
       ctx({ id: wfRun.id }),
     );
     expect(res.status).toBe(400);
@@ -114,9 +130,9 @@ describe("workflow run status isolation", () => {
   });
 
   it("rejects 'pending' on a workflow run from a workflow runner", async () => {
-    const { wfRun, runner } = fixture();
+    const { wfRun, wfExec } = fixture();
     const res = await runStatusPUT(
-      workflowRunnerReq(runner.apiKey, "http://x/", statusBody("pending")),
+      executorReq(wfExec, "http://x/", statusBody("pending")),
       ctx({ id: wfRun.id }),
     );
     expect(res.status).toBe(400);
@@ -134,7 +150,7 @@ describe("workflow run status isolation", () => {
   });
 
   it("still accepts terminal statuses on a workflow run", async () => {
-    const { project, runner } = fixture();
+    const { project } = fixture();
     for (const status of ["done", "failed", "skipped", "killed"]) {
       const job = createWorkflow(project.org_id, project.id, {
         name: `WF-${status}`,
@@ -142,8 +158,9 @@ describe("workflow run status isolation", () => {
         workflow: { runtime: "bash", content: "echo hi" },
       })!;
       const run = createRun(job.id, null)!;
+      const execToken = mintExecToken(run.id);
       const res = await runStatusPUT(
-        workflowRunnerReq(runner.apiKey, "http://x/", statusBody(status)),
+        executorReq(execToken, "http://x/", statusBody(status)),
         ctx({ id: run.id }),
       );
       expect(res.status, `status=${status}`).toBe(200);
@@ -152,9 +169,9 @@ describe("workflow run status isolation", () => {
   });
 
   it("agent runs still accept 'waiting' (regression)", async () => {
-    const { agentRun, agent } = fixture();
+    const { agentRun, agentExec } = fixture();
     const res = await runStatusPUT(
-      agentReq(agent.apiKey, "http://x/", statusBody("waiting")),
+      executorReq(agentExec, "http://x/", statusBody("waiting")),
       ctx({ id: agentRun.id }),
     );
     expect(res.status).toBe(200);
@@ -188,15 +205,19 @@ describe("workflow runs have no message thread", () => {
   });
 
   it("records workflow-runner output with author_type 'workflow'", async () => {
-    const { wfRun, runner } = fixture();
+    const { wfRun, wfExec } = fixture();
     const res = await activityPOST(
-      workflowRunnerReq(runner.apiKey, "http://x/", commentBody("3 rows synced")),
+      executorReq(wfExec, "http://x/", commentBody("3 rows synced")),
       ctx({ id: wfRun.id }),
     );
     expect(res.status).toBe(201);
     const entry = await res.json();
     expect(entry.author_type).toBe("workflow");
-    expect(entry.author_name).toBe("Server");
+    // A workflow run has no agent, so its executor token carries no name; the
+    // route authors workflow output under the generic "Runner" label. (The old
+    // per-org workflow-runner key surfaced its registered name, e.g. "Server";
+    // that link no longer exists in the unified-claim model.)
+    expect(entry.author_name).toBe("Runner");
     // Round-trips through the CHECK constraint on run_activity.author_type.
     const stored = listRunActivity(wfRun.id);
     expect(stored.some((a) => a.author_type === "workflow" && a.content === "3 rows synced")).toBe(
@@ -218,9 +239,9 @@ describe("workflow runs have no message thread", () => {
   });
 
   it("an agent posting on its own run is still recorded as 'agent' (regression)", async () => {
-    const { agentRun, agent } = fixture();
+    const { agentRun, agentExec } = fixture();
     const res = await activityPOST(
-      agentReq(agent.apiKey, "http://x/", commentBody("working on it")),
+      executorReq(agentExec, "http://x/", commentBody("working on it")),
       ctx({ id: agentRun.id }),
     );
     expect(res.status).toBe(201);
@@ -230,8 +251,8 @@ describe("workflow runs have no message thread", () => {
 });
 
 describe("workflow run retry requeues for the runner", () => {
-  it("retrying a failed workflow run requeues it as 'scheduled', claimable by getNextWorkflowRun", async () => {
-    const { org, wfRun, editor } = fixture();
+  it("retrying a failed workflow run requeues it as 'scheduled', claimable by a runner", async () => {
+    const { wfRun, editor } = fixture();
     updateRunStatus(wfRun.id, "failed");
 
     const res = await retryPOST(
@@ -245,8 +266,10 @@ describe("workflow run retry requeues for the runner", () => {
     expect(after.scheduled_for).not.toBeNull();
     expect(after.scheduled_for).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
 
-    // The whole point: a workflow runner can actually pick the retry back up.
-    const payload = getNextWorkflowRun(org.id);
+    // The whole point: a runner can actually pick the retry back up. (The agent
+    // run from the fixture is still 'running', so the requeued workflow run is
+    // the only claimable unit here.)
+    const payload = claim(localRunner());
     expect(payload).not.toBeNull();
     expect(payload!.run.id).toBe(wfRun.id);
     expect(getRunById(wfRun.id)!.status).toBe("running");
@@ -263,11 +286,13 @@ describe("workflow run retry requeues for the runner", () => {
     expect(getRunById(agentRun.id)!.status).toBe("pending");
   });
 
-  it("a workflow runner cannot retry runs", async () => {
-    const { wfRun, runner } = fixture();
+  it("a workflow run's executor cannot retry runs (user-only action)", async () => {
+    const { wfRun, wfExec } = fixture();
     updateRunStatus(wfRun.id, "failed");
+    // Retry is a dashboard (user) action — withResourceAuth, editor role. An
+    // executor token is not a user, so it's forbidden from retrying.
     const res = await retryPOST(
-      workflowRunnerReq(runner.apiKey, "http://x/", { method: "POST" }),
+      executorReq(wfExec, "http://x/", { method: "POST" }),
       ctx({ id: wfRun.id }),
     );
     expect(res.status).toBe(403);

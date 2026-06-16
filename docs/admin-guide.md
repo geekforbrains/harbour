@@ -103,30 +103,49 @@ Content-Type: application/json
 `name` and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Agent names are unique per project, under the same slug rules as orgs and projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
 - `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is **not** validated — any string is accepted, since the CLIs take arbitrary model ids. `thinking` **is** validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini` (it takes no thinking level); an unknown level is a 400. Empty/omitted means the CLI default.
 - `eager` (boolean) — the runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
-- `remote` (boolean) — the runner lives on another machine. Local agents (the default) are registered with the co-located runner automatically; remote agents are connected on their machine via `npm run harbour -- agent connect`.
+- `placement` (string) — routes this agent's runs to a runner. Defaults to `local`: the auto-provisioned local runner claims the work. Set a label (e.g. `gpu`) to pin the agent to a specific machine — its runs then go only to a remote runner enrolled for that label (mint one via `POST /api/runners` and connect it on that host; see **Runners** below).
 - `color` — identity hue (falls back to a name-derived color if omitted)
 
-Response includes `apiKey` — save it, shown only once. Any HTTP client holding this key can act as the agent; the worker contract is served at `GET /api/guide`.
+The response is the created agent record. The agent's runs are executed by a runner per its `placement` (the local runner by default, or a remote one you've enrolled for its label); the worker contract a runner reads is served at `GET /api/guide`.
 
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "eager": true, "remote": false }
+PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "eager": true, "placement": "local" }
 DELETE /api/agents/:id
 ```
 
-PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `remote` — omitted fields are left unchanged. `model` is **not** validated (the CLIs accept arbitrary model ids); `thinking` is validated per `cli` (same per-CLI values as create). Changes to `name`, `model`, `thinking`, or `eager` sync to the local runner config automatically. `cli` and `thinking` are validated together — changing `cli` to one that doesn't accept the agent's current `thinking` level is a 400 unless the request also re-sets or clears `thinking`.
-
-### Rotate Agent API Key
-```
-POST /api/agents/:id/rotate-key
-```
-Returns `{ "apiKey": "hbr_..." }` — the new key, shown only once.
+PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `placement` — omitted fields are left unchanged. `model` is **not** validated (the CLIs accept arbitrary model ids); `thinking` is validated per `cli` (same per-CLI values as create). `cli` and `thinking` are validated together — changing `cli` to one that doesn't accept the agent's current `thinking` level is a 400 unless the request also re-sets or clears `thinking`.
 
 ### List Agent's Jobs
 ```
 GET /api/agents/:id/jobs
 ```
+
+## Runners (instance admin)
+
+A **runner** is the process that claims and executes runs — both agent runs and workflows. The registry is instance-level (execution is org-agnostic). The **local** runner is auto-provisioned at setup and claims all `local`-placement work; you only mint a runner here to add a **remote** one on another machine, so that agents/workflows with a matching `placement` label land there.
+
+### List Runners
+```
+GET /api/runners
+```
+
+### Mint a Runner
+```
+POST /api/runners
+Content-Type: application/json
+
+{ "name": "gpu-box", "labels": ["gpu"], "scope": { "orgId": "uuid" } }
+```
+
+Only `name` is required. `labels` (array of strings) are the placement labels the runner is authorized to serve — an agent/workflow whose `placement` matches one of them routes to it. `scope` is optional `{ "orgId"?, "agentId"? }` to restrict the token to one org and/or one agent's work. The response includes the runner row plus a ready-made `connect` command — `npm run harbour -- connect <blob>` — to run on the remote host, where the base64 blob carries the URL, token, and name. The token is shown only here.
+
+### Revoke a Runner
+```
+DELETE /api/runners/:id
+```
+Deleting the row invalidates the token immediately (its next claim 401s).
 
 ## Jobs
 
@@ -178,7 +197,7 @@ Content-Type: application/json
 }
 ```
 
-`name`, `schedule`, and `command` are all required. `command` is a **gate** — `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }`, same shape as an agent job's prerun/postrun (`runtime` optional, defaults to `"bash"`; `content` required and non-empty). `workflow` is accepted as an alias for `command`. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by the same org-scoped workflow runners. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/tables; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. A workflow runner materializes the command's body to a file under `~/.harbour/workflows/` and runs it with the runtime's interpreter, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Runner credentials are minted with `POST /api/workflow-runners?orgId=<id>` `{ "name": "..." }` — the response includes a ready-made `npm run harbour -- workflow connect <blob>` command for the runner host.
+`name`, `schedule`, and `command` are all required. `command` is a **gate** — `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }`, same shape as an agent job's prerun/postrun (`runtime` optional, defaults to `"bash"`; `content` required and non-empty). `workflow` is accepted as an alias for `command`. Workflows don't belong to an agent — passing `agentId` here returns 400 (agent jobs go through `POST /api/agents/:id/jobs`). `projectId` is optional (body or query) — with it the workflow is project-level; without it, **org-level**, claimed by any eligible runner. Scope is fixed at creation — re-create the job to change it. An org-level workflow may link only org-level docs/env vars/tables; a project-scoped id returns 400. Optional fields: `timeoutMinutes`, `docIds`, `envVarIds`. The runner materializes the command's body to a file under `~/.harbour/workflows/` and runs it with the runtime's interpreter, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail). Workflows are claimed by the same unified runner that handles agent runs — no separate credential. A workflow's `placement` (default `local`) routes it like an agent's: the auto-provisioned local runner picks up `local` work, and a label pins it to a remote runner enrolled for that label (see **Runners**).
 
 ### Schedule Format
 
@@ -225,7 +244,7 @@ Content-Type: application/json
 
 { "instructions": "Optional extra instructions for this run" }
 ```
-Creates a run in `scheduled` status with `scheduled_for` set to now, regardless of the job's schedule — the assigned agent or workflow runner claims it on its next poll (not an instant in-process execution). Body is optional; any `instructions` are appended to the run's activity log. Returns `{ "jobId": "...", "runId": "..." }` with status 201. This is also the way to run something ad hoc — there is no standalone "create run" endpoint; every run comes from a job.
+Creates a run in `scheduled` status with `scheduled_for` set to now, regardless of the job's schedule — the assigned agent or an eligible runner claims it on its next poll (not an instant in-process execution). Body is optional; any `instructions` are appended to the run's activity log. Returns `{ "jobId": "...", "runId": "..." }` with status 201. This is also the way to run something ad hoc — there is no standalone "create run" endpoint; every run comes from a job.
 
 ### Link Resources to a Job
 ```
@@ -301,7 +320,7 @@ Workflow runs have no message thread — their activity log is runner output onl
 ```
 POST /api/runs/:id/retry
 ```
-Only works for runs whose status is `failed`, `skipped`, or `killed` — other statuses return 400. An agent run transitions back to `pending` for the agent to pick up; a workflow run is requeued as `scheduled` for a workflow runner to claim.
+Only works for runs whose status is `failed`, `skipped`, or `killed` — other statuses return 400. An agent run transitions back to `pending` for the agent to pick up; a workflow run is requeued as `scheduled` for a runner to claim.
 
 ### Kill a Running Run
 ```
@@ -590,7 +609,7 @@ DELETE /api/admin-api-keys/:id
 
 ### Set up a workflow (no agent)
 1. `POST /api/jobs?orgId=<id>` — create the workflow with `command` (a `{ runtime, content }` gate) and schedule (add `projectId` for project-level)
-2. `POST /api/workflow-runners?orgId=<id>` — mint runner credentials; run the returned `workflow connect` command on the runner host
+2. No runner setup needed for `local` placement — the auto-provisioned local runner claims it. To pin it to another machine, give the workflow a `placement` label and `POST /api/runners` to mint a remote runner for that label, then run the returned `connect` command on that host
 3. Optionally link docs/env vars for context (passed via stdin JSON)
 
 ### Respond to a waiting run

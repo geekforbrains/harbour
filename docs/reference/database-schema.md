@@ -5,7 +5,7 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
 v1 → v2 migration; a fresh database is the only supported path.
 
-- **28 tables**, **34 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **27 tables**, **35 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
   `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
@@ -25,13 +25,14 @@ in the schema, not bolted on:
   across the org); otherwise project-level.
 - **Jobs are dual-tier too**, but only for workflows: `jobs` carries a NOT NULL
   `org_id` plus a NULLABLE `project_id`; `project_id IS NULL` ⇒ an org-level
-  workflow job claimed by the org's workflow runners. Agent jobs are always
+  workflow job. Agent jobs are always
   project-level (a table CHECK enforces it). Scope is fixed at creation —
   `updateJob` cannot move a job between tiers — and an org-level job may link
   only org-level resources (linking a project-scoped doc/env var/table into
   an org-scoped job would widen its blast radius; the query layer rejects it
   and routes return 400).
-- **Org-scoped** infrastructure: `workflow_runners`, `captain_conversations`.
+- **Org-scoped** infrastructure: `captain_conversations`. The `runners`
+  registry is **instance-level** (org-agnostic — execution doesn't see tenancy).
 - `runs.org_id` and `runs.project_id` are denormalized (copied from the job) so
   org-scoped run queries need no join and org-level runs (`project_id` NULL)
   stay reachable.
@@ -142,6 +143,7 @@ Indexes: `idx_projects_org`, `idx_projects_org_slug(org_id, slug)` (UNIQUE).
 | `eager` | INTEGER | NN, default 0 | drain queue without the 60s pause |
 | `remote` | INTEGER | NN, default 0 | runner lives on another machine |
 | `runner_fingerprint` | TEXT | | one-runtime-per-agent guard |
+| `placement` | TEXT | NN, default `'local'` | routes this agent's runs to a runner tier/label (denormalized onto `runs.placement` at creation) |
 | `last_polled_at` | INTEGER | | updated on each poll |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
@@ -149,11 +151,24 @@ There is no stored `type` column — an external agent simply has no runner
 configured. Indexes: `idx_agents_project`,
 `idx_agents_project_slug(project_id, slug)` (UNIQUE).
 
-### `workflow_runners`
-Org-scoped credentials for the deterministic workflow poller.
-`id`, `org_id` (NN, FK → orgs CASCADE), `name`, `api_key_hash` (NN, U),
-`labels` (JSON, default `'[]'`), `enabled` (default 1), `last_polled_at`,
-timestamps. Index: `idx_workflow_runners_org`.
+### `runners`
+The **instance-level runner registry** — one row per runner (the auto-provisioned
+local pool plus any remote runners). Org-agnostic on purpose: execution is
+org-agnostic; tenancy only shapes what users see. Replaces the file-based agent
+runner config (`runners.json`) and the per-org `workflow_runners` table.
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | |
+| `name` | TEXT | NN | |
+| `token_hash` | TEXT | NN, U | sha256 of the bearer token (`hbrn_…`) |
+| `tier` | TEXT | NN, CHECK in (`local`, `remote`) | local = trusted/unscoped; remote = scoped |
+| `labels` | TEXT | NN, default `'[]'` | JSON: placement labels this token is **authorized** to serve |
+| `capabilities` | TEXT | | JSON `{kinds,clis,labels}` — last-**advertised** host capabilities (health/display) |
+| `scope` | TEXT | | JSON `{orgId?,agentId?}` or NULL (unscoped — local tier) |
+| `last_polled_at` | INTEGER | | updated on every claim/peek; drives the health surface |
+| `created_at` / `updated_at` | INTEGER | NN | |
+
+Index: `idx_runners_token(token_hash)` (UNIQUE).
 
 ### `jobs`
 Static configuration for recurring work (agent or workflow).
@@ -173,6 +188,7 @@ Static configuration for recurring work (agent or workflow).
 | `postrun_gates` | INTEGER | NN, default 0 | 0 = informational (never changes status); 1 = enforcing (nonzero overrides `done`→`failed`) |
 | `workflow_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the workflow gist; NULL exactly when `workflow_script` is |
 | `workflow_script` | TEXT | | workflow job command body (no agent / LLM) |
+| `placement` | TEXT | NN, default `'local'` | workflow jobs: routes runs to a runner tier/label (agent jobs inherit from their agent) |
 | `timeout_minutes` | INTEGER | NN, default 30 | |
 | `model` / `thinking` | TEXT | | per-job override |
 | `title_format` | TEXT | | hint for how agents name runs |
@@ -197,6 +213,9 @@ A single execution of a job.
 | `agent_id` | TEXT | FK → `agents` (SET NULL) | NULL for workflow runs |
 | `status` | TEXT | NN, default `running`, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
 | `title` | TEXT | | short run title (agent-settable) |
+| `placement` | TEXT | NN, default `'local'` | denormalized from the agent (agent runs) or job (workflow runs) at creation; keeps the claim query flat |
+| `claimed_by` | TEXT | FK → `runners` (SET NULL) | which runner claimed this run |
+| `exec_token_hash` | TEXT | | sha256 of the per-run executor token (`hbx_…`); minted at claim, the CLI's run-scoped callback credential |
 | `scheduled_for` | INTEGER | | one-off / triggered runs |
 | `claimed_at` | INTEGER | | set when flipped to `running` |
 | `completed_at` | INTEGER | | set on terminal status |
@@ -206,7 +225,7 @@ A single execution of a job.
 | `created_at` / `updated_at` | INTEGER | NN | |
 
 Indexes: `idx_runs_org`, `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
-`idx_runs_status`.
+`idx_runs_status`, `idx_runs_claimed_by`.
 
 ### `run_activity`
 Ordered message log. On workflow runs this is runner output only
@@ -307,15 +326,20 @@ Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
 
 ## Notable invariants
 
-- **Polling-ladder atomicity.** `getAgentNextRun` / `getNextWorkflowRun`
-  (`src/lib/db/runs.ts`) run as a single `db.transaction`. With `busy_timeout`
-  plus guarded claim UPDATEs (`AND status = 'scheduled'/'pending'`), a lost race
-  is a no-op, never a double-claim.
+- **Polling-ladder atomicity.** `claimNextRun` / `peekClaim`
+  (`src/lib/db/runs.ts`, behind `POST /api/runner/claim`) run the whole
+  select-and-claim in one **IMMEDIATE** transaction, so concurrent claims
+  serialize on the single SQLite writer. The guarded claim UPDATEs
+  (`AND status = 'scheduled'/'pending'`) plus a lock-unit check — `agent_id`
+  for agent runs, `job_id` for workflow runs, nothing in flight
+  (`running`/`waiting`/`pending`) — make a lost race a no-op, never a
+  double-claim.
 - **Dual-tier resolution.** For `docs`/`env_vars`/`tables`, `project_id IS
   NULL` means org-level; the query layer resolves project-over-org on name
   collisions.
 - **Workflows.** `jobs.kind = 'workflow'` ⇒ `agent_id` is NULL on both the job
-  and its runs; claimed via `/api/workflows/next` with workflow-runner auth.
+  and its runs; claimed via `POST /api/runner/claim` like any other run (a
+  runner advertising the `workflow` kind), no separate poll endpoint.
   Workflow jobs may be org-level (`project_id` NULL — scope fixed at creation,
   org-level resources only); agent jobs never are (table CHECK).
 - **Env-var encryption.** Plaintext never lands in the DB; the key is read from

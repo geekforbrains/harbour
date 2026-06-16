@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
-import { withAgentOrUser } from "@/lib/auth";
-import { orgIdForResource } from "@/lib/db/access";
+import { withRunExecutorOrUser } from "@/lib/auth";
 import { getRunById, updateRunSessionId } from "@/lib/db/queries";
 import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 
-export const PUT = withAgentOrUser(
+// The runner saves the CLI session id (+ cwd) so a killed/waiting run resumes in
+// place. Executor-only — users never write run sessions.
+export const PUT = withRunExecutorOrUser(
   async (req, auth, { params }) => {
     const { id } = await params;
     const run = getRunById(id);
     if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-    if (auth.type === "agent" && run.agent_id !== auth.agentId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (auth.type === "workflow_runner") {
+    if (auth.type !== "executor") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -24,8 +22,5 @@ export const PUT = withAgentOrUser(
     updateRunSessionId(id, sessionId, cwd || undefined);
     return NextResponse.json({ ok: true });
   },
-  {
-    role: "editor",
-    orgFromParams: (p) => orgIdForResource("run", p.id),
-  },
+  { role: "editor" },
 );

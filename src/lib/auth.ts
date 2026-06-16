@@ -11,9 +11,11 @@ import {
 import {
   authenticateAdminApiKey,
   authenticateAgent,
-  authenticateWorkflowRunner,
+  authenticateRunner,
+  getRunByExecToken,
   getSession,
 } from "./db/queries";
+import type { RunnerScope, RunnerTier } from "./db/runners";
 import { HttpError } from "./http";
 
 // ── Session cookie ───────────────────────────────────────────────────────────
@@ -69,14 +71,39 @@ type AgentIdentity = {
   projectId: string;
 };
 
-type WorkflowRunnerIdentity = {
-  type: "workflow_runner";
+/**
+ * A runner authenticated by its bearer token (`hbrn_…`). Carries only the
+ * registry facts; the runner's live capabilities arrive in each claim body, so
+ * they aren't resolved here. Used by the claim endpoint via {@link withRunnerAuth}.
+ */
+type RunnerIdentity = {
+  type: "runner";
   runnerId: string;
   runnerName: string;
+  tier: RunnerTier;
+  labels: string[];
+  scope: RunnerScope;
+};
+
+/**
+ * A single run's executor, authenticated by that run's exec token (`hbx_…`,
+ * minted at claim). It's the credential the runner hands its spawned CLI, so the
+ * high-value runner token never reaches the CLI. Scoped to exactly one run; for
+ * agent runs it also carries the agent/project so it can act as that agent on
+ * resource routes (docs/tables) the CLI calls.
+ */
+type ExecutorIdentity = {
+  type: "executor";
+  runId: string;
+  runKind: string;
+  runStatus: string;
+  agentId: string | null;
+  agentName: string | null;
+  projectId: string | null;
   orgId: string;
 };
 
-export type Identity = UserIdentity | AgentIdentity | WorkflowRunnerIdentity;
+export type Identity = UserIdentity | AgentIdentity | RunnerIdentity | ExecutorIdentity;
 
 // ── Authorized auth context handed to route handlers ─────────────────────────
 
@@ -99,31 +126,78 @@ export type AgentAuth = {
   projectId: string;
 };
 
-export type WorkflowRunnerAuth = {
-  type: "workflow_runner";
+/** What the claim handler receives — the runner plus its registry facts. */
+export type RunnerAuth = {
+  type: "runner";
   runnerId: string;
   runnerName: string;
+  tier: RunnerTier;
+  labels: string[];
+  scope: RunnerScope;
+};
+
+/** What a run-lifecycle handler receives when the caller is the run's executor. */
+export type ExecutorAuth = {
+  type: "executor";
+  runId: string;
+  runKind: string;
+  agentId: string | null;
+  agentName: string | null;
+  projectId: string | null;
   orgId: string;
 };
 
-export type AuthContext = UserAuth | AgentAuth | WorkflowRunnerAuth;
+export type AuthContext = UserAuth | AgentAuth | ExecutorAuth;
 
 type RouteContext = { params: Promise<Record<string, string>> };
 
 // ── Identity resolution (authentication) ─────────────────────────────────────
 
 /**
- * Establish identity from a request. Mechanics are preserved from v1:
- *  - Bearer agent API key  → agent identity (carries home project)
- *  - Bearer admin API key  → the creating user's identity
+ * Establish identity from a request. Bearer tokens dispatch by prefix:
+ *  - `hbx_…`  exec token  → executor identity (one run; looked up by hash)
+ *  - `hbrn_…` runner token → runner identity (the claim path)
+ *  - `hbr_…`  agent or admin key → agent identity / the creating user's identity
  *  - `harbour_session` cookie → user identity
  */
 export function getIdentityFromRequest(req: NextRequest): Identity | null {
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
-    const apiKey = authHeader.slice(7);
+    const token = authHeader.slice(7);
 
-    const agent = authenticateAgent(apiKey);
+    // Per-run executor token — the CLI's run-scoped callback credential.
+    if (token.startsWith("hbx_")) {
+      const run = getRunByExecToken(token);
+      if (!run) return null;
+      return {
+        type: "executor",
+        runId: run.id,
+        runKind: run.job_kind,
+        runStatus: run.status,
+        agentId: run.agent_id,
+        agentName: run.agent_name,
+        projectId: run.project_id,
+        orgId: run.org_id,
+      };
+    }
+
+    // Runner token — authenticates the runner for the claim endpoint.
+    if (token.startsWith("hbrn_")) {
+      const runner = authenticateRunner(token);
+      if (!runner) return null;
+      return {
+        type: "runner",
+        runnerId: runner.id,
+        runnerName: runner.name,
+        tier: runner.tier,
+        labels: runner.labels,
+        scope: runner.scope,
+      };
+    }
+
+    // Agent key or admin key (both `hbr_…`). Admin keys resolve to the creating
+    // user's identity; agent keys to the agent's identity.
+    const agent = authenticateAgent(token);
     if (agent) {
       return {
         type: "agent",
@@ -132,19 +206,7 @@ export function getIdentityFromRequest(req: NextRequest): Identity | null {
         projectId: agent.project_id,
       };
     }
-
-    const workflowRunner = authenticateWorkflowRunner(apiKey);
-    if (workflowRunner) {
-      return {
-        type: "workflow_runner",
-        runnerId: workflowRunner.id,
-        runnerName: workflowRunner.name,
-        orgId: workflowRunner.org_id,
-      };
-    }
-
-    // Admin API keys resolve to the creating user's identity.
-    const adminKey = authenticateAdminApiKey(apiKey);
+    const adminKey = authenticateAdminApiKey(token);
     if (adminKey) {
       return {
         type: "user",
@@ -175,6 +237,9 @@ export function getIdentityFromRequest(req: NextRequest): Identity | null {
 
 const unauthorized = () => NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 const forbidden = () => NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+/** Statuses past which a run is no longer executing — the executor goes inert. */
+const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "skipped", "killed"]);
 
 // ── Scope resolution helpers ─────────────────────────────────────────────────
 
@@ -347,51 +412,80 @@ export function withInstanceAdmin(handler: Handler<UserAuth>) {
 }
 
 /**
- * Agent poll/report routes. Requires an agent API key. The handler receives the
- * agent's org and project so it can verify the target run/agent belongs to the
- * agent's project via {@link requireAgentProject}.
+ * Runner Protocol auth — the claim endpoint only. Requires a runner token; the
+ * handler receives the runner's tier/labels/scope so the claim path can gate
+ * placement and capability. Viewer users never reach an execution path.
  */
-export function withAgentAuth(handler: Handler<AgentAuth>) {
+export function withRunnerAuth(handler: Handler<RunnerAuth>) {
   return async (req: NextRequest, ctx: RouteContext) => {
     const identity = getIdentityFromRequest(req);
     if (!identity) return unauthorized();
-    if (identity.type !== "agent") return forbidden();
-
-    const orgId = orgIdForProject(identity.projectId);
-    if (!orgId) return forbidden();
+    if (identity.type !== "runner") return forbidden();
 
     return runHandler(
       handler,
       req,
       {
-        type: "agent",
-        agentId: identity.agentId,
-        agentName: identity.agentName,
-        orgId,
-        projectId: identity.projectId,
+        type: "runner",
+        runnerId: identity.runnerId,
+        runnerName: identity.runnerName,
+        tier: identity.tier,
+        labels: identity.labels,
+        scope: identity.scope,
       },
       ctx,
     );
   };
 }
 
-export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
+/**
+ * Authorization for a single run's lifecycle routes (status / activity / output
+ * / kill / title / session / attachments). Accepts either:
+ *  - the run's **executor** (exec token), bound to exactly this run id; or
+ *  - a **user** meeting `opts.role` in the run's org.
+ *
+ * The run id comes from the `id` route param. An executor token presented for a
+ * different run is rejected — the token grants no cross-run access.
+ */
+export function withRunExecutorOrUser(
+  handler: Handler<UserAuth | ExecutorAuth>,
+  opts: { role: Role },
+) {
   return async (req: NextRequest, ctx: RouteContext) => {
     const identity = getIdentityFromRequest(req);
     if (!identity) return unauthorized();
-    if (identity.type !== "workflow_runner") return forbidden();
 
-    return runHandler(
-      handler,
-      req,
-      {
-        type: "workflow_runner",
-        runnerId: identity.runnerId,
-        runnerName: identity.runnerName,
-        orgId: identity.orgId,
-      },
-      ctx,
-    );
+    const params = await ctx.params;
+    const runId = params.id;
+    if (!runId) return forbidden();
+
+    if (identity.type === "executor") {
+      if (identity.runId !== runId) return forbidden();
+      return runHandler(
+        handler,
+        req,
+        {
+          type: "executor",
+          runId: identity.runId,
+          runKind: identity.runKind,
+          agentId: identity.agentId,
+          agentName: identity.agentName,
+          projectId: identity.projectId,
+          orgId: identity.orgId,
+        },
+        ctx,
+      );
+    }
+
+    if (identity.type === "user") {
+      const orgId = orgIdForResource("run", runId);
+      if (!orgId) return forbidden();
+      const role = checkRole(identity, orgId, opts.role);
+      if (!role) return forbidden();
+      return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
+    }
+
+    return forbidden();
   };
 }
 
@@ -400,6 +494,11 @@ export function withWorkflowRunnerAuth(handler: Handler<WorkflowRunnerAuth>) {
  * harbour agents call (docs create/update, tables create + rows + columns,
  * agents/jobs `data` helpers). Users are checked against `opts.role` in the
  * resource's org; agents are scoped to their own project's org.
+ *
+ * The "agent" here is either a permanent agent key OR a run's executor token
+ * (the CLI's run-scoped credential) — an executor acts as the run's agent,
+ * scoped to the run's project. Only agent runs (non-null agent/project) can act
+ * this way; a workflow run's executor has no agent identity and is rejected.
  *
  * - For `[id]` routes, pass a resolver that derives the target org from params
  *   (e.g. via `orgIdForResource`). For create routes with no resource id yet,
@@ -410,8 +509,6 @@ export function withAgentOrUser(
   handler: Handler<AuthContext>,
   opts: {
     role: Role;
-    /** Permit workflow-runner credentials. Use only on workflow-run endpoints. */
-    allowWorkflowRunner?: boolean;
     /** Resolve the target org from route params; null if not yet known. */
     orgFromParams?: (params: Record<string, string>) => string | null;
   },
@@ -423,46 +520,45 @@ export function withAgentOrUser(
     const params = await ctx.params;
     const resolvedOrg = opts.orgFromParams ? opts.orgFromParams(params) : undefined;
 
+    // Resolve an agent-shaped context from either a permanent agent key or a
+    // run executor token (agent runs only).
+    let agentCtx: AgentAuth | null = null;
     if (identity.type === "agent") {
       const agentOrg = orgIdForProject(identity.projectId);
       if (!agentOrg) return forbidden();
+      agentCtx = {
+        type: "agent",
+        agentId: identity.agentId,
+        agentName: identity.agentName,
+        orgId: agentOrg,
+        projectId: identity.projectId,
+      };
+    } else if (identity.type === "executor") {
+      // Only agent-run executors carry an agent/project to act as.
+      if (!identity.agentId || !identity.projectId) return forbidden();
+      // The executor acts as its agent only while the run is executing. Once the
+      // run is terminal, a lingering/leaked exec token must not keep writing the
+      // agent's docs/tables — resource writes happen during the work turn.
+      if (TERMINAL_RUN_STATUSES.has(identity.runStatus)) return forbidden();
+      agentCtx = {
+        type: "agent",
+        agentId: identity.agentId,
+        agentName: identity.agentName ?? "Agent",
+        orgId: identity.orgId,
+        projectId: identity.projectId,
+      };
+    }
+
+    if (agentCtx) {
       // If the route targets a specific resource, it must live in the agent's org.
       if (resolvedOrg !== undefined) {
         if (resolvedOrg === null) return forbidden();
-        if (resolvedOrg !== agentOrg) return forbidden();
+        if (resolvedOrg !== agentCtx.orgId) return forbidden();
       }
-      return runHandler(
-        handler,
-        req,
-        {
-          type: "agent",
-          agentId: identity.agentId,
-          agentName: identity.agentName,
-          orgId: agentOrg,
-          projectId: identity.projectId,
-        },
-        ctx,
-      );
+      return runHandler(handler, req, agentCtx, ctx);
     }
 
-    if (identity.type === "workflow_runner") {
-      if (!opts.allowWorkflowRunner) return forbidden();
-      if (resolvedOrg !== undefined) {
-        if (resolvedOrg === null) return forbidden();
-        if (resolvedOrg !== identity.orgId) return forbidden();
-      }
-      return runHandler(
-        handler,
-        req,
-        {
-          type: "workflow_runner",
-          runnerId: identity.runnerId,
-          runnerName: identity.runnerName,
-          orgId: identity.orgId,
-        },
-        ctx,
-      );
-    }
+    if (identity.type !== "user") return forbidden();
 
     // User path
     let orgId = resolvedOrg ?? undefined;
@@ -474,36 +570,6 @@ export function withAgentOrUser(
     if (!role) return forbidden();
     return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
   };
-}
-
-// ── Agent ownership checks (project-aware) ───────────────────────────────────
-
-/**
- * Verify a resource's owning project matches the calling agent's project.
- * Returns a 403 response on mismatch, or null when access is allowed.
- * A null resource project (e.g. a workflow run with no agent) passes through.
- */
-export function requireAgentProject(
-  auth: AgentAuth,
-  kind: ResourceKind,
-  id: string,
-): NextResponse | null {
-  const orgId = orgIdForResource(kind, id);
-  if (orgId === null) {
-    // Resource doesn't exist; let the handler return its own 404.
-    return null;
-  }
-  if (orgId !== auth.orgId) return forbidden();
-  return null;
-}
-
-/**
- * Verify the calling agent owns the given agent id (its own id). Used by the
- * `/agents/[id]/next` poll route.
- */
-export function requireAgentSelf(auth: AgentAuth, agentId: string): NextResponse | null {
-  if (auth.agentId !== agentId) return forbidden();
-  return null;
 }
 
 // ── Misc helpers (preserved) ─────────────────────────────────────────────────
@@ -535,8 +601,11 @@ export function getActorFromAuth(auth: AuthContext): {
   if (auth.type === "user") {
     return { actorType: "user", actorId: auth.userId };
   }
-  if (auth.type === "workflow_runner") {
-    return { actorType: "agent", actorId: auth.runnerId };
+  if (auth.type === "executor") {
+    // Workflow-run executors author as 'workflow'; agent-run executors as 'agent'.
+    return auth.runKind === "workflow"
+      ? { actorType: "workflow", actorId: auth.runId }
+      : { actorType: "agent", actorId: auth.agentId ?? auth.runId };
   }
   return { actorType: "agent", actorId: auth.agentId };
 }
