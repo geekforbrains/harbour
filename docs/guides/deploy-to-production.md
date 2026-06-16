@@ -87,6 +87,11 @@ ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs run || true
 Environment=HARBOUR_HOME=/home/harbour/.harbour
 # Explicit PATH so the service session finds CLIs installed under the
 # harbour user's home (the claude installer puts itself in ~/.local/bin).
+# systemd does NOT inherit your login shell's PATH, so a CLI installed via a
+# version manager (nvm, asdf, pyenv, volta) won't be found unless its bin dir
+# is listed here. The runner advertises only CLIs on this PATH; a missing one
+# leaves that agent's runs unclaimed. Add e.g. the nvm bin dir
+# (/home/harbour/.nvm/versions/node/<ver>/bin) if a CLI lives there.
 Environment=PATH=/home/harbour/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Restart=on-failure
 RestartSec=10s

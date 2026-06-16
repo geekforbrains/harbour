@@ -151,6 +151,8 @@ This writes a single launchd plist at `~/Library/LaunchAgents/com.harbour.runner
 
 To stop polling: `npm run harbour -- uninstall` (removes the plist and unloads it).
 
+> **The service can't see your shell's PATH.** launchd (and systemd) run the runner under a fixed, minimal PATH — not your interactive shell's. A CLI installed through a version manager (nvm, asdf, pyenv, volta) or reached only via a shell alias won't be found, so its agent runs sit `scheduled` forever with nothing to claim them. The runner advertises only CLIs actually on its PATH — check `harbour status` (what the current shell sees) and **Settings → Runners** (what the service advertised). Fix: add the CLI's directory to the plist's `EnvironmentVariables` (launchd) or the unit's `Environment=PATH=…` (systemd). See [Sanity checks](run-on-different-machine.md#sanity-checks).
+
 ## Workflows (deterministic, no agent)
 
 Not all recurring work needs an LLM. A **workflow** is a scheduled shell command — poll an API, sync a file, run a health check — that runs the same way every time, no agent and no tokens. → [Workflows](../concepts/workflows.md).
@@ -180,5 +182,5 @@ You have a working harbour with a working agent. From here:
 - [Jobs and runs](../concepts/jobs-and-runs.md) — the polling ladder, the lifecycle, how retries work.
 - [Agents](../concepts/agents.md) — the harbour-vs-external split and per-agent settings.
 - [Workflows](../concepts/workflows.md) — deterministic shell-command jobs and the exit-code contract.
-- [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning auto-attaches them.
+- [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning pre-selects them for new jobs.
 - [Running a runner on a different machine](run-on-different-machine.md) — for iOS/Xcode boxes, GPU workstations, on-prem repos.

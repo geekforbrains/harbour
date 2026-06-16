@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { detectCapabilities } from "./providers.mjs";
 
 const DEFAULT_URL = "http://localhost:3000";
 
@@ -100,5 +101,9 @@ export function printRunnerStatus() {
   console.log("Runner: provisioned.");
   console.log(`  Token: ${runnerTokenFile()}`);
   console.log(`  URL:   ${creds.url}`);
+  const caps = detectCapabilities();
+  console.log(
+    `  CLIs on PATH: ${caps.clis.length ? caps.clis.join(", ") : "none — agent runs need a CLI on PATH"}`,
+  );
   console.log("  Start polling with `harbour install` (service) or `harbour run` (one-shot).");
 }

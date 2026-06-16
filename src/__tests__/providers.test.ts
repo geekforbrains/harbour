@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { slugify } from "@/lib/slug";
 import {
+  detectCapabilities,
   ensureWorkingDir,
   getProvider,
+  resetBinaryCache,
+  resolveBinary,
   runCliTool,
   sanitizeThinking,
   WORKSPACE_SEGMENT_RE,
@@ -337,5 +340,48 @@ describe("ensureWorkingDir", () => {
 
   it("rejects an empty segment list", () => {
     expect(() => ensureWorkingDir([])).toThrow(/No workspace path segments/);
+  });
+});
+
+// Honest CLI detection: the runner advertises a CLI only when it's actually on
+// PATH — no bare-name fallback — so it never claims work it can't execute and
+// the absent-capability surface stays accurate.
+describe("detectCapabilities — honest CLI detection", () => {
+  const ORIGINAL_PATH = process.env.PATH;
+
+  afterEach(() => {
+    process.env.PATH = ORIGINAL_PATH;
+    resetBinaryCache();
+  });
+
+  it("does not advertise CLIs that are not on PATH", () => {
+    // System dirs hold none of claude/codex/gemini.
+    process.env.PATH = "/usr/bin:/bin";
+    resetBinaryCache();
+    const caps = detectCapabilities();
+    expect(caps.clis).toEqual([]);
+    expect(caps.kinds).toEqual(["workflow"]); // no "agent" kind without a CLI
+  });
+
+  it("advertises a CLI that IS on PATH", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-cli-"));
+    try {
+      const fake = path.join(dir, "codex");
+      fs.writeFileSync(fake, "#!/bin/sh\necho fake\n");
+      fs.chmodSync(fake, 0o755);
+      process.env.PATH = `${dir}:/usr/bin:/bin`;
+      resetBinaryCache();
+      const caps = detectCapabilities();
+      expect(caps.clis).toContain("codex");
+      expect(caps.kinds).toContain("agent");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveBinary returns null for a missing binary (no bare-name fallback)", () => {
+    process.env.PATH = "/usr/bin:/bin";
+    resetBinaryCache();
+    expect(resolveBinary("definitely-not-a-real-binary-xyz")).toBeNull();
   });
 });

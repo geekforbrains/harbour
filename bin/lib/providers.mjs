@@ -4,17 +4,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// Cache resolved binary paths
+// Cache resolved binary paths. A name resolves to its absolute path, or to
+// null when it isn't on PATH — there is NO bare-name fallback, so
+// detectCapabilities advertises only CLIs the runner can actually spawn (a
+// runner that advertised a missing CLI would claim work it then can't run).
 const binaryPathCache = {};
-function resolveBinary(name) {
-  if (!binaryPathCache[name]) {
+export function resolveBinary(name) {
+  if (!(name in binaryPathCache)) {
     try {
       binaryPathCache[name] = execSync(`which ${name}`, { encoding: "utf-8" }).trim();
     } catch {
-      binaryPathCache[name] = name; // fallback to bare name
+      binaryPathCache[name] = null; // not on PATH — do not advertise or spawn it
     }
   }
   return binaryPathCache[name];
+}
+
+/** Clear the resolved-binary cache. For tests that manipulate process.env.PATH. */
+export function resetBinaryCache() {
+  for (const key of Object.keys(binaryPathCache)) delete binaryPathCache[key];
 }
 
 // Normalized event types emitted by all providers:
@@ -710,6 +718,17 @@ export function runCliTool(
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
       if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
+      if (err && err.code === "ENOENT") {
+        // The binary vanished between capability detection and spawn (or PATH
+        // differs). Point at the usual cause: a launchd/systemd service has its
+        // own fixed PATH, not the interactive shell's.
+        reject(
+          new Error(
+            `"${binary}" was not found on the runner's PATH — install it or add its directory to the service PATH (a service does not inherit your shell PATH).`,
+          ),
+        );
+        return;
+      }
       reject(err);
     });
     child.on("exit", () => {
