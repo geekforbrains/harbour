@@ -44,7 +44,7 @@ afterEach(() => {
 // Resource injection — attachment-driven: a run carries only the resources
 // linked to its job (job_docs / job_env_vars / job_tables), never the
 // org/project tiers at large. Pinned docs/vars/tables reach a job by auto-attaching at
-// job create. Databases are read references: name + id only, no rows/columns.
+// job create. Tables are read references: name + id only, no rows/columns.
 // ---------------------------------------------------------------------------
 
 describe("run payload resource injection", () => {
@@ -67,7 +67,7 @@ describe("run payload resource injection", () => {
     createDoc(org.id, null, "Unlinked Doc", "unlinked doc body");
     linkDocToJob(job.id, linkedDoc.id);
 
-    // Databases: one linked, one unlinked. Rows exist but must NOT be injected.
+    // Tables: one linked, one unlinked. Rows exist but must NOT be injected.
     const linkedDb = createTable(org.id, project.id, "linked_table", [{ name: "v", type: "TEXT" }]);
     insertRows(linkedDb.id, [{ v: "linked-row" }]);
     const unlinkedDb = createTable(org.id, null, "unlinked_table", [{ name: "v", type: "TEXT" }]);
@@ -88,7 +88,7 @@ describe("run payload resource injection", () => {
     expect(payload.docs.map((d) => d.id)).toEqual([linkedDoc.id]);
     expect(payload.docs[0].content).toBe("linked doc body");
 
-    // Databases: linked one only, exposed as name + id — no columns, no rows.
+    // Tables: linked one only, exposed as name + id — no columns, no rows.
     expect(payload.tables.linked_table).toEqual({ id: linkedDb.id });
     expect(payload.tables.unlinked_table).toBeUndefined();
   });

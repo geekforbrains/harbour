@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { getDb } from "./schema";
+import { hashToken } from "./tokens";
 
 /**
  * The instance-level runner registry. One row per runner — the local pool runner
@@ -44,10 +45,6 @@ const PUBLIC_COLUMNS = `id, name, tier, labels, capabilities, scope, last_polled
 
 function generateRunnerToken(): string {
   return `hbrn_${crypto.randomBytes(32).toString("hex")}`;
-}
-
-function hashToken(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 function normalizeLabels(labels?: string[]): string[] {

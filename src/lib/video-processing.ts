@@ -18,7 +18,7 @@ import { ensureDir, processedDir, uploadsDir } from "./paths";
 
 const execFileAsync = promisify(execFile);
 
-const TRANSCRIPT_CAP = 5000; // chars inlined in /next
+const TRANSCRIPT_CAP = 5000; // chars inlined in the runner claim payload
 
 // ── Availability checks ─────────────────────────────────────────────
 
@@ -478,7 +478,7 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Read a transcript file and optionally cap it for inline use in /next.
+ * Read a transcript file and optionally cap it for inline use in the runner claim payload.
  */
 export function readTranscript(transcriptPath: string, cap?: number): string {
   const abs = path.join(uploadsDir(), transcriptPath);

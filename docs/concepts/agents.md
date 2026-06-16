@@ -33,7 +33,6 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
-| `last_polled_at` | Updated whenever the agent is claimed/peeked at; powers the "active" indicator on the dashboard |
 
 `model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`).
 

@@ -520,17 +520,15 @@ export function sanitizeThinking(cli, thinking) {
 
 /**
  * Resolve which cli/model/thinking a run should use. Harbour is the source of
- * truth: the /next payload's agent block carries the agent's live config and
- * is authoritative when present — including its nulls, so a model you cleared
- * in the dashboard stays cleared and a stale runners.json can't resurrect it.
- * Only a legacy server that sends no agent block falls back to values baked
- * into the runner config. A per-job override always wins.
+ * truth: the claim payload's agent block carries the agent's live config and is
+ * authoritative — including its nulls, so a model you cleared in the dashboard
+ * stays cleared. A per-job override always wins.
  *
- * Precedence: job override → (agent block if present, else runner-config fallback).
+ * Precedence: job override → agent block.
  */
-export function resolveRunConfig(payload, fallback = {}) {
+export function resolveRunConfig(payload) {
   const job = payload?.job || {};
-  const agent = payload?.agent ?? fallback;
+  const agent = payload?.agent ?? {};
   return {
     cli: agent.cli ?? null,
     model: job.model || agent.model || null,

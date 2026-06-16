@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 import {
   meets,
@@ -53,8 +52,7 @@ export function sessionCookieOptions(req: NextRequest, maxAge: number = 60 * 60 
 
 /**
  * Identity established by authentication (who is calling), before authorization
- * (what they're allowed to do). Agent keys carry the agent's home project so
- * `withAgentAuth` can scope ownership without an extra lookup.
+ * (what they're allowed to do).
  */
 type UserIdentity = {
   type: "user";
@@ -544,27 +542,6 @@ export function withAgentOrUser(
     const role = checkRole(identity, orgId, opts.role);
     if (!role) return forbidden();
     return runHandler(handler, req, asUserAuth(identity, orgId, role), ctx);
-  };
-}
-
-// ── Misc helpers (preserved) ─────────────────────────────────────────────────
-
-export async function getAuthFromCookies(): Promise<{
-  userId: string;
-  email: string;
-  displayName: string;
-  isInstanceAdmin: boolean;
-} | null> {
-  const cookieStore = await cookies();
-  const sessionId = cookieStore.get("harbour_session")?.value;
-  if (!sessionId) return null;
-  const session = getSession(sessionId);
-  if (!session) return null;
-  return {
-    userId: session.userId,
-    email: session.email,
-    displayName: session.displayName,
-    isInstanceAdmin: session.isInstanceAdmin,
   };
 }
 

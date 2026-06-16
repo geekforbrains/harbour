@@ -4,7 +4,7 @@ Three top-level entities — markdown documents, agent-managed SQLite tables, an
 
 - They belong to an **org** (`org_id`), optionally narrowed to a **project** (`project_id` is nullable — `NULL` means org-level, usable by every project in the org). See [Orgs & projects](projects.md).
 - They're **linked to a job** via three identical junction tables: `job_docs`, `job_tables`, `job_env_vars`.
-- They're **injected into `/next`** when an agent polls — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map.
+- They're **injected into the run payload** when a runner claims the run — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map.
 - All three support **pinning** for "auto-attach to all new jobs."
 
 The differences are in *what* gets injected. Docs are full text. Tables inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
@@ -47,7 +47,7 @@ The agent writes a draft, posts it to Buffer using the env var, then reads `mark
 
 Pinning is the answer to "I just made a new thing — apply this context everywhere automatically." Docs, tables, and env vars all support it.
 
-The crucial detail: **pinning is checked at creation time only**. When you call `createJob` (or `createOneOffRun`) the code merges your explicitly-selected ids with `listPinnedDocIds()`, `listPinnedTableIds()`, and `listPinnedEnvVarIds()` and inserts all three sets into the junction tables. After that, the link is just a row in `job_docs` / `job_tables` / `job_env_vars` like any other.
+The crucial detail: **pinning is checked at creation time only**. When you call `createJob` the code merges your explicitly-selected ids with `listPinnedDocIds()`, `listPinnedTableIds()`, and `listPinnedEnvVarIds()` and inserts all three sets into the junction tables. After that, the link is just a row in `job_docs` / `job_tables` / `job_env_vars` like any other. An ad-hoc run via `triggerJobRun` adds nothing here — it fires an existing job whose links were already resolved at creation.
 
 What this means in practice:
 
@@ -64,7 +64,7 @@ Tables pin like docs and secrets, but reach for it sparingly — they're heavier
 
 ## Docs
 
-Markdown documents, stored revisioned. Each `docs` row has a title and metadata; each edit appends a new `doc_revisions` row with the full content. The latest revision's content is what gets injected into `/next` (resolved with a correlated subquery on `MAX(created_at)`).
+Markdown documents, stored revisioned. Each `docs` row has a title and metadata; each edit appends a new `doc_revisions` row with the full content. The latest revision's content is what gets injected into the run payload (resolved with a correlated subquery on `MAX(created_at)`).
 
 (Columns — including the `org_id` / `project_id` dual-tier — in
 [database-schema.md](../reference/database-schema.md#docs).)
@@ -82,7 +82,7 @@ Two tables track the metadata:
 
 Every schema change (CREATE, ALTER) records a `table_migrations` row, so the dashboard can show the schema's history.
 
-The injection rule for `/next`: for each **linked** table, harbour puts `{ id }` into `tables.<name>` — no rows, no columns. A table is a read reference, not inlined content; the agent calls `GET /api/tables/:id/rows` (with `?limit=`/`?offset=`/`?orderBy=`) to read exactly the slice it needs and `POST /api/tables/:id/rows` to write. Org/project membership alone does not inject a table — only an entry in `job_tables` does.
+The injection rule for the run payload: for each **linked** table, harbour puts `{ id }` into `tables.<name>` — no rows, no columns. A table is a read reference, not inlined content; the agent calls `GET /api/tables/:id/rows` (with `?limit=`/`?offset=`/`?orderBy=`) to read exactly the slice it needs and `POST /api/tables/:id/rows` to write. Org/project membership alone does not inject a table — only an entry in `job_tables` does.
 
 Reserved-word and SQL-injection guards: column names are sanitized identically (lowercase, `[a-z0-9_]`, no `_id`), and a list of SQLite reserved words is rejected outright. Inserts validate the keys against `PRAGMA table_info` before running. Don't trust an agent's input to be safe; the helpers in `src/lib/db/tables.ts` enforce the rules.
 
@@ -101,7 +101,7 @@ Encryption is AES-256-GCM (`src/lib/encryption.ts`):
 | On-disk format | `<iv-hex>:<authTag-hex>:<ciphertext-hex>` (single TEXT column) |
 | Key location | `HARBOUR_ENCRYPTION_KEY` env var (preferred) or `~/.harbour/encryption.key` (auto-generated, mode 0600) |
 
-Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the `/next` payload, and an explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance. List endpoints never include the encrypted blob; you have to ask for a single var by id, and the request is gated by `withResourceAuth` (editor role in the resource's org).
+Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the run payload, and an explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance. List endpoints never include the encrypted blob; you have to ask for a single var by id, and the request is gated by `withResourceAuth` (editor role in the resource's org).
 
 Losing the key (deleting `~/.harbour/encryption.key` without a backup) renders all encrypted_value blobs unreadable. There is no recovery — back the file up, or set `HARBOUR_ENCRYPTION_KEY` from a secrets store.
 
@@ -130,7 +130,7 @@ If you're hunting in code:
 - `src/lib/db/docs.ts` — `createDoc`, `updateDoc` (revisions), `toggleDocPinned`, `listPinnedDocIds`.
 - `src/lib/db/tables.ts` — `createTable`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
 - `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob`, `listPinnedEnvVarIds`.
-- `src/lib/db/jobs.ts` — `createJob` and `createOneOffRun` are where the pinned ids get merged into the junction inserts.
-- `src/lib/db/runs.ts` — `buildRunPayload` (the `/next` payload assembly): attachment-driven docs/tables/env queries (`getComposedDocsForJob`, `getComposedTablesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
+- `src/lib/db/jobs.ts` — `createJob` is where the pinned ids get merged into the junction inserts; `triggerJobRun` is the ad-hoc-run path (it reuses an existing job's links, merging nothing new).
+- `src/lib/db/runs.ts` — `buildRunPayload` (the run payload assembly): attachment-driven docs/tables/env queries (`getComposedDocsForJob`, `getComposedTablesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
 - `src/lib/encryption.ts` — AES-256-GCM helpers, key loading.
 - `src/lib/db/schema.ts` — `docs`, `doc_revisions`, `tables`, `table_migrations`, `env_vars`, and the three `job_*` junction tables.

@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { hashToken } from "@/lib/db/tokens";
 import { verifyPassword as serverVerify } from "@/lib/db/users";
 import {
   hashPassword as cliHash,
@@ -85,7 +85,7 @@ describe("CLI bootstrap helpers", () => {
       expect(token).toMatch(/^hbrn_[0-9a-f]{64}$/);
       expect(fs.statSync(tokenPath).mode & 0o777).toBe(0o600);
       // The stored hash matches the written token (sha256).
-      const sha = createHash("sha256").update(token).digest("hex");
+      const sha = hashToken(token);
       expect(rows[0].token_hash).toBe(sha);
 
       // Idempotent: a second call provisions nothing and adds no row.

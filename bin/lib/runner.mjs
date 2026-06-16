@@ -295,18 +295,6 @@ function buildPrompt(payload, apiKey, isResume) {
     }
   }
 
-  if (payload.data && Object.keys(payload.data).length > 0) {
-    prompt += `## Reference Databases\n\n`;
-    prompt += `These databases are linked to this job as read references — their contents are not inlined. Read rows with the read_rows endpoint and write with insert_rows (both in the api section), targeting each database by the id below.\n\n`;
-    for (const [name, info] of Object.entries(payload.data)) {
-      // Current shape: { id }. Tolerate the old { id, columns, rows } / rows[] shapes.
-      const id = Array.isArray(info) ? null : info?.id;
-      prompt += `### ${name}\n`;
-      if (id) prompt += `database id: ${id}\n`;
-      prompt += `\n`;
-    }
-  }
-
   const activity = payload.run.activity || [];
   if (activity.length > 0) {
     prompt += `## Activity Log\n\n${renderActivityBlock(activity)}\n\n`;
@@ -1558,45 +1546,7 @@ export async function processNextWorkflow(payload, { url, execToken }, opts = {}
     return { outcome: "failed" };
   }
 
-  // Materialize the workflow gate into its per-job dir and run it there via the
-  // runtime's interpreter (bash/python3/node). A malformed/unknown job has no
-  // scripts_dir, so resolveJobDir throws — fail the run rather than letting the
-  // throw escape and leave it dangling 'running' (mirrors the prerun/postrun
-  // guards, which catch the same throw inside their gate runners).
-  let workflowDir;
-  let binary;
-  let args;
-  try {
-    workflowDir = resolveJobDir({ scriptsDir: payload.job?.scripts_dir });
-    ({ binary, args } = materializeGate(workflowDir, gate, "workflow"));
-  } catch (err) {
-    console.error(`  [${name}] Cannot stage workflow script — failing: ${err.message}`);
-    try {
-      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch {
-      /* best effort */
-    }
-    return { outcome: "failed" };
-  }
-
   const workflowTimeoutMs = (payload.job.timeout_minutes || 30) * 60 * 1000;
-
-  // Kill polling
-  const killController = new AbortController();
-  let killed = false;
-  const killPoll = setInterval(async () => {
-    if (killed) return;
-    try {
-      const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
-      if (res?.kill_requested) {
-        killed = true;
-        killController.abort();
-        console.log(`  [${name}] Kill requested — stopping`);
-      }
-    } catch {
-      /* best effort */
-    }
-  }, killPollIntervalMs);
 
   // Run-scoped env handed to the script. HARBOUR_* let a script post live
   // progress updates to its own Output log while it runs (workflow runs have
@@ -1612,13 +1562,27 @@ export async function processNextWorkflow(payload, { url, execToken }, opts = {}
     HARBOUR_URL: url,
   };
 
+  // Stage + run the workflow gate through the shared gate runner — same
+  // resolveJobDir/materializeGate + kill-poll/timeout dance as prerun/postrun.
+  // A staging throw (malformed/unknown job with no scripts_dir) or a run throw
+  // both reject out of runGateCommand and land in the catch below, failing the
+  // run rather than leaving it dangling 'running'.
   try {
-    const wfResult = await runWorkflow([binary, ...args], JSON.stringify(payload), workflowDir, {
+    const wfResult = await runGateCommand({
+      gate,
+      role: "workflow",
+      scriptsDir: payload.job?.scripts_dir,
+      payloadJson: JSON.stringify(payload),
+      url,
+      apiKey,
+      runId,
+      agentName: name,
+      label: "Workflow",
       timeoutMs: workflowTimeoutMs,
-      signal: killController.signal,
+      killPollIntervalMs,
       extraEnv,
     });
-    clearInterval(killPoll);
+    const { killed } = wfResult;
 
     // A kill only wins if the command didn't already exit cleanly — see
     // workflowOutcome. This stops a successful run that finished in the kill
@@ -1689,7 +1653,6 @@ export async function processNextWorkflow(payload, { url, execToken }, opts = {}
     console.log(`  [${name}] Workflow run ${runId} completed.`);
     return { outcome: "done" };
   } catch (err) {
-    clearInterval(killPoll);
     console.error(`  [${name}] Workflow command failed: ${err.message}`);
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {

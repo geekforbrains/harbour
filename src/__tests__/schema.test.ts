@@ -267,7 +267,7 @@ describe("soft delete (archive)", () => {
 });
 
 // ===========================================================================
-// Workflows and workflow runners
+// Workflows and the runner registry
 // ===========================================================================
 
 describe("workflows", () => {

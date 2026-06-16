@@ -88,7 +88,7 @@ export function getAgentById(id: string) {
   return (
     (db
       .prepare(
-        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, last_polled_at, created_at, updated_at
+        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, created_at, updated_at
      FROM agents WHERE id = ?`,
       )
       .get(id) as any) || null
@@ -120,7 +120,7 @@ export function listAgents(projectId: string) {
   const db = getDb();
   return db
     .prepare(`
-    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -201,9 +201,4 @@ export function deleteAgent(id: string) {
     .all(id, id) as { id: string }[];
   db.prepare(`DELETE FROM agents WHERE id = ?`).run(id);
   for (const r of runIds) deleteRunAttachmentsDir(r.id);
-}
-
-export function touchAgentPolled(id: string) {
-  const db = getDb();
-  db.prepare(`UPDATE agents SET last_polled_at = unixepoch() WHERE id = ?`).run(id);
 }

@@ -1,6 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { getDb } from "./schema";
+import { hashToken } from "./tokens";
 import { setUserPassword } from "./users";
 
 // ─── Set-password / reset tokens ──────────────────────────────────────────────
@@ -11,11 +12,6 @@ import { setUserPassword } from "./users";
 // the token is stored; the raw value never touches the database.
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24h
-
-/** Hash a raw token for storage / lookup. */
-function hashToken(rawToken: string): string {
-  return createHash("sha256").update(rawToken).digest("hex");
-}
 
 export type SetPasswordToken = {
   id: string;

@@ -167,7 +167,7 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
 }
 
 /**
- * Decrypt the env vars injected into a job's run payload (used by /next).
+ * Decrypt the env vars injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
  * Injection is attachment-driven: only vars explicitly linked to the job via
  * `job_env_vars` are returned — never the org/project tiers at large. Org-level

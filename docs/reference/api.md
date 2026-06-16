@@ -19,8 +19,8 @@ not-found resolves to **403** to avoid leaking existence across tenants.
 
 Bearer tokens dispatch by prefix: `hbx_` is a per-run **exec token** (executor
 identity, bound to one run — accepted by the run-lifecycle wrappers below),
-`hbrn_` is a **runner token** (the claim endpoint only), and `hbr_` is an **agent
-key or admin key**. `withAgentOrUser` accepts a user, a permanent agent key, or an
+`hbrn_` is a **runner token** (the claim endpoint only), and `hbr_` is the **admin
+API key** (resolving to the creating user). `withAgentOrUser` accepts a user or an
 agent-run's exec token (the executor acts as the run's agent).
 
 ## Conventions
@@ -132,8 +132,8 @@ verbatim (never trimmed, so shebangs and leading blank lines survive). `POST
 /api/jobs/:id` each gate field is optional: omit it to leave the gate unchanged,
 pass `null` to clear it, or pass an object to set it. A malformed gate (missing
 or non-string `content`, an unknown `runtime`) is a 400. The gates are delivered
-in the `/next` payload (`job.prerun` / `job.postrun` / `job.command` /
-`job.scripts_dir`) and materialized to disk by the runner — see
+in the `POST /api/runner/claim` payload (`job.prerun` / `job.postrun` /
+`job.command` / `job.scripts_dir`) and materialized to disk by the runner — see
 [guide.md](../guide.md).
 
 ## Runs

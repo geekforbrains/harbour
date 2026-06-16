@@ -112,7 +112,7 @@ export function listPinnedDocIds(projectId: string): string[] {
 }
 
 /**
- * Docs injected into a job's run payload (used by /next).
+ * Docs injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
  * Injection is attachment-driven: only docs explicitly linked to the job via
  * `job_docs` are returned — never the org/project tiers at large. Org-level and

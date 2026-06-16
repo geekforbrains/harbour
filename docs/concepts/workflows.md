@@ -240,7 +240,7 @@ Each gate has two parts:
 
 ### How a gate reaches the runner
 
-Gates travel in the `/next` run payload (on both agent and workflow runs) as `{ runtime, content }` objects (or `null`), alongside `job.scripts_dir`:
+Gates travel in the run payload (on both agent and workflow runs) as `{ runtime, content }` objects (or `null`), alongside `job.scripts_dir`:
 
 - `job.scripts_dir` — a **relative** path the server computes from immutable slugs (`getJobScriptsDir`), under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Tiers:
   - agent job → `<org-slug>/<project-slug>/<agent-slug>/<job-leaf>`

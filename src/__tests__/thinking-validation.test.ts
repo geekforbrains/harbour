@@ -1,9 +1,6 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 import { PUT as agentPUT } from "@/app/api/agents/[id]/route";
 import { POST as agentsPOST } from "@/app/api/agents/route";
@@ -35,17 +32,6 @@ function freshDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   return db;
 }
-
-// Agent create/update sync runner config to <HARBOUR_HOME>/runners.json —
-// point it at a throwaway dir so tests never touch the real one.
-let home: string;
-beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), "hb-thinking-"));
-  process.env.HARBOUR_HOME = home;
-});
-afterAll(() => {
-  delete process.env.HARBOUR_HOME;
-});
 
 beforeEach(() => {
   const db = freshDb();

@@ -1,20 +1,17 @@
 import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { getDb } from "./schema";
+import { hashToken } from "./tokens";
 
 function generateAdminApiKey(): string {
   return `hbr_adm_${crypto.randomBytes(32).toString("hex")}`;
-}
-
-function hashApiKey(key: string): string {
-  return crypto.createHash("sha256").update(key).digest("hex");
 }
 
 export function createAdminApiKey(name: string, createdByUserId: string) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateAdminApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
+  const apiKeyHash = hashToken(apiKey);
   db.prepare(
     `INSERT INTO admin_api_keys (id, name, api_key_hash, created_by_user_id) VALUES (?, ?, ?, ?)`,
   ).run(id, name, apiKeyHash, createdByUserId);
@@ -40,7 +37,7 @@ export function deleteAdminApiKey(id: string) {
 
 export function authenticateAdminApiKey(apiKey: string) {
   const db = getDb();
-  const hash = hashApiKey(apiKey);
+  const hash = hashToken(apiKey);
   const row = db
     .prepare(
       `SELECT k.id, k.name, k.created_by_user_id, u.email, u.display_name

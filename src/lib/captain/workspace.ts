@@ -123,10 +123,12 @@ dashboard Settings page.
 | \`${dbPath()}\` | SQLite database |
 | \`${harbourHome()}/uploads\` | Run file attachments |
 | \`${harbourHome()}/encryption.key\` | AES-256-GCM key for env vars |
-| \`${harbourHome()}/runners.json\` | Agent runner configuration |
+| \`${harbourHome()}/runner.token\` | Runner auth token |
 | \`${harbourHome()}/sessions.json\` | CLI session state for resume |
-| \`${harbourHome()}/runner.log\` | Agent runner log |
+| \`${harbourHome()}/runner.log\` | Runner log |
 | \`${harbourHome()}/workflows/\` | Workflow scripts directory |
+
+The DB \`runners\` table is the runner registry — \`runner.token\` is the only runner secret on disk.
 
 ## Guidelines
 

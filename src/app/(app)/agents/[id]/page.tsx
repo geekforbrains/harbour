@@ -12,7 +12,6 @@ import {
   Settings,
   Terminal,
   Trash2,
-  Wifi,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -67,7 +66,6 @@ type Agent = {
   eager: number | null;
   /** Runner label this agent's runs route to; defaults to "local". */
   placement: string | null;
-  last_polled_at: number | null;
   created_at: number;
   /** Slug path segments for the agent's on-disk workspace on the runner. */
   workspace?: { org: string; project: string; agent: string } | null;
@@ -239,12 +237,6 @@ export default function AgentDetailPage() {
             {recentRuns.length > 0
               ? timeAgo(recentRuns[0].completed_at || recentRuns[0].created_at)
               : "No activity"}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <Wifi className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">
-            {agent.last_polled_at ? timeAgo(agent.last_polled_at) : "Never polled"}
           </span>
         </div>
         {agent.workspace && (

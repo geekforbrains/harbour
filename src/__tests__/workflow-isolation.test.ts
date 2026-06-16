@@ -51,8 +51,9 @@ function userReq(userId: string, url: string, init: ReqInit = {}): NextRequest {
 
 // A run's executor authenticates with that run's `hbx_` exec token (minted at
 // claim). It's the only credential the activity/status routes accept as the
-// run's executor — for both agent and workflow runs. The permanent agent key is
-// for resource routes only, and the old per-org workflow-runner key is gone.
+// run's executor — for both agent and workflow runs. The same exec token (acting
+// as the agent) is what resource routes accept, and the old per-org
+// workflow-runner key is gone.
 function executorReq(execToken: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${execToken}`);
@@ -91,8 +92,8 @@ function fixture() {
   const agentJob = createJob(project.id, agent.id, { name: "AJ", schedule: '{"every":60}' })!;
   const agentRun = createRun(agentJob.id, agent.id)!;
   // The run's executor credential — what the runner hands its spawned CLI for
-  // this run's lifecycle endpoints (the permanent agent key is for resource
-  // routes only, never run status/activity).
+  // this run's lifecycle endpoints (the same exec token, acting as the agent,
+  // also reaches the resource routes).
   const agentExec = mintExecToken(agentRun.id);
   const wfJob = createWorkflow(org.id, project.id, {
     name: "WF",

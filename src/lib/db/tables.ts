@@ -526,7 +526,7 @@ export function deleteRow(tableId: string, rowId: number) {
 }
 
 /**
- * Tables injected into a job's run payload (used by /next).
+ * Tables injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
  * Injection is attachment-driven: only tables explicitly linked to the job
  * via `job_tables` are returned — never the org/project tiers at large. Pinned

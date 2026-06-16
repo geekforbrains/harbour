@@ -217,7 +217,7 @@ describe("buildRunPayload: workflow run shape", () => {
     // Linked resources inject for a workflow run just like an agent run.
     expect(payload.docs.map((d) => d.id)).toContain(doc.id);
     expect(payload.env.API_TOKEN).toBe("secret");
-    // Databases are read references: name + id only, no rows inlined.
+    // Tables are read references: name + id only, no rows inlined.
     expect(payload.tables.metrics).toEqual({ id: data.id });
   });
 });

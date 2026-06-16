@@ -13,11 +13,11 @@ import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 import { getProvider, resolveRunConfig, sanitizeThinking } from "../../bin/lib/providers.mjs";
 
 // End-to-end coverage for the "harbour is the source of truth for agent config"
-// model: the /next payload carries the agent's live cli/model/thinking, the
-// runner resolves them (job override > agent default > runner-config fallback),
-// and each CLI provider turns that into the right argv. The runner config is
-// identity-only, so changing a model in the dashboard must reach the runner via
-// the payload alone — these tests lock that contract for all three CLIs.
+// model: the claim payload carries the agent's live cli/model/thinking, the
+// runner resolves them (job override > agent default), and each CLI provider
+// turns that into the right argv. The runner config is identity-only, so
+// changing a model in the dashboard must reach the runner via the payload
+// alone — these tests lock that contract for all three CLIs.
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -36,7 +36,7 @@ afterEach(() => {
   resetDb();
 });
 
-describe("/next payload carries live agent config", () => {
+describe("run payload carries live agent config", () => {
   it("includes the agent's cli/model/thinking/eager", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Website")!;
@@ -92,11 +92,9 @@ describe("/next payload carries live agent config", () => {
 });
 
 describe("resolveRunConfig precedence", () => {
-  const fallback = { cli: "claude", model: "fallback-model", thinking: "fallback-effort" };
-
   it("uses the live agent defaults from the payload", () => {
     const payload = { agent: { cli: "codex", model: "gpt-5", thinking: "medium" }, job: {} };
-    expect(resolveRunConfig(payload, fallback)).toEqual({
+    expect(resolveRunConfig(payload)).toEqual({
       cli: "codex",
       model: "gpt-5",
       thinking: "medium",
@@ -108,46 +106,34 @@ describe("resolveRunConfig precedence", () => {
       agent: { cli: "claude", model: "sonnet", thinking: "low" },
       job: { model: "opus", thinking: "high" },
     };
-    expect(resolveRunConfig(payload, fallback)).toEqual({
+    expect(resolveRunConfig(payload)).toEqual({
       cli: "claude",
       model: "opus",
       thinking: "high",
-    });
-  });
-
-  it("falls back to the runner config when the payload omits values (legacy runner)", () => {
-    expect(resolveRunConfig({}, fallback)).toEqual({
-      cli: "claude",
-      model: "fallback-model",
-      thinking: "fallback-effort",
     });
   });
 
   it("returns null cli when nothing provides one", () => {
-    expect(resolveRunConfig({ agent: {}, job: {} }, {}).cli).toBeNull();
+    expect(resolveRunConfig({ agent: {}, job: {} }).cli).toBeNull();
   });
 });
 
-// Hardening: when the server sends an agent block (current /next), that block
-// is authoritative — including its nulls. A stale runners.json (legacy, with
-// cli/model/thinking baked in) must NOT leak old values back in, or a model
-// you cleared in the dashboard would silently come back. The fallback applies
-// ONLY when the payload has no agent block at all (a legacy server).
+// Hardening: the claim payload's agent block is authoritative — including its
+// nulls. A model you cleared in the dashboard arrives as null and must stay
+// cleared; nothing on the runner side may resurrect an old value.
 describe("resolveRunConfig — agent block is authoritative", () => {
-  const legacy = { cli: "gemini", model: "legacy-model", thinking: "legacy-effort" };
-
-  it("ignores the legacy runner config entirely when an agent block is present", () => {
+  it("resolves entirely from the agent block when one is present", () => {
     const payload = { agent: { cli: "claude", model: "opus", thinking: "high" }, job: {} };
-    expect(resolveRunConfig(payload, legacy)).toEqual({
+    expect(resolveRunConfig(payload)).toEqual({
       cli: "claude",
       model: "opus",
       thinking: "high",
     });
   });
 
-  it("does not let a legacy model resurrect a deliberately-cleared agent model", () => {
+  it("does not resurrect a deliberately-cleared agent model", () => {
     const payload = { agent: { cli: "claude", model: null, thinking: null }, job: {} };
-    expect(resolveRunConfig(payload, legacy)).toEqual({
+    expect(resolveRunConfig(payload)).toEqual({
       cli: "claude",
       model: null,
       thinking: null,
@@ -159,31 +145,15 @@ describe("resolveRunConfig — agent block is authoritative", () => {
       agent: { cli: "claude", model: "sonnet", thinking: "low" },
       job: { model: "opus", thinking: "high" },
     };
-    expect(resolveRunConfig(payload, legacy)).toEqual({
+    expect(resolveRunConfig(payload)).toEqual({
       cli: "claude",
       model: "opus",
       thinking: "high",
     });
   });
-
-  it("uses the runner-config fallback only when there is no agent block (legacy server)", () => {
-    expect(resolveRunConfig({ job: {} }, legacy)).toEqual({
-      cli: "gemini",
-      model: "legacy-model",
-      thinking: "legacy-effort",
-    });
-  });
-
-  it("still applies a per-job override against a legacy server", () => {
-    expect(resolveRunConfig({ job: { model: "opus" } }, legacy)).toEqual({
-      cli: "gemini",
-      model: "opus",
-      thinking: "legacy-effort",
-    });
-  });
 });
 
-// The full chain, per CLI: a /next payload -> resolveRunConfig -> the provider's
+// The full chain, per CLI: a claim payload -> resolveRunConfig -> the provider's
 // argv. This is the integration point the dashboard relies on, so assert the
 // model/effort actually land in each tool's command the way that tool expects.
 describe("payload -> command, all CLIs", () => {

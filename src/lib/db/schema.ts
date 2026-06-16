@@ -164,7 +164,6 @@ export function initializeSchema(db: Database.Database) {
       color TEXT,                         -- stored round-robin identity hue
       eager INTEGER NOT NULL DEFAULT 0,
       placement TEXT NOT NULL DEFAULT 'local', -- routes this agent's runs to a runner tier/label
-      last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );

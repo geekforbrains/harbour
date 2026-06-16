@@ -98,7 +98,7 @@ Every route is wrapped in exactly one HOF from `auth.ts` (no inline checks):
 | `withAuthenticatedUser` | any signed-in user (no org scope) | system info routes |
 | `withRunnerAuth` | runner token only | the claim endpoint (`/api/runner/claim`) |
 | `withRunExecutorOrUser(h, {role})` | the run's **exec token** (bound to that run id) **or** a user meeting `role` in the run's org | run's org |
-| `withAgentOrUser(h, {role, orgFromParams?})` | user **or** agent — where "agent" is a permanent agent key **or** an agent-run **executor** token acting as the run's agent | per-identity |
+| `withAgentOrUser(h, {role, orgFromParams?})` | user **or** agent — where "agent" is an agent-run **executor** token acting as the run's agent (agents have no key of their own; see above) | per-identity |
 
 `withAgentOrUser` narrows an agent (or agent-run executor) to its own org inline:
 for `[id]` routes it resolves the target org via `orgFromParams` and rejects

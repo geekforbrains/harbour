@@ -35,7 +35,6 @@ type Agent = {
   waiting_count: number;
   pending_count: number;
   last_activity: number | null;
-  last_polled_at: number | null;
 };
 
 type CliTool = {
@@ -50,6 +49,7 @@ import { CLI_CONFIG } from "@/lib/cli-config";
 import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useRunnerHealth } from "@/lib/hooks/use-runner-health";
 
 export default function AgentsPage() {
   const activeProjectId = useActiveProjectId();
@@ -57,6 +57,9 @@ export default function AgentsPage() {
 
   const { data: agentsData = [], isLoading: loading } = useAgents();
   const agents = agentsData as unknown as Agent[];
+
+  const { data: runnerHealth } = useRunnerHealth();
+  const stalled = runnerHealth?.stalled ?? [];
 
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -145,11 +148,6 @@ export default function AgentsPage() {
     return <PageLoading />;
   }
 
-  // Any agent without a recent poll means the runner isn't picking up work.
-  const showRunnerBanner =
-    agents.length > 0 &&
-    !agents.some((a) => a.last_polled_at && Date.now() / 1000 - a.last_polled_at < 300);
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -170,15 +168,23 @@ export default function AgentsPage() {
         }
       />
 
-      {activeProjectId && showRunnerBanner && (
+      {stalled.length > 0 && (
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm">
-          <p className="font-medium text-amber-600">Runner not active</p>
-          <p className="text-muted-foreground mt-0.5">
-            You have Harbour agents but no runner polling. Run:{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              npm run harbour -- agent install
-            </code>
-          </p>
+          <p className="font-medium text-amber-600">No runner connected</p>
+          <div className="text-muted-foreground mt-0.5 space-y-0.5">
+            {stalled.map((s) => (
+              <p key={s.placement}>
+                {s.count} run(s) waiting — no runner is serving placement{" "}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">{s.placement}</code>.
+              </p>
+            ))}
+            <p>
+              Start the local runner (
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour run</code>/
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">harbour install</code>) or mint
+              a runner for this placement in Settings → Runners.
+            </p>
+          </div>
         </div>
       )}
 
@@ -262,7 +268,7 @@ export default function AgentsPage() {
               <p className="text-xs text-muted-foreground">
                 If no local runner is installed yet, run{" "}
                 <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                  npm run harbour -- agent install
+                  npm run harbour -- install
                 </code>{" "}
                 on this machine. Runners for other placements are minted in Settings → Runners.
               </p>

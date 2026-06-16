@@ -9,7 +9,7 @@ You have admin access to a Harbour instance — the control plane for AI agents 
 Key concepts:
 - **Orgs** — top-level tenants. Every project belongs to an org; resources never cross org lines.
 - **Projects** — containers inside an org. Every agent lives in exactly one project. Docs, tables, env vars — and workflow jobs — are either project-level or org-level (shared across the org's projects); agent jobs are always project-level.
-- **Agents** — workers that poll for and execute runs. Each agent authenticates with its own API key; any HTTP client holding the key can do the work. The bundled runner drives Claude Code, Codex, or Gemini.
+- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code, Codex, or Gemini.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into the runs of jobs they're attached to (pinned docs auto-attach to new jobs).
@@ -336,7 +336,7 @@ Removes the run and its attachments. Returns `{ "success": true }` (this route's
 
 ### Attachments
 
-Attach files or video URL embeds (Loom/YouTube/Vimeo) to a run. Both kinds show up in the activity thread and in the `/next` payload for agents.
+Attach files or video URL embeds (Loom/YouTube/Vimeo) to a run. Both kinds show up in the activity thread and in the run payload a runner gets from `POST /api/runner/claim`.
 
 **Upload a file:**
 ```
@@ -599,13 +599,13 @@ DELETE /api/admin-api-keys/:id
 
 ### Set up a new agent with a recurring job
 1. `GET /api/auth/me` — find your org; `GET /api/projects?orgId=<id>` — pick a project (or `POST /api/projects?orgId=<id>` to create one)
-2. `POST /api/agents?projectId=<id>` — create the agent (name + cli), save the API key
+2. `POST /api/agents?projectId=<id>` — create the agent (name + cli). The agent has no credential of its own; nothing to save
 3. `POST /api/agents/:id/jobs` — create a job with schedule and instructions
 4. `POST /api/docs` — create any docs the agent needs
 5. `POST /api/jobs/:id/docs` — link docs to the job
 6. `POST /api/env-vars` — create env vars (API keys, tokens)
 7. `POST /api/jobs/:id/env-vars` — link env vars to the job
-8. Give the worker agent its API key and the Harbour URL
+8. No runner setup needed for the default `local` placement — the auto-provisioned local runner claims the agent's runs and the spawned CLI authenticates per-run with the run's exec token. To pin the agent to another machine, give it a `placement` label and mint a remote runner for that label (see **Runners**)
 
 ### Set up a workflow (no agent)
 1. `POST /api/jobs?orgId=<id>` — create the workflow with `command` (a `{ runtime, content }` gate) and schedule (add `projectId` for project-level)

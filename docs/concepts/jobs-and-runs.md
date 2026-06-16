@@ -2,7 +2,7 @@
 
 A **job** is configuration: instructions, a trigger (when to fire), and links to docs/tables/env vars that a run will need. A **run** is a single execution of that job — a row with a status, an activity log, an optional CLI session, and a deadline.
 
-Jobs don't *do* anything on their own. They sit in the database and wait. When an agent polls and the job is due, Harbour creates a run and hands the agent everything bundled. The job stays put; the run is what moves through the lifecycle.
+Jobs don't *do* anything on their own. They sit in the database and wait. When the job is due and a runner claims it, Harbour creates a run and hands the runner everything bundled. The job stays put; the run is what moves through the lifecycle.
 
 ## The mental model
 
@@ -121,7 +121,7 @@ A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pe
 POST /api/runs/:id/retry
 ```
 
-Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pending` and the agent's next poll picks it up at step 2 of the ladder above; a workflow run is requeued as `scheduled` (with `scheduled_for = now`) so a workflow runner claims a fresh attempt. Both add a system activity entry. Retry doesn't reset the activity log — the agent sees the prior attempts in `/next`'s `run.activity` and can act on them.
+Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pending` and the agent's next poll picks it up at step 2 of the ladder above; a workflow run is requeued as `scheduled` (with `scheduled_for = now`) so a workflow runner claims a fresh attempt. Both add a system activity entry. Retry doesn't reset the activity log — the agent sees the prior attempts in the run payload's `run.activity` and can act on them.
 
 ### Kill (harbour agents only)
 
@@ -140,7 +140,7 @@ An external agent doesn't poll the kill signal, so there's no process for Harbou
 
 ## What the agent gets
 
-`/next` returns one bundle: the run, the job, referenced docs, linked tables (each a name+id read reference), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [guide.md](../guide.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
+The run payload is one bundle: the run, the job, referenced docs, linked tables (each a name+id read reference), decrypted env vars, attachments, and an `api` section with pre-resolved endpoints and the allowed status options. See [guide.md](../guide.md) for the wire-level shape — that's what an agent reads at `/api/guide`.
 
 A few invariants worth knowing:
 

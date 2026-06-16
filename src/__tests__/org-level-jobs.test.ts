@@ -160,11 +160,11 @@ describe("org-level job link guard", () => {
     );
   });
 
-  it("rejects a project-level database with a clear message", () => {
+  it("rejects a project-level table with a clear message", () => {
     const { org, project } = fixture();
     const wf = orgWorkflow(org.id);
-    const projDb = createTable(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
-    expect(() => linkTableToJob(wf.id, projDb.id)).toThrow(
+    const projTable = createTable(org.id, project.id, "projdb", [{ name: "v", type: "TEXT" }]);
+    expect(() => linkTableToJob(wf.id, projTable.id)).toThrow(
       "Org-level jobs can only link org-level tables",
     );
   });
