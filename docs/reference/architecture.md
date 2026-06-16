@@ -75,11 +75,11 @@ identities are:
    spawns, so the high-value runner token never reaches the CLI; bound to exactly
    one run and rotated on every re-claim.
 
-An **agent API key** (`hbr_…`) still resolves — sha256-hashed in
-`agents.api_key_hash`, carrying the agent's home project — but only for the
-docs/tables/data routes the CLI calls; agents no longer poll for work. An
-**admin API key** uses the same `hbr_` Bearer header but resolves to the
-*creating user's* identity — it acts as that user.
+Agents have **no credential of their own**: a runner claims their runs and the
+spawned CLI authenticates *as the run* via its exec token (above), so the
+docs/tables/data routes accept that exec token, not an agent key. An **admin API
+key** (`hbr_…`) resolves to the *creating user's* identity — it acts as that
+user, and is the only `hbr_` Bearer the server still accepts.
 
 **Authorization** is layered on top by role. Roles (`src/lib/db/access.ts`):
 `viewer < editor < instance_admin`. `resolveAccess(userId, orgId)` returns

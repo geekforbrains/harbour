@@ -159,9 +159,7 @@ describe("foreign keys", () => {
     const db = getDb();
     expect(() =>
       db
-        .prepare(
-          `INSERT INTO agents (id, project_id, name, slug, api_key_hash) VALUES ('a1', 'nope', 'X', 'x', 'h')`,
-        )
+        .prepare(`INSERT INTO agents (id, project_id, name, slug) VALUES ('a1', 'nope', 'X', 'x')`)
         .run(),
     ).toThrow(/FOREIGN KEY/);
   });

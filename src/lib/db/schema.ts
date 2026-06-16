@@ -158,14 +158,11 @@ export function initializeSchema(db: Database.Database) {
       name TEXT NOT NULL,
       slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
       description TEXT,
-      api_key_hash TEXT NOT NULL,
       cli TEXT,                           -- 'claude' | 'codex' | 'gemini'
       model TEXT,
       thinking TEXT,
       color TEXT,                         -- stored round-robin identity hue
       eager INTEGER NOT NULL DEFAULT 0,
-      remote INTEGER NOT NULL DEFAULT 0,  -- runner lives on another machine
-      runner_fingerprint TEXT,            -- one-runtime-per-agent guard
       placement TEXT NOT NULL DEFAULT 'local', -- routes this agent's runs to a runner tier/label
       last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),

@@ -21,7 +21,7 @@ Linked tables:      marketing_calendar
 Linked env vars:    BUFFER_API_KEY (pinned)
 ```
 
-The agent polls `GET /api/agents/<id>/next`. The response bundles:
+When a runner claims the agent's run (`POST /api/runner/claim`), the response bundles everything the run needs:
 
 ```json
 {

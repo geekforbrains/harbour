@@ -10,7 +10,6 @@ import {
 } from "./db/access";
 import {
   authenticateAdminApiKey,
-  authenticateAgent,
   authenticateRunner,
   getRunByExecToken,
   getSession,
@@ -64,13 +63,6 @@ type UserIdentity = {
   displayName: string;
 };
 
-type AgentIdentity = {
-  type: "agent";
-  agentId: string;
-  agentName: string;
-  projectId: string;
-};
-
 /**
  * A runner authenticated by its bearer token (`hbrn_…`). Carries only the
  * registry facts; the runner's live capabilities arrive in each claim body, so
@@ -103,7 +95,7 @@ type ExecutorIdentity = {
   orgId: string;
 };
 
-export type Identity = UserIdentity | AgentIdentity | RunnerIdentity | ExecutorIdentity;
+export type Identity = UserIdentity | RunnerIdentity | ExecutorIdentity;
 
 // ── Authorized auth context handed to route handlers ─────────────────────────
 
@@ -157,7 +149,7 @@ type RouteContext = { params: Promise<Record<string, string>> };
  * Establish identity from a request. Bearer tokens dispatch by prefix:
  *  - `hbx_…`  exec token  → executor identity (one run; looked up by hash)
  *  - `hbrn_…` runner token → runner identity (the claim path)
- *  - `hbr_…`  agent or admin key → agent identity / the creating user's identity
+ *  - `hbr_…`  admin API key → the creating user's identity
  *  - `harbour_session` cookie → user identity
  */
 export function getIdentityFromRequest(req: NextRequest): Identity | null {
@@ -195,17 +187,9 @@ export function getIdentityFromRequest(req: NextRequest): Identity | null {
       };
     }
 
-    // Agent key or admin key (both `hbr_…`). Admin keys resolve to the creating
-    // user's identity; agent keys to the agent's identity.
-    const agent = authenticateAgent(token);
-    if (agent) {
-      return {
-        type: "agent",
-        agentId: agent.id,
-        agentName: agent.name,
-        projectId: agent.project_id,
-      };
-    }
+    // Admin API key (`hbr_…`) → resolves to the creating user's identity.
+    // Agents have no standalone credential: a runner claims their work and the
+    // CLI authenticates with the run's exec token (`hbx_…`), never an agent key.
     const adminKey = authenticateAdminApiKey(token);
     if (adminKey) {
       return {
@@ -495,15 +479,15 @@ export function withRunExecutorOrUser(
  * agents/jobs `data` helpers). Users are checked against `opts.role` in the
  * resource's org; agents are scoped to their own project's org.
  *
- * The "agent" here is either a permanent agent key OR a run's executor token
- * (the CLI's run-scoped credential) — an executor acts as the run's agent,
- * scoped to the run's project. Only agent runs (non-null agent/project) can act
- * this way; a workflow run's executor has no agent identity and is rejected.
+ * The "agent" here is a run's executor token (the CLI's run-scoped credential) —
+ * the executor acts as the run's agent, scoped to the run's project. Only agent
+ * runs (non-null agent/project) can act this way; a workflow run's executor has
+ * no agent identity and is rejected.
  *
  * - For `[id]` routes, pass a resolver that derives the target org from params
  *   (e.g. via `orgIdForResource`). For create routes with no resource id yet,
- *   the org is taken from the agent's project (agents) or the `orgId`/`harbour_org`
- *   scope (users).
+ *   the org is taken from the executor's run project (agents) or the
+ *   `orgId`/`harbour_org` scope (users).
  */
 export function withAgentOrUser(
   handler: Handler<AuthContext>,
@@ -520,20 +504,11 @@ export function withAgentOrUser(
     const params = await ctx.params;
     const resolvedOrg = opts.orgFromParams ? opts.orgFromParams(params) : undefined;
 
-    // Resolve an agent-shaped context from either a permanent agent key or a
-    // run executor token (agent runs only).
+    // Resolve an agent-shaped context from the run's executor token (agent runs
+    // only) — agents have no standalone key; the CLI acts as its agent via the
+    // exec token while the run executes.
     let agentCtx: AgentAuth | null = null;
-    if (identity.type === "agent") {
-      const agentOrg = orgIdForProject(identity.projectId);
-      if (!agentOrg) return forbidden();
-      agentCtx = {
-        type: "agent",
-        agentId: identity.agentId,
-        agentName: identity.agentName,
-        orgId: agentOrg,
-        projectId: identity.projectId,
-      };
-    } else if (identity.type === "executor") {
+    if (identity.type === "executor") {
       // Only agent-run executors carry an agent/project to act as.
       if (!identity.agentId || !identity.projectId) return forbidden();
       // The executor acts as its agent only while the run is executing. Once the

@@ -503,7 +503,7 @@ DELETE /api/env-vars/:id
 ```
 GET /api/env-vars/:id/value
 ```
-Returns `{ "value": "..." }`. Requires **editor** role on the owning org — viewers and agent API keys are rejected with 403.
+Returns `{ "value": "..." }`. Requires **editor** role on the owning org — viewers are rejected with 403.
 
 ### Pin/Unpin an Env Var
 ```

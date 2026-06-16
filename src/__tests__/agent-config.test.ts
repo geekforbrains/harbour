@@ -36,27 +36,6 @@ afterEach(() => {
   resetDb();
 });
 
-describe("agent remote flag", () => {
-  it("defaults to local and persists when set", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
-
-    const local = createAgent(project.id, "Local Dev", undefined, { cli: "claude" });
-    const remote = createAgent(project.id, "Mac Builder", undefined, {
-      cli: "claude",
-      remote: true,
-    });
-
-    expect(local.remote).toBe(false);
-    expect(remote.remote).toBe(true);
-
-    const row = getDb().prepare(`SELECT remote FROM agents WHERE id = ?`).get(remote.id) as {
-      remote: number;
-    };
-    expect(row.remote).toBe(1);
-  });
-});
-
 describe("/next payload carries live agent config", () => {
   it("includes the agent's cli/model/thinking/eager", () => {
     const org = createOrg("Acme")!;

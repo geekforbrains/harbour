@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getIdentityFromRequest } from "@/lib/auth";
-import { getAgentById, getUserById, listOrgs, listOrgsForUser } from "@/lib/db/queries";
+import { getUserById, listOrgs, listOrgsForUser } from "@/lib/db/queries";
 
 /**
  * Identity echo. Accepts any authenticated caller (user session, admin key,
- * agent key, runner token, or run exec token) and returns who they are. Users
- * also get their org memberships so the client can pick an active org.
+ * runner token, or run exec token) and returns who they are. Users also get
+ * their org memberships so the client can pick an active org.
  */
 export const GET = async (req: NextRequest) => {
   const identity = getIdentityFromRequest(req);
@@ -19,11 +19,6 @@ export const GET = async (req: NextRequest) => {
     // so surface all orgs to them; regular users see only their memberships.
     const orgs = user?.is_instance_admin ? listOrgs() : listOrgsForUser(identity.userId);
     return NextResponse.json({ type: "user", user, orgs });
-  }
-
-  if (identity.type === "agent") {
-    const agent = getAgentById(identity.agentId);
-    return NextResponse.json({ type: "agent", agent });
   }
 
   if (identity.type === "runner") {

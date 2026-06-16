@@ -65,12 +65,6 @@ function userReq(userId: string, url: string, init: ReqInit = {}): NextRequest {
   return new NextRequest(url, { method: init.method, body: init.body, headers });
 }
 
-function agentReq(apiKey: string, url: string, init: ReqInit = {}): NextRequest {
-  const headers = new Headers(init.headers);
-  headers.set("authorization", `Bearer ${apiKey}`);
-  return new NextRequest(url, { method: init.method, body: init.body, headers });
-}
-
 /** A request carrying any bearer token (runner token or run exec token). */
 function bearerReq(token: string, url: string, init: ReqInit = {}): NextRequest {
   const headers = new Headers(init.headers);
@@ -217,9 +211,9 @@ describe("POST /api/docs (agent or editor)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("an agent creates a doc scoped to its project", async () => {
-    const { agent } = fixture();
-    const req = agentReq(agent.apiKey, "http://x/api/docs", {
+  it("an agent (via its run's exec token) creates a doc scoped to its project", async () => {
+    const { agent, run } = fixture();
+    const req = bearerReq(execToken(run.id), "http://x/api/docs", {
       method: "POST",
       body: JSON.stringify({ title: "Agent Doc" }),
       headers: { "content-type": "application/json" },
@@ -536,17 +530,6 @@ describe("workflow run reporting (exec token)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("an agent key cannot set run status (lifecycle is exec-token only)", async () => {
-    const { agent, run } = fixture();
-    const putReq = agentReq(agent.apiKey, "http://x/", {
-      method: "PUT",
-      body: JSON.stringify({ status: "done" }),
-      headers: JSON_HEADERS,
-    });
-    const res = await runStatusPUT(putReq, ctx({ id: run.id }));
-    expect(res.status).toBe(403);
-  });
-
   it("an exec token for one run cannot set status on another run", async () => {
     const { project, run } = fixture();
     const wfJob = createWorkflow(project.org_id, project.id, {
@@ -569,7 +552,10 @@ describe("agent self-ownership (within an org)", () => {
   it("an agent cannot trigger another agent's job in the same org", async () => {
     const { project, job } = fixture(); // job belongs to agent A
     const agentB = createAgent(project.id, "DevB"); // same project/org, different agent
-    const req = agentReq(agentB.apiKey, "http://x/", {
+    const jobB = createJob(project.id, agentB.id, { name: "JB", schedule: '{"every":60}' })!;
+    const runB = createRun(jobB.id, agentB.id)!;
+    // agentB acts via its own run's exec token — it must not reach agent A's job.
+    const req = bearerReq(execToken(runB.id), "http://x/", {
       method: "POST",
       body: JSON.stringify({}),
       headers: { "content-type": "application/json" },
@@ -579,8 +565,8 @@ describe("agent self-ownership (within an org)", () => {
   });
 
   it("an agent can trigger its own job", async () => {
-    const { job, agent } = fixture();
-    const req = agentReq(agent.apiKey, "http://x/", {
+    const { job, run } = fixture(); // run belongs to the same agent as job
+    const req = bearerReq(execToken(run.id), "http://x/", {
       method: "POST",
       body: JSON.stringify({}),
       headers: { "content-type": "application/json" },
@@ -618,7 +604,10 @@ describe("agent self-ownership (within an org)", () => {
   it("an agent cannot write table data as another agent in the same org", async () => {
     const { project, agent } = fixture(); // agent A
     const agentB = createAgent(project.id, "DevB"); // same org, different agent
-    const req = agentReq(agentB.apiKey, "http://x/", {
+    const jobB = createJob(project.id, agentB.id, { name: "JB", schedule: '{"every":60}' })!;
+    const runB = createRun(jobB.id, agentB.id)!;
+    // agentB's exec token acts as agentB — it must not write to agent A's tables.
+    const req = bearerReq(execToken(runB.id), "http://x/", {
       method: "POST",
       body: JSON.stringify({ name: "tbl", columns: [{ name: "c", type: "TEXT" }] }),
       headers: { "content-type": "application/json" },
@@ -668,17 +657,17 @@ describe("POST /api/runner/claim", () => {
     expect((await res.json()).run).toBeNull();
   });
 
-  it("rejects a non-runner caller (agent key / user) with 403", async () => {
-    const { agent, editor } = fixture();
-    const agentRes = await claimPOST(
-      agentReq(agent.apiKey, "http://x/api/runner/claim", {
+  it("rejects a non-runner caller (run exec token / user) with 403", async () => {
+    const { run, editor } = fixture();
+    const execRes = await claimPOST(
+      bearerReq(execToken(run.id), "http://x/api/runner/claim", {
         method: "POST",
         body: claimBody({ kinds: ["workflow"], clis: [] }),
         headers: JSON_HEADERS,
       }),
       ctx({}),
     );
-    expect(agentRes.status).toBe(403);
+    expect(execRes.status).toBe(403);
     const userRes = await claimPOST(
       userReq(editor.id, "http://x/api/runner/claim", {
         method: "POST",

@@ -33,17 +33,18 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
-| `remote` | Legacy boolean retained alongside `placement`; routing is decided by `placement`, not this flag |
-| `api_key_hash` | SHA-256 of the API key — the plaintext is never stored. Scopes the management API surface, not run claiming (the runner claims with its own token) |
 | `last_polled_at` | Updated whenever the agent is claimed/peeked at; powers the "active" indicator on the dashboard |
 
 `model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`).
 
-## API keys
+## Credentials
 
-Each agent gets one API key, format `hbr_<64 hex chars>`. The plaintext is shown once at creation and never again — only the SHA-256 hash is stored. Authentication does the same hash and looks up by `api_key_hash`.
+An agent has **no credential of its own**. Everything an agent does rides on two tokens that belong to the *runner*, not the agent:
 
-The agent API key is *not* how runs get claimed — neither a local nor a remote runner ever uses it. Every runner claims work with its own [runner token](#harbour-agents) and drives the CLI with a per-run exec token. The agent key scopes the management API surface to that agent; run execution rides entirely on runner and exec tokens.
+- A **runner token** (`hbrn_…`) claims the agent's runs — identical for a local or a remote runner.
+- A per-run **exec token** (`hbx_…`), minted at claim and handed to the spawned CLI, authenticates every callback the run makes (status, activity, docs, tables, attachments). It's scoped to that one run and goes inert once the run is terminal.
+
+This is why local and remote agents connect the same way: a runner claims the work and the CLI authenticates *as the run*. There is no long-lived per-agent API key to issue, rotate, or leak — programmatic management of Harbour itself uses an [admin API key](../admin-guide.md) instead.
 
 ## Claiming work
 
@@ -163,8 +164,8 @@ Docs, secrets, and tables are shared at the **org** level (or scoped to a projec
 
 ## Source-of-truth pointers
 
-- `src/lib/db/agents.ts` — agent CRUD and API key hashing.
-- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `slug`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`, `remote`, `runner_fingerprint`).
+- `src/lib/db/agents.ts` — agent CRUD (no per-agent credential; runs are claimed by runners).
+- `src/lib/db/schema.ts` — the `agents` table (`project_id`, `slug`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`).
 - `src/lib/slug.ts` — the canonical slug algorithm and the name-collision errors.
 - `src/app/api/runner/claim/route.ts` — the unified claim endpoint and the `api.endpoints` builder for run payloads.
 - `src/lib/db/runs.ts` — `claimNextRun` / `claimableLabels`: placement-to-label routing and remote-token scoping.

@@ -64,7 +64,7 @@ Every callback you make for a run is authenticated with that run's **exec token*
 Authorization: Bearer hbx_<exec_token>
 ```
 
-The exec token is scoped to a single run and rotated on every re-claim, so it carries the lifecycle endpoints (`set_title`, `update_status`, `post_activity`, `upload_attachment`, …) as well as the docs and tables endpoints. You never see or use the runner's own token, and an agent no longer authenticates with its own long-lived API key for run work — that high-value key stays on the runner. Read the resolved URLs and the auth note straight out of `api` (see the next section); don't construct them yourself.
+The exec token is scoped to a single run and rotated on every re-claim, so it carries the lifecycle endpoints (`set_title`, `update_status`, `post_activity`, `upload_attachment`, …) as well as the docs and tables endpoints. You never see or use the runner's own token, and an agent has no long-lived API key of its own — run work is authenticated entirely by this exec token. Read the resolved URLs and the auth note straight out of `api` (see the next section); don't construct them yourself.
 
 ## Your Run Context
 

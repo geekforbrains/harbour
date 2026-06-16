@@ -52,11 +52,23 @@ function userReq(userId: string, url: string): NextRequest {
   });
 }
 
-/** Build a request authenticated as an agent via its API key. */
-function agentReq(apiKey: string, url: string): NextRequest {
+/** Build a request carrying a bearer token (a run's exec token or a runner token). */
+function bearerReq(token: string, url: string): NextRequest {
   return new NextRequest(url, {
-    headers: { authorization: `Bearer ${apiKey}` },
+    headers: { authorization: `Bearer ${token}` },
   });
+}
+
+/**
+ * Create an agent + job + run in a project. Agents have no standalone credential,
+ * so tests act "as an agent" through its run's exec token — this returns both the
+ * agent (to assert on) and the run id (to mint the token from).
+ */
+function agentRun(projectId: string, name = "Dev") {
+  const agent = createAgent(projectId, name, undefined, { cli: "claude" });
+  const job = createJob(projectId, agent.id, { name: "J", schedule: '{"every":60}' })!;
+  const run = createRun(job.id, agent.id)!;
+  return { agent, runId: run.id };
 }
 
 /** Build an unauthenticated request. */
@@ -143,13 +155,13 @@ describe("withOrgAuth", () => {
     expect((await read(req, ctx({}))).status).toBe(200);
   });
 
-  it("403 for an agent (org auth is user-only)", async () => {
+  it("403 for a run executor (org auth is user-only)", async () => {
     const { org, project } = fixture();
-    const agent = createAgent(project.id, "Dev");
+    const { runId } = agentRun(project.id);
     const read = withOrgAuth(ok, { role: "viewer" });
-    expect((await read(agentReq(agent.apiKey, `http://x/?orgId=${org.id}`), ctx({}))).status).toBe(
-      403,
-    );
+    expect(
+      (await read(bearerReq(mintExecToken(runId), `http://x/?orgId=${org.id}`), ctx({}))).status,
+    ).toBe(403);
   });
 });
 
@@ -236,12 +248,12 @@ describe("withInstanceAdmin", () => {
 // ===========================================================================
 
 describe("withAuthenticatedUser", () => {
-  it("allows any signed-in user, rejects agents + anon", async () => {
+  it("allows any signed-in user, rejects run executors + anon", async () => {
     const { project, viewer } = fixture();
-    const agent = createAgent(project.id, "Dev");
+    const { runId } = agentRun(project.id);
     const handler = withAuthenticatedUser(ok);
     expect((await handler(userReq(viewer.id, "http://x/"), ctx({}))).status).toBe(200);
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({}))).status).toBe(403);
+    expect((await handler(bearerReq(mintExecToken(runId), "http://x/"), ctx({}))).status).toBe(403);
     expect((await handler(anonReq("http://x/"), ctx({}))).status).toBe(401);
   });
 });
@@ -262,9 +274,9 @@ describe("withAgentOrUser", () => {
     expect((await handler(userReq(viewer.id, "http://x/"), ctx({ id: doc.id }))).status).toBe(403);
   });
 
-  it("an agent passes when the resource is in its org, denied otherwise", async () => {
+  it("a run executor passes when the resource is in its agent's org, denied otherwise", async () => {
     const { org, project } = fixture();
-    const agent = createAgent(project.id, "Dev");
+    const { runId } = agentRun(project.id);
     const sameDoc = createDoc(org.id, project.id, "Spec")!;
 
     const otherOrg = createOrg("Other")!;
@@ -274,13 +286,17 @@ describe("withAgentOrUser", () => {
       withAgentOrUser(ok, { role: "editor", orgFromParams: () => docOrg });
 
     expect(
-      (await handler(sameDoc.org_id)(agentReq(agent.apiKey, "http://x/"), ctx({ id: sameDoc.id })))
-        .status,
+      (
+        await handler(sameDoc.org_id)(
+          bearerReq(mintExecToken(runId), "http://x/"),
+          ctx({ id: sameDoc.id }),
+        )
+      ).status,
     ).toBe(200);
     expect(
       (
         await handler(otherDoc.org_id)(
-          agentReq(agent.apiKey, "http://x/"),
+          bearerReq(mintExecToken(runId), "http://x/"),
           ctx({ id: otherDoc.id }),
         )
       ).status,
@@ -303,12 +319,12 @@ describe("withAgentOrUser", () => {
 
     // While the run executes, its exec token can write the agent's resources.
     const token = mintExecToken(run.id);
-    expect((await handler(agentReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(200);
+    expect((await handler(bearerReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(200);
 
     // Once the run is terminal, a lingering/leaked token can no longer write
     // org data (the executor goes inert for resource routes).
     updateRunStatus(run.id, "done");
-    expect((await handler(agentReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(403);
+    expect((await handler(bearerReq(token, "http://x/"), ctx({ id: doc.id }))).status).toBe(403);
   });
 });
 
@@ -328,7 +344,7 @@ describe("withRunExecutorOrUser", () => {
   it("a run's exec token, bound to that run id, passes", async () => {
     const { run } = runFixture();
     const handler = withRunExecutorOrUser(ok, { role: "editor" });
-    const res = await handler(agentReq(mintExecToken(run.id), "http://x/"), ctx({ id: run.id }));
+    const res = await handler(bearerReq(mintExecToken(run.id), "http://x/"), ctx({ id: run.id }));
     expect(res.status).toBe(200);
   });
 
@@ -343,7 +359,7 @@ describe("withRunExecutorOrUser", () => {
     )!;
     const handler = withRunExecutorOrUser(ok, { role: "viewer" });
     const res = await handler(
-      agentReq(mintExecToken(otherRun.id), "http://x/"),
+      bearerReq(mintExecToken(otherRun.id), "http://x/"),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(403);
@@ -357,7 +373,7 @@ describe("withRunExecutorOrUser", () => {
     // postrun gate posts activity / may override done->failed after the run
     // reports terminal. (The org-data gate lives on withAgentOrUser, below.)
     const handler = withRunExecutorOrUser(ok, { role: "viewer" });
-    const res = await handler(agentReq(token, "http://x/"), ctx({ id: run.id }));
+    const res = await handler(bearerReq(token, "http://x/"), ctx({ id: run.id }));
     expect(res.status).toBe(200);
   });
 
@@ -368,15 +384,12 @@ describe("withRunExecutorOrUser", () => {
     expect((await editorH(userReq(viewer.id, "http://x/"), ctx({ id: run.id }))).status).toBe(403);
   });
 
-  it("an outsider and an agent key are both forbidden", async () => {
-    const { run, outsider, agent } = runFixture();
+  it("an outsider is forbidden", async () => {
+    const { run, outsider } = runFixture();
     const handler = withRunExecutorOrUser(ok, { role: "viewer" });
     expect((await handler(userReq(outsider.id, "http://x/"), ctx({ id: run.id }))).status).toBe(
       403,
     );
-    // A permanent agent key is neither this run's executor nor a user → 403.
-    expect((await handler(agentReq(agent.apiKey, "http://x/"), ctx({ id: run.id }))).status).toBe(
-      403,
-    );
+    // (A foreign run's exec token is covered above; an agent has no other key.)
   });
 });

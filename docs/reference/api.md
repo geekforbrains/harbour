@@ -97,8 +97,7 @@ There is **no** signup route.
 |---|---|---|---|
 | GET / POST | `/api/agents` | `withProjectAuth` (viewer / editor) | List / create in the project |
 | GET | `/api/agents/:id` | `withResourceAuth` agent (viewer) | Fetch |
-| PUT / DELETE | `/api/agents/:id` | `withResourceAuth` agent (editor) | Update / delete (+ runner config) |
-| POST | `/api/agents/:id/rotate-key` | `withResourceAuth` agent (editor) | New API key |
+| PUT / DELETE | `/api/agents/:id` | `withResourceAuth` agent (editor) | Update / delete |
 | GET / POST | `/api/agents/:id/jobs` | `withResourceAuth` agent (viewer / editor) | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withResourceAuth` agent (viewer) | Run history |
 | POST | `/api/agents/:id/tables` | `withAgentOrUser` (editor) | Convenience: create a table, optionally link to a job + seed rows |

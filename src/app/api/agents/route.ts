@@ -22,7 +22,6 @@ export const POST = withProjectAuth(
     const model = optionalString(body.model, "model");
     const color = optionalString(body.color, "color");
     const eager = optionalBoolean(body.eager, "eager");
-    const remote = optionalBoolean(body.remote, "remote");
     const placement = optionalString(body.placement, "placement");
     const thinking = optionalString(body.thinking, "thinking");
     const cli = body.cli;
@@ -42,7 +41,6 @@ export const POST = withProjectAuth(
         thinking,
         color,
         eager: !!eager,
-        remote: !!remote,
         placement: placement ?? undefined,
       });
     } catch (err) {

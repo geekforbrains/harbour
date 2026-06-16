@@ -1367,7 +1367,7 @@ async function runFinalizeLoop({
  * @param {string} args.outcome    - the finalized terminal status
  * @param {boolean} args.agentRan  - did the agent work turn execute?
  * @param {string} args.url        - Harbour base URL
- * @param {string} args.apiKey     - agent API key
+ * @param {string} args.apiKey     - the run's exec token (Bearer for callbacks)
  * @param {string} args.runId     - the run being finalized
  * @param {string} args.agentName  - for log prefixes
  * @param {Record<string, string>} args.env - decrypted run env vars for the gate command

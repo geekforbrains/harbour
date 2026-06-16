@@ -1,16 +1,7 @@
-import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { getDb, isUniqueViolation } from "./schema";
-
-function generateApiKey(): string {
-  return `hbr_${crypto.randomBytes(32).toString("hex")}`;
-}
-
-function hashApiKey(key: string): string {
-  return crypto.createHash("sha256").update(key).digest("hex");
-}
 
 function agentCollisionError(existingName: string, slug: string) {
   return new NameCollisionError(
@@ -29,7 +20,6 @@ export function createAgent(
     thinking?: string;
     color?: string;
     eager?: boolean;
-    remote?: boolean;
     placement?: string;
   },
 ) {
@@ -44,32 +34,27 @@ export function createAgent(
     .get(projectId, slug) as { name: string } | undefined;
   if (existing) throw agentCollisionError(existing.name, slug);
   const id = uuid();
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
   const cli = opts?.cli || null;
   const model = opts?.model || null;
   const thinking = opts?.thinking || null;
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
-  const remote = opts?.remote ? 1 : 0;
   const placement = opts?.placement?.trim() || "local";
   try {
     db.prepare(
-      `INSERT INTO agents (id, project_id, name, slug, description, api_key_hash, cli, model, thinking, color, eager, remote, placement)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agents (id, project_id, name, slug, description, cli, model, thinking, color, eager, placement)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       projectId,
       name,
       slug,
       description || null,
-      apiKeyHash,
       cli,
       model,
       thinking,
       color,
       eager,
-      remote,
       placement,
     );
   } catch (err) {
@@ -89,24 +74,13 @@ export function createAgent(
     name,
     slug,
     description,
-    apiKey,
     cli,
     model,
     thinking,
     color,
     eager: !!eager,
-    remote: !!remote,
     placement,
   };
-}
-
-export function authenticateAgent(apiKey: string) {
-  const db = getDb();
-  const hash = hashApiKey(apiKey);
-  const agent = db
-    .prepare(`SELECT id, project_id, name, description FROM agents WHERE api_key_hash = ?`)
-    .get(hash) as any;
-  return agent || null;
 }
 
 export function getAgentById(id: string) {
@@ -114,7 +88,7 @@ export function getAgentById(id: string) {
   return (
     (db
       .prepare(
-        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, remote, runner_fingerprint, placement, last_polled_at, created_at, updated_at
+        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, last_polled_at, created_at, updated_at
      FROM agents WHERE id = ?`,
       )
       .get(id) as any) || null
@@ -146,7 +120,7 @@ export function listAgents(projectId: string) {
   const db = getDb();
   return db
     .prepare(`
-    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.remote, a.placement, a.last_polled_at, a.created_at,
+    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
