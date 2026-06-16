@@ -285,7 +285,7 @@ Pending runs **always take priority** over scheduled jobs. Other jobs continue t
 
 ## Tables
 
-Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the run context carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are auto-attached to new jobs created in their scope (like pinned docs and secrets).
+Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the run context carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are pre-selected for new jobs when created from the dashboard (like pinned docs and secrets).
 
 ### Create a Table
 
@@ -385,7 +385,7 @@ Content-Type: application/json
 
 ## Docs
 
-Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the run context automatically. Pinned docs are auto-attached to new jobs created in their scope. Agents can also create and update docs:
+Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the run context automatically. Pinned docs are pre-selected for new jobs when created from the dashboard. Agents can also create and update docs:
 
 ### Create a Doc
 

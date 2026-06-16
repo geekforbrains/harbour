@@ -5,7 +5,7 @@ Three top-level entities — markdown documents, agent-managed SQLite tables, an
 - They belong to an **org** (`org_id`), optionally narrowed to a **project** (`project_id` is nullable — `NULL` means org-level, usable by every project in the org). See [Orgs & projects](projects.md).
 - They're **linked to a job** via three identical junction tables: `job_docs`, `job_tables`, `job_env_vars`.
 - They're **injected into the run payload** when a runner claims the run — but only when **linked to the job** (org/project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map.
-- All three support **pinning** for "auto-attach to all new jobs."
+- All three support **pinning** — a creation-time default that pre-selects them for new jobs.
 
 The differences are in *what* gets injected. Docs are full text. Tables inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
 
@@ -47,18 +47,20 @@ The agent writes a draft, posts it to Buffer using the env var, then reads `mark
 
 Pinning is the answer to "I just made a new thing — apply this context everywhere automatically." Docs, tables, and env vars all support it.
 
-The crucial detail: **pinning is checked at creation time only**. When you call `createJob` the code merges your explicitly-selected ids with `listPinnedDocIds()`, `listPinnedTableIds()`, and `listPinnedEnvVarIds()` and inserts all three sets into the junction tables. After that, the link is just a row in `job_docs` / `job_tables` / `job_env_vars` like any other. An ad-hoc run via `triggerJobRun` adds nothing here — it fires an existing job whose links were already resolved at creation.
+The crucial detail: **pinning is a creation-time default, not a live link.** It's a dashboard convenience — the **New Job** dialog pre-checks every pinned doc/table/secret in scope so a new job picks them up by default. The job is created with exactly the set you submit: keep the pre-checked items and they're linked; deselect one and it is **not** linked. The server attaches only what the request carries (`createJob` / `createWorkflow` are explicit, matching `updateJob`) — pinning has no server-side effect of its own. After creation, each link is just a row in `job_docs` / `job_tables` / `job_env_vars` like any other; an ad-hoc run via `triggerJobRun` fires an existing job whose links were resolved at creation.
 
 What this means in practice:
 
 | Action | Effect |
 |---|---|
-| Pin a doc, then create a new job | Job gets the doc linked. |
-| Create a job, then pin a doc | Existing job is **not** updated. New jobs created after the pin will get it. |
-| Unpin a doc that was pinned | Existing junction rows stay. Future creations don't include it. |
+| Pin a doc, then create a new job in the dashboard | Dialog pre-checks it → job gets the doc linked. |
+| Deselect a pre-checked pinned doc in the New Job dialog | Job is created **without** it — the deselection is honored. |
+| Create a job, then pin a doc | Existing job is **not** updated. New jobs created after the pin pre-check it. |
+| Unpin a doc that was pinned | Existing junction rows stay. Future creations don't pre-check it. |
+| Create a job via the API | Pinning is ignored — the API links exactly the `docIds` / `envVarIds` / `tableIds` you pass. |
 | Delete the doc | Cascade-deletes the junction rows. Vanishes from existing jobs too (but only because the doc itself is gone). |
 
-Treat pinning as a default for *new* things, not as a live broadcast. If you want a doc applied retroactively, link it to each job manually (or write a one-shot SQL update via Captain).
+Treat pinning as a default for *new* things created in the dashboard, not as a live broadcast. If you want a doc applied to an existing job, link it explicitly (the job's detail page, or `POST /api/jobs/:id/docs`).
 
 Tables pin like docs and secrets, but reach for it sparingly — they're heavier, and typically you want a job to see only the slice of structured data it cares about, so explicit linking is usually the point.
 
@@ -117,7 +119,7 @@ CREATE TABLE job_env_vars   (job_id, env_var_id,   PRIMARY KEY(job_id, env_var_i
 
 All three use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/table/env var, same.
 
-Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs and secrets are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars}`. Pinned ids are merged in automatically at create time as described above.
+Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs and secrets are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars}`. The dashboard pre-selects pinned ids as a creation-time default (you can deselect them); the API links only the ids you pass — see Pinning above.
 
 ## What's not shared
 
@@ -127,10 +129,10 @@ These three are explicitly not the same thing as **attachments** ([Attachments](
 
 If you're hunting in code:
 
-- `src/lib/db/docs.ts` — `createDoc`, `updateDoc` (revisions), `toggleDocPinned`, `listPinnedDocIds`.
+- `src/lib/db/docs.ts` — `createDoc`, `updateDoc` (revisions), `toggleDocPinned`.
 - `src/lib/db/tables.ts` — `createTable`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
-- `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob`, `listPinnedEnvVarIds`.
-- `src/lib/db/jobs.ts` — `createJob` is where the pinned ids get merged into the junction inserts; `triggerJobRun` is the ad-hoc-run path (it reuses an existing job's links, merging nothing new).
+- `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob` (project-over-org override).
+- `src/lib/db/jobs.ts` — `createJob` / `createWorkflow` link exactly the ids passed in (no pinned merge — pinning is a dashboard default); `triggerJobRun` is the ad-hoc-run path (it reuses an existing job's links).
 - `src/lib/db/runs.ts` — `buildRunPayload` (the run payload assembly): attachment-driven docs/tables/env queries (`getComposedDocsForJob`, `getComposedTablesForJob` → name+id only, `getDecryptedEnvVarsForJob`), all reading the `job_*` junction tables.
 - `src/lib/encryption.ts` — AES-256-GCM helpers, key loading.
 - `src/lib/db/schema.ts` — `docs`, `doc_revisions`, `tables`, `table_migrations`, `env_vars`, and the three `job_*` junction tables.

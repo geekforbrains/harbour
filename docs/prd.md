@@ -91,8 +91,8 @@ detail, see [docs/reference](reference/).
 **Shared context**
 - Docs (versioned markdown), tables (agent-managed SQLite tables), and secrets
   (encrypted env vars), linkable to jobs and composed into each run's payload.
-- Dual-tier (org-level + project-level) plus job-linked; pinning auto-attaches an
-  item to all new jobs.
+- Dual-tier (org-level + project-level) plus job-linked; pinning pre-selects an
+  item as a default on new jobs.
 
 **Orgs & projects**
 - The org → project hierarchy is the tenancy boundary; projects group and filter

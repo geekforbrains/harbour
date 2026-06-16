@@ -12,9 +12,9 @@ Key concepts:
 - **Agents** — workers whose runs are claimed and executed by a runner. An agent has no credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code, Codex, or Gemini.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
-- **Docs** — shared markdown documents injected into the runs of jobs they're attached to (pinned docs auto-attach to new jobs).
-- **Tables** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're linked to (pinned tables auto-attach to new jobs).
-- **Env Vars** — encrypted key-value pairs (API keys, tokens) injected into the runs of jobs they're attached to (pinned vars auto-attach to new jobs), decrypted at runtime.
+- **Docs** — shared markdown documents injected into the runs of jobs they're attached to (pinning pre-selects a doc for new jobs in the dashboard; the API attaches explicitly).
+- **Tables** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're linked to (pinning is a dashboard default; the API attaches explicitly).
+- **Env Vars** — encrypted key-value pairs (API keys, tokens) injected into the runs of jobs they're attached to (pinning is a dashboard default; the API attaches explicitly), decrypted at runtime.
 
 ## Authentication
 
@@ -148,6 +148,8 @@ DELETE /api/runners/:id
 Deleting the row invalidates the token immediately (its next claim 401s).
 
 ## Jobs
+
+> **Pinning is a dashboard convenience, not an API behavior.** When you create a job over the API, docs/tables/secrets attach *only* if you pass them explicitly — `docIds` / `envVarIds` / `tableIds` on the create call, or `POST /api/jobs/:id/{docs,env-vars,tables}` afterward. The `pinned` flag merely pre-selects items in the dashboard's New Job dialog; it has no server-side effect, so an API-created job ignores it. The run payload is assembled purely from the job's junction rows. See [shared context › pinning](concepts/shared-context.md#pinning).
 
 ### List Jobs
 ```
@@ -400,7 +402,7 @@ Returns the doc's full revision history, newest first — one entry per `PUT`, e
 ```
 POST /api/docs/:id/pin
 ```
-Toggles pinned status. Pinned docs are auto-attached to new jobs created in their scope — an org-level pinned doc to every new job in the org, a project-level one to new jobs in that project.
+Toggles pinned status. Pinning is a **dashboard** default: the New Job dialog pre-checks pinned docs in scope (an org-level doc for every project in the org, a project-level one for that project) so new jobs pick them up unless deselected. It has no effect on jobs created via the API — those link only the `docIds` you pass.
 
 ## Tables
 
@@ -470,7 +472,7 @@ DELETE /api/tables/:id/rows/:rowId
 ```
 POST /api/tables/:id/pin
 ```
-Toggles pinned status. Pinned tables are auto-attached to new jobs created in their scope, same as pinned docs and env vars.
+Toggles pinned status. Pinning is a dashboard default — the New Job dialog pre-checks pinned tables in scope; it has no effect on API-created jobs (which link only the `tableIds` you pass). Same model as pinned docs and env vars.
 
 ## Environment Variables
 
@@ -509,7 +511,7 @@ Returns `{ "value": "..." }`. Requires **editor** role on the owning org — vie
 ```
 POST /api/env-vars/:id/pin
 ```
-Toggles pinned status. Pinned env vars are auto-attached to new jobs created in their scope, same as pinned docs.
+Toggles pinned status. Pinning is a dashboard default — the New Job dialog pre-checks pinned env vars in scope; it has no effect on API-created jobs (which link only the `envVarIds` you pass). Same model as pinned docs.
 
 ## Settings (instance admin)
 

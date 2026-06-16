@@ -93,27 +93,31 @@ describe("run payload resource injection", () => {
     expect(payload.tables.unlinked_table).toBeUndefined();
   });
 
-  it("auto-attaches pinned docs/vars to a new job and injects them; unpinned are excluded", () => {
+  it("links only the resources passed to createJob — pinning has no server-side effect", () => {
     const org = createOrg("Acme")!;
     const project = createProject(org.id, "Website")!;
     const agent = createAgent(project.id, "Dev");
 
-    // Pinned resources become creation-time defaults; unpinned ones don't.
+    // Pinning is a dashboard creation-time default (the New Job dialog
+    // pre-checks pinned items); the server links exactly what it's given.
     const pinnedDoc = createDoc(org.id, null, "Pinned Doc", "pinned body")!;
     toggleDocPinned(pinnedDoc.id);
-    createDoc(org.id, project.id, "Unpinned Doc", "unpinned body");
-
+    const explicitDoc = createDoc(org.id, project.id, "Explicit Doc", "explicit body")!;
     const pinnedVar = createEnvVar(org.id, project.id, "PINNED_VAR", "pinned-val")!;
     toggleEnvVarPinned(pinnedVar.id);
-    createEnvVar(org.id, null, "UNPINNED_VAR", "unpinned-val");
 
-    // Job created AFTER pinning → pinned resources auto-attach as removable links.
-    const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
+    // Pass only the explicit doc — the pinned doc and pinned var are NOT passed.
+    const job = createJob(project.id, agent.id, {
+      name: "Build",
+      schedule: '{"every":60}',
+      docIds: [explicitDoc.id],
+    })!;
 
     const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
-    expect(payload.docs.map((d) => d.id)).toEqual([pinnedDoc.id]);
-    expect(payload.env.PINNED_VAR).toBe("pinned-val");
-    expect(payload.env.UNPINNED_VAR).toBeUndefined();
+    // Only the explicitly-passed doc is linked; the pinned-but-unpassed
+    // doc/var are excluded (no server-side auto-attach).
+    expect(payload.docs.map((d) => d.id)).toEqual([explicitDoc.id]);
+    expect(payload.env.PINNED_VAR).toBeUndefined();
   });
 
   it("does not inject resources from another project or any unlinked resource", () => {
@@ -140,5 +144,23 @@ describe("run payload resource injection", () => {
     expect(payloadA.env).toEqual({});
     expect(payloadA.docs).toEqual([]);
     expect(payloadA.tables).toEqual({});
+  });
+
+  it("project-level table overrides an org-level table of the same name", () => {
+    const org = createOrg("Acme")!;
+    const project = createProject(org.id, "Website")!;
+    const agent = createAgent(project.id, "Dev");
+    const job = createJob(project.id, agent.id, { name: "B", schedule: '{"every":60}' })!;
+
+    // An org-level and a project-level table share the logical name "shared",
+    // both linked to a project job. The payload keys tables by name, so the
+    // project-level one must win (project-over-org override).
+    const orgTable = createTable(org.id, null, "shared", [{ name: "v", type: "TEXT" }]);
+    const projTable = createTable(org.id, project.id, "shared", [{ name: "v", type: "TEXT" }]);
+    linkTableToJob(job.id, orgTable.id);
+    linkTableToJob(job.id, projTable.id);
+
+    const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
+    expect(payload.tables.shared).toEqual({ id: projTable.id });
   });
 });

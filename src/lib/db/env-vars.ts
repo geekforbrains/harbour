@@ -119,25 +119,6 @@ export function getEnvVarDecryptedValue(id: string): string | null {
   return decrypt(row.encrypted_value);
 }
 
-/**
- * Pinned env-var ids for the given scope (org-level + the project's pinned
- * vars). Used to auto-attach pinned vars to new jobs created in a project.
- */
-export function listPinnedEnvVarIds(projectId: string): string[] {
-  const db = getDb();
-  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as
-    | { org_id: string }
-    | undefined;
-  if (!proj) return [];
-  return (
-    db
-      .prepare(
-        `SELECT id FROM env_vars WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`,
-      )
-      .all(proj.org_id, projectId) as { id: string }[]
-  ).map((r) => r.id);
-}
-
 // Link/unlink env vars to jobs
 export function linkEnvVarToJob(jobId: string, envVarId: string) {
   const db = getDb();
@@ -170,10 +151,15 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
  * Decrypt the env vars injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
  * Injection is attachment-driven: only vars explicitly linked to the job via
- * `job_env_vars` are returned — never the org/project tiers at large. Org-level
- * and pinned vars reach a job by being auto-attached at job create (see
- * `listPinnedEnvVarIds`), which makes them real, removable links here. With a
- * single tier there is no precedence to resolve.
+ * `job_env_vars` are returned — never the org/project tiers at large. Links are
+ * created explicitly at job create/update (the dashboard pre-selects pinned
+ * vars as a creation-time default).
+ *
+ * Project-over-org override: when a project-level and an org-level var with the
+ * same name are both linked to one job, the project value wins. Same-tier names
+ * are unique (see `assertNameAvailable`), so at most one var per name per tier
+ * can be linked; ordering org-level rows first lets the project row overwrite it
+ * deterministically in the map below.
  *
  * Returns the decrypted name→value map. (Values stay in the payload; the runner
  * delivers them as real process env vars and lists names-only in the prompt.)
@@ -190,8 +176,11 @@ export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string>
     FROM job_env_vars jev
     JOIN env_vars ev ON jev.env_var_id = ev.id
     WHERE jev.job_id = ?
+    ORDER BY ev.project_id IS NULL DESC
   `)
     .all(jobId) as Row[];
+  // Org-level rows (project_id IS NULL) sort first, so a same-named project-level
+  // row is applied last and wins — the project-over-org override.
   for (const r of linkedRows) env[r.name] = decrypt(r.encrypted_value);
 
   return env;

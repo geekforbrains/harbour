@@ -147,7 +147,7 @@ Each call appends a `workflow`-authored entry to the run's Output, visible on th
 
 Note that stdout is *always* posted at exit. If you post breadcrumbs **and** also print the same lines to stdout, they appear twice in the Output. To avoid that, either post breadcrumbs and keep stdout quiet (or for skip/error detail only), or skip breadcrumbs and let the single stdout summary stand.
 
-This is the same `POST /api/runs/:id/activity` endpoint agents use, posted with the run's exec token, but on a workflow run user comments return 400 (the activity log is captured runner output only). Keep updates terse and never echo secrets — Output is visible in the dashboard.
+This is the same `POST /api/runs/:id/activity` endpoint agents use, posted with the run's exec token, but on a workflow run user comments return 400 (the activity log is captured runner output only). Keep updates terse and **never echo secrets** — stdout and breadcrumbs are stored verbatim in the run's activity log (the `run_activity` table) and shown on the dashboard, so a secret printed once persists there in plaintext. Inject secrets as env vars (decrypted only at runtime, never stored) and let the script reference `$VAR` rather than printing it.
 
 ## Payload Shape
 

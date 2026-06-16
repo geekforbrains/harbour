@@ -92,34 +92,13 @@ export function toggleDocPinned(id: string) {
 }
 
 /**
- * Pinned doc ids for the given scope (org-level + the project's pinned docs).
- * Used to auto-attach pinned docs to new jobs created in a project.
- */
-export function listPinnedDocIds(projectId: string): string[] {
-  const db = getDb();
-  // Resolve the org from the project so org-level pinned docs are included.
-  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as
-    | { org_id: string }
-    | undefined;
-  if (!proj) return [];
-  return (
-    db
-      .prepare(
-        `SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`,
-      )
-      .all(proj.org_id, projectId) as { id: string }[]
-  ).map((r) => r.id);
-}
-
-/**
  * Docs injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
  * Injection is attachment-driven: only docs explicitly linked to the job via
- * `job_docs` are returned — never the org/project tiers at large. Org-level and
- * pinned docs reach a job by being auto-attached at job create (see
- * `listPinnedDocIds`), which makes them real, removable links here. Each doc
- * carries the content of its latest revision. Returned shape matches the agent
- * contract: `{ id, title, content }`.
+ * `job_docs` are returned — never the org/project tiers at large. Links are
+ * created explicitly at job create/update (the dashboard pre-selects pinned
+ * docs as a creation-time default). Each doc carries the content of its latest
+ * revision. Returned shape matches the agent contract: `{ id, title, content }`.
  */
 export function getComposedDocsForJob(
   jobId: string,

@@ -4,12 +4,11 @@ import type { Gate } from "../runtimes";
 import { getNextRunTime } from "../schedule";
 import { orgIdForProject } from "./access";
 import { deleteRunAttachmentsDir } from "./attachments";
-import { listPinnedDocIds } from "./docs";
-import { linkEnvVarToJob, listPinnedEnvVarIds } from "./env-vars";
+import { linkEnvVarToJob } from "./env-vars";
 import { resolveRunPlacement } from "./runs";
 import { getDb } from "./schema";
 import { getTimezone } from "./settings";
-import { linkTableToJob, listPinnedTableIds } from "./tables";
+import { linkTableToJob } from "./tables";
 
 export function createJob(
   projectId: string,
@@ -64,15 +63,13 @@ export function createJob(
       nextRunAt,
     );
 
-    // Merge explicitly selected docs/env vars with pinned ones (within this
-    // project's scope). Linked via the guard-bearing link functions so the
-    // org-level tier rules hold on every path.
-    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds(projectId)]);
-    for (const docId of allDocIds) linkDocToJob(id, docId);
-    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds(projectId)]);
-    for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
-    const allTableIds = new Set([...(data.tableIds || []), ...listPinnedTableIds(projectId)]);
-    for (const tableId of allTableIds) linkTableToJob(id, tableId);
+    // Link exactly the resources passed in — the submitted set is authoritative.
+    // The dashboard pre-selects pinned resources as a creation-time default, but
+    // pinning has no server-side effect (this matches updateJob, also explicit).
+    // The guard-bearing link functions enforce the org-level tier rules.
+    for (const docId of new Set(data.docIds ?? [])) linkDocToJob(id, docId);
+    for (const envId of new Set(data.envVarIds ?? [])) linkEnvVarToJob(id, envId);
+    for (const tableId of new Set(data.tableIds ?? [])) linkTableToJob(id, tableId);
   });
 
   create();
@@ -126,40 +123,14 @@ export function createWorkflow(
       nextRunAt,
     );
 
-    // Pinned resources auto-attach at the job's own tier: project jobs get
-    // project + org pinned, org-level jobs get org-level pinned only.
-    const pinnedDocIds = projectId
-      ? listPinnedDocIds(projectId)
-      : (
-          db
-            .prepare(`SELECT id FROM docs WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`)
-            .all(orgId) as { id: string }[]
-        ).map((r) => r.id);
-    const pinnedEnvVarIds = projectId
-      ? listPinnedEnvVarIds(projectId)
-      : (
-          db
-            .prepare(
-              `SELECT id FROM env_vars WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`,
-            )
-            .all(orgId) as { id: string }[]
-        ).map((r) => r.id);
-    const pinnedTableIds = projectId
-      ? listPinnedTableIds(projectId)
-      : (
-          db
-            .prepare(`SELECT id FROM tables WHERE pinned = 1 AND org_id = ? AND project_id IS NULL`)
-            .all(orgId) as { id: string }[]
-        ).map((r) => r.id);
-
-    // Guard-bearing link functions: an org-level workflow linking a
-    // project-scoped doc/env var/table throws here and rolls the creation back.
-    const allDocIds = new Set([...(data.docIds || []), ...pinnedDocIds]);
-    for (const docId of allDocIds) linkDocToJob(id, docId);
-    const allEnvVarIds = new Set([...(data.envVarIds || []), ...pinnedEnvVarIds]);
-    for (const envId of allEnvVarIds) linkEnvVarToJob(id, envId);
-    const allTableIds = new Set([...(data.tableIds || []), ...pinnedTableIds]);
-    for (const tableId of allTableIds) linkTableToJob(id, tableId);
+    // Link exactly the resources passed in — the submitted set is authoritative
+    // (pinning is a dashboard creation-time default with no server-side effect).
+    // The guard-bearing link functions enforce the tier rules: an org-level
+    // workflow linking a project-scoped doc/env var/table throws here and rolls
+    // the creation back.
+    for (const docId of new Set(data.docIds ?? [])) linkDocToJob(id, docId);
+    for (const envId of new Set(data.envVarIds ?? [])) linkEnvVarToJob(id, envId);
+    for (const tableId of new Set(data.tableIds ?? [])) linkTableToJob(id, tableId);
   });
 
   create();

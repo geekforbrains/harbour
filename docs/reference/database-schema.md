@@ -277,7 +277,7 @@ constraint, so a project-level name can override an org-level one. Index:
 Registry of agent-managed SQLite tables (the data tables are siblings in the
 same file). `org_id`, `project_id`, `name`, `table_name` (NN, **U** — globally
 unique physical identifier), `pinned` (INTEGER NN, default 0 — pinned tables
-auto-attach to new jobs at creation, parity with `docs`/`env_vars`). Index:
+are pre-selected for new jobs in the dashboard, parity with `docs`/`env_vars`). Index:
 `idx_tables_org_project`.
 
 ### `table_migrations`

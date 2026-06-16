@@ -332,8 +332,8 @@ export function deleteTable(id: string) {
 }
 
 /**
- * Toggle a table's `pinned` flag. Pinned tables auto-attach to new jobs at
- * creation (see `listPinnedTableIds`), mirroring docs and secrets.
+ * Toggle a table's `pinned` flag. Pinning is a dashboard creation-time default
+ * for new jobs (the server links resources explicitly); mirrors docs and secrets.
  */
 export function toggleTablePinned(id: string) {
   const db = getDb();
@@ -341,26 +341,6 @@ export function toggleTablePinned(id: string) {
     `UPDATE tables SET pinned = CASE WHEN pinned = 1 THEN 0 ELSE 1 END, updated_at = unixepoch() WHERE id = ?`,
   ).run(id);
   return getTableById(id);
-}
-
-/**
- * Pinned table ids for the given scope (org-level + the project's pinned
- * tables). Used to auto-attach pinned tables to new jobs created in a project.
- */
-export function listPinnedTableIds(projectId: string): string[] {
-  const db = getDb();
-  // Resolve the org from the project so org-level pinned tables are included.
-  const proj = db.prepare(`SELECT org_id FROM projects WHERE id = ?`).get(projectId) as
-    | { org_id: string }
-    | undefined;
-  if (!proj) return [];
-  return (
-    db
-      .prepare(
-        `SELECT id FROM tables WHERE pinned = 1 AND org_id = ? AND (project_id = ? OR project_id IS NULL)`,
-      )
-      .all(proj.org_id, projectId) as { id: string }[]
-  ).map((r) => r.id);
 }
 
 // --- Schema Operations ---
@@ -528,26 +508,38 @@ export function deleteRow(tableId: string, rowId: number) {
 /**
  * Tables injected into a job's run payload (used by buildRunPayload / the runner claim payload).
  *
- * Injection is attachment-driven: only tables explicitly linked to the job
- * via `job_tables` are returned — never the org/project tiers at large. Pinned
- * tables reach a job by being auto-attached at job create (see
- * `listPinnedTableIds`), which makes them real, removable links here — the same
- * model docs and secrets use. The payload exposes only `name` + `id` (no
- * columns, no rows) — the agent reads/writes contents on demand via the table
- * API using the id. Returns `{ id, name }` per linked table, sorted by name.
+ * Injection is attachment-driven: only tables explicitly linked to the job via
+ * `job_tables` are returned — never the org/project tiers at large. Links are
+ * created explicitly at job create/update (the dashboard pre-selects pinned
+ * tables as a creation-time default). The payload exposes only `name` + `id`
+ * (no columns, no rows) — the agent reads/writes contents on demand via the
+ * table API using the id.
+ *
+ * Project-over-org override: if a project-level and an org-level table share a
+ * logical name and both are linked, the project-level table wins (deduped by
+ * name below). Same-tier names are unique, so at most one table per name per
+ * tier can be linked. Returns `{ id, name }` per surviving table, sorted by name.
  */
 export function getComposedTablesForJob(jobId: string): { id: string; name: string }[] {
   const db = getDb();
 
-  return db
+  // Within each logical name, project-level rows (project_id IS NULL = 0) sort
+  // before org-level ones; keeping the first per name applies the override.
+  const rows = db
     .prepare(`
-    SELECT t.id, t.name
+    SELECT t.id, t.name, t.project_id
     FROM job_tables jt
     JOIN tables t ON t.id = jt.table_id
     WHERE jt.job_id = ?
-    ORDER BY t.name ASC
+    ORDER BY t.name ASC, (t.project_id IS NULL) ASC
   `)
-    .all(jobId) as { id: string; name: string }[];
+    .all(jobId) as { id: string; name: string; project_id: string | null }[];
+
+  const byName = new Map<string, { id: string; name: string }>();
+  for (const r of rows) {
+    if (!byName.has(r.name)) byName.set(r.name, { id: r.id, name: r.name });
+  }
+  return [...byName.values()];
 }
 
 // --- Job Linkage ---
