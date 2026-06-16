@@ -235,10 +235,12 @@ export function updateRunStatus(id: string, status: string) {
     `UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`,
   ).run(status, id);
 
-  // Advance the job's next_run_at when a run completes.
-  // 'killed' is terminal for this run but does NOT advance the job's schedule —
-  // the user stopped it intentionally and may resume it via a comment.
-  if (status === "done" || status === "failed" || status === "skipped") {
+  // Advance the job's next_run_at on any terminal status, including 'killed'.
+  // A kill ends this run, so the job's next scheduled occurrence should still
+  // fire. (A killed run can also be resumed via a user comment -> pending; that
+  // acts on this same run and doesn't conflict — the per-unit in-flight lock
+  // keeps the resumed run and the next occurrence from overlapping.)
+  if (status === "done" || status === "failed" || status === "skipped" || status === "killed") {
     const run = getRunById(id);
     if (run?.job_id) advanceJobSchedule(run.job_id);
   }

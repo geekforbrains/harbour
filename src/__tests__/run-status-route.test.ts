@@ -11,12 +11,13 @@ import {
   createRun,
   createSession,
   createUser,
+  getJobById,
   getRunById,
   listRunActivity,
   mintExecToken,
   updateRunStatus,
 } from "@/lib/db/queries";
-import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -153,5 +154,23 @@ describe("PUT /api/runs/:id/status — activity logging", () => {
     expect(getRunById(run.id)!.status).toBe("running");
     // No state change happened, so no misleading "Status changed to running" entry.
     expect(statusActivity(run.id)).toHaveLength(0);
+  });
+});
+
+describe("kill advances the schedule", () => {
+  it("a killed run rolls next_run_at forward, like the other terminal states", () => {
+    const org = createOrg("Acme")!;
+    const project = createProject(org.id, "Site")!;
+    const agent = createAgent(project.id, "Dev");
+    const job = createJob(project.id, agent.id, { name: "Daily", schedule: '{"every":60}' })!;
+    // Make the job overdue so the advance is observable as a jump to the future.
+    const hourAgo = Math.floor(Date.now() / 1000) - 3600;
+    getDb().prepare("UPDATE jobs SET next_run_at = ? WHERE id = ?").run(hourAgo, job.id);
+
+    const run = createRun(job.id, agent.id)!; // inserted 'running'
+    updateRunStatus(run.id, "killed");
+
+    const now = Math.floor(Date.now() / 1000);
+    expect(getJobById(job.id)!.next_run_at).toBeGreaterThan(now);
   });
 });
