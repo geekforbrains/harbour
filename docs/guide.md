@@ -354,7 +354,11 @@ Content-Type: application/json
 { "name": "retweets", "type": "INTEGER", "default": 0 }
 ```
 
-Schema changes are tracked in a migration history.
+A column added here can be `required` (NOT NULL) only if you also supply a
+`default` — SQLite adds the column to existing rows, so a NOT NULL column with no
+default is rejected with a 400. (At table-creation time a `required` column needs
+no default, since the table starts empty.) Schema changes are tracked in a
+migration history.
 
 ### Link a Table to a Job
 
