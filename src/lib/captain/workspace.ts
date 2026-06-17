@@ -63,7 +63,7 @@ Harbour uses a single SQLite database:
 | env_vars | Encrypted environment variables |
 | settings | System key-value config |
 | users / sessions | Dashboard authentication |
-| projects / project_* | Optional organizational groupings |
+| orgs / projects | Tenancy: orgs contain projects; resources belong via org_id + nullable project_id (no junction tables) |
 | admin_api_keys | Admin API keys for management access |
 | captain_conversations | Captain chat conversations |
 | captain_messages | Captain chat message history |
