@@ -404,8 +404,8 @@ export default function SettingsPage() {
               <div>
                 <p className="text-sm font-medium">Delete project</p>
                 <p className="text-xs text-muted-foreground">
-                  Removes the project and all links. Agents, jobs, docs, and secrets are not
-                  deleted.
+                  Archives the project (a soft-delete) — it's hidden from the switcher, but nothing
+                  is destroyed. Agents, jobs, docs, and secrets are preserved.
                 </p>
               </div>
               <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
@@ -867,8 +867,8 @@ export default function SettingsPage() {
             <DialogTitle>Delete {activeProject?.name}?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove the project and all its links. Your agents, jobs, docs, and secrets
-            will not be deleted.
+            This archives the project (a soft-delete) — it disappears from the switcher, but nothing
+            is destroyed. Your agents, jobs, docs, and secrets are preserved.
           </p>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>
