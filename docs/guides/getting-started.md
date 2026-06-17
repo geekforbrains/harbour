@@ -184,3 +184,4 @@ You have a working harbour with a working agent. From here:
 - [Workflows](../concepts/workflows.md) — deterministic shell-command jobs and the exit-code contract.
 - [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning pre-selects them for new jobs.
 - [Running a runner on a different machine](run-on-different-machine.md) — for iOS/Xcode boxes, GPU workstations, on-prem repos.
+- [Local development](local-development.md) — if you're working *on* Harbour: dev server + ports, the validate/rebuild loop, browser review, worktrees.

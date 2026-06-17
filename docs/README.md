@@ -31,8 +31,10 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 ## Guides — set it up
 
 - [Getting started](guides/getting-started.md) — first agent, first job, end to end
+- [Local development](guides/local-development.md) — the day-to-day dev loop: dev server + ports, validate/rebuild/restart, browser review, worktrees
 - [Running a runner on a different machine](guides/run-on-different-machine.md) — minting a credential and running a remote runner (`harbour-agent`, your own, or the bundled one; e.g. over Tailscale)
 - [Deploying to production](guides/deploy-to-production.md) — Linux/systemd with a TLS proxy in front
+- [Cutting a release](guides/releasing.md) — changelog, version bump, tag
 
 ## Reference — change the code
 

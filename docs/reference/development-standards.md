@@ -129,7 +129,8 @@ grows with the product. Async server components can only be tested here, not
 in Vitest.
 
 `playwright-cli` remains the tool for *manual* visual review and screenshots
-during development (see AGENTS.md); it is not the integration story.
+during development (see [local development](../guides/local-development.md)); it
+is not the integration story.
 
 ## Naming
 
