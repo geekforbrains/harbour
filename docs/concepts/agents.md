@@ -31,7 +31,7 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
 | `cli` | `claude`, `codex`, or `gemini` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.5`) |
-| `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
+| `thinking` | Default reasoning effort — `low`/`medium`/`high`/`xhigh`/`max` for Claude, up to `xhigh` for Codex, none for Gemini (validated per CLI in `cli-config.ts`) |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
 
 `model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`).
