@@ -38,8 +38,16 @@ export const GET = withAgentOrUser(
     const orderBy = url.searchParams.get("orderBy") || undefined;
     const order = (url.searchParams.get("order") || "DESC") as "ASC" | "DESC";
 
-    const result = getRows(id, { limit, offset, orderBy, order });
-    return NextResponse.json(result);
+    // getRows validates orderBy against the real columns and throws on an
+    // unknown one; catch it so a bad query param is a clean 400 like the
+    // mutation routes below, not an opaque uncaught 500.
+    try {
+      const result = getRows(id, { limit, offset, orderBy, order });
+      return NextResponse.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   },
   { role: "viewer", orgFromParams: tableOrg },
 );
