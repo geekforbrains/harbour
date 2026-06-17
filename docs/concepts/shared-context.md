@@ -119,7 +119,7 @@ CREATE TABLE job_env_vars   (job_id, env_var_id,   PRIMARY KEY(job_id, env_var_i
 
 All three use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/table/env var, same.
 
-Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs and secrets are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars}`. The dashboard pre-selects pinned ids as a creation-time default (you can deselect them); the API links only the ids you pass — see Pinning above.
+Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs, secrets, and tables are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars,tables}`. The dashboard pre-selects pinned ids as a creation-time default (you can deselect them); the API links only the ids you pass — see Pinning above.
 
 ## What's not shared
 
