@@ -105,7 +105,7 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 | `skipped` | Workflow returned exit 77 — "nothing to do." Retryable, but not comment-resumable. |
 | `killed` | A user clicked Kill on a harbour-agent run. Resumable via comment. |
 
-When a run reaches `done`, `failed`, or `skipped`, `updateRunStatus` advances the job's `next_run_at`. `killed` is **terminal for the run but does not advance the job's schedule** — the user stopped it intentionally and may resume. Transitions are validated against a `LEGAL_RUN_TRANSITIONS` map at the single `updateRunStatus` chokepoint; an illegal edge returns **409**.
+When a run reaches any terminal status — `done`, `failed`, `skipped`, or `killed` — `updateRunStatus` advances the job's `next_run_at`. A kill ends this run, so the next scheduled occurrence should still fire; the user can also resume the killed run via a comment (the resume acts on the same run, and the in-flight lock keeps it from overlapping the next occurrence). Transitions are validated against a `LEGAL_RUN_TRANSITIONS` map at the single `updateRunStatus` chokepoint; an illegal edge returns **409**.
 
 ### Resume via comment
 

@@ -136,15 +136,16 @@ Indexes: `idx_projects_org`, `idx_projects_org_slug(org_id, slug)` (UNIQUE).
 | `name` | TEXT | NN | |
 | `slug` | TEXT | NN | unique per project; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `description` | TEXT | | |
-| `cli` | TEXT | | `claude` / `codex` / `gemini` (Harbour-run agents); NULL for external |
+| `cli` | TEXT | | `claude` / `codex` / `gemini` — required by the create API (every agent is CLI-driven) |
 | `model` / `thinking` | TEXT | | default model + effort override |
 | `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
-| `eager` | INTEGER | NN, default 0 | drain queue without the 60s pause |
+| `eager` | INTEGER | NN, default 0 | legacy/no-op — the pool drains all due work each cycle regardless (kept for compatibility) |
 | `placement` | TEXT | NN, default `'local'` | routes this agent's runs to a runner tier/label (denormalized onto `runs.placement` at creation) |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-There is no stored `type` column — an external agent simply has no runner
-configured. Indexes: `idx_agents_project`,
+There is no stored `type` column — every agent is CLI-driven and claimed by the
+unified runner (routed via `placement` + the `runners` registry, not per-agent
+config). Indexes: `idx_agents_project`,
 `idx_agents_project_slug(project_id, slug)` (UNIQUE).
 
 ### `runners`

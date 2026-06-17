@@ -1,7 +1,7 @@
 # API
 
 The codebase-side route map: every route file, its HTTP method, the auth wrapper
-(and minimum role), and a one-liner. **77 route files.**
+(and minimum role), and a one-liner. **79 route files.**
 
 The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
@@ -142,6 +142,7 @@ in the `POST /api/runner/claim` payload (`job.prerun` / `job.postrun` /
 |---|---|---|---|
 | GET | `/api/runs` | `withOrgAuth` (viewer) | Bundled `{scheduled, running, waiting, recent}`; `?filter=`, `?projectId=` (org-level runs included) |
 | GET | `/api/runs/history` | `withOrgAuth` (viewer) | Paginated history |
+| GET | `/api/runs/health` | `withOrgAuth` (viewer) | Absent-runner surface: placements with queued runs no live runner is serving (drives the dashboard stall banner); `?projectId=` |
 | GET | `/api/runs/:id` | `withResourceAuth` run (viewer) | Run + activity + attachments |
 | DELETE | `/api/runs/:id` | `withResourceAuth` run (editor) | Delete run + uploads |
 | GET | `/api/runs/:id/activity` | `withResourceAuth` run (viewer) | Activity log |
@@ -163,18 +164,19 @@ exec token, never the runner token — see [architecture.md](architecture.md#aut
 
 ### Run attachments
 
-The top-level list/upload pair is `withRunExecutorOrUser` (exec token or user); the
-per-attachment routes below stay `withAgentOrUser`.
+All attachment routes use `withRunExecutorOrUser` — the run's per-run **exec token**
+(bound to this run id; an executor can't reach another run's attachments) or a user
+in the run's org. Reads require `viewer`, writes (upload / delete / requeue) `editor`.
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
 | GET / POST | `/api/runs/:id/attachments` | `withRunExecutorOrUser` | List / upload file (multipart) or embed (JSON) |
-| DELETE | `/api/runs/:id/attachments/:aid` | `withAgentOrUser` | Delete |
-| GET | `/api/runs/:id/attachments/:aid/file` | `withAgentOrUser` | Download bytes |
-| GET / POST | `/api/runs/:id/attachments/:aid/processing` | `withAgentOrUser` | Video processing status / (re)queue |
-| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withAgentOrUser` | Paginated frames |
-| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withAgentOrUser` | One JPEG |
-| GET | `/api/runs/:id/attachments/:aid/transcript` | `withAgentOrUser` | Transcript / storyboard (`?format=plain`) |
+| DELETE | `/api/runs/:id/attachments/:aid` | `withRunExecutorOrUser` | Delete |
+| GET | `/api/runs/:id/attachments/:aid/file` | `withRunExecutorOrUser` | Download bytes |
+| GET / POST | `/api/runs/:id/attachments/:aid/processing` | `withRunExecutorOrUser` | Video processing status / (re)queue |
+| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withRunExecutorOrUser` | Paginated frames |
+| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withRunExecutorOrUser` | One JPEG |
+| GET | `/api/runs/:id/attachments/:aid/transcript` | `withRunExecutorOrUser` | Transcript / storyboard (`?format=plain`) |
 
 ## Shared context
 
@@ -210,6 +212,8 @@ per-attachment routes below stay `withAgentOrUser`.
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
 | POST | `/api/runner/claim` | `withRunnerAuth` | The one execution entry point: a runner POSTs `{ capabilities: { kinds, clis, labels } }` and gets back the next claimable run (kind-tagged, with its `exec_token` + pre-resolved `api` block) or `{ run: null }`. `?peek=true` reports availability/liveness without claiming |
+| GET / POST | `/api/runners` | `withInstanceAdmin` | List the execution pool (every runner + its in-flight slot count) / mint a **remote** runner credential (returns a `connect` blob to enroll on another host) |
+| DELETE | `/api/runners/:id` | `withInstanceAdmin` | Revoke a runner (token 401s immediately on next claim; `runs.claimed_by` nulled by FK) |
 
 This single endpoint replaces the old per-runner poll routes (`GET
 /api/agents/:id/next`, `GET /api/workflows/next`) and the per-org workflow-runner

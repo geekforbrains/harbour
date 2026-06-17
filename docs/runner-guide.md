@@ -38,8 +38,9 @@ hands it work it can execute:
 ```
 
 The bundled runner detects these from the host (installed CLIs + shell) and
-advertises `labels: ["local"]`. A remote runner advertises whatever its token is
-scoped to. **Capability honesty:** the server never assumes a CLI is present —
+advertises `labels: ["local"]`. A remote runner advertises whatever
+`HARBOUR_RUNNER_LABELS` gives it (comma-separated, default `["local"]`); its token
+scope is the ceiling the server enforces on what it may claim, not what it advertises. **Capability honesty:** the server never assumes a CLI is present —
 an agent run is handed out only if the agent's CLI is in `clis`.
 
 ## Endpoints

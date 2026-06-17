@@ -157,9 +157,10 @@ scheduled --> running ----------+
   `exec_token_hash`. Other queued runs for the same lock unit wait behind it.
 - **`waiting`** — the agent paused for human input. **`pending`** — a human
   responded (comment or retry); the next claim picks it up as a resume.
-- **`done` / `failed` / `skipped` / `killed`** — terminal; set `completed_at`.
-  `done`/`failed`/`skipped` advance the job's `next_run_at`; `killed` does **not**
-  (the user stopped it intentionally and may resume).
+- **`done` / `failed` / `skipped` / `killed`** — terminal; set `completed_at` and
+  advance the job's `next_run_at`. A kill ends this run, so the next scheduled
+  occurrence still fires; the user can also resume the killed run via a comment
+  (the in-flight lock keeps the resumed run and the next occurrence from overlapping).
 
 Unlike v1, transitions are **mechanically enforced**: `updateRunStatus` (the
 single chokepoint) validates against a `LEGAL_RUN_TRANSITIONS` map and throws

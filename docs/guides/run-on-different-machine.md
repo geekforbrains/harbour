@@ -20,7 +20,7 @@ The agent record itself (jobs, schedule, prompt, model, docs, env vars) lives on
 A runner is the unit of execution, and which work it claims is decided by **placement labels**:
 
 - Every agent and every workflow job has a `placement` label, defaulting to `local`.
-- A runner advertises the labels it serves on every claim. The auto-provisioned pool on the harbour host advertises `local`; a remote runner advertises whatever you give it via `HARBOUR_RUNNER_LABELS` (comma-separated) on the host, falling back to the labels its token was minted with.
+- A runner advertises the labels it serves on every claim. The auto-provisioned pool on the harbour host advertises `local`; a remote runner advertises whatever you give it via `HARBOUR_RUNNER_LABELS` (comma-separated) on the host, defaulting to `local` if unset. (The token's minted labels are the authorization ceiling the server enforces — see the next bullet — not the advertised set.)
 - Work routes to a runner whose advertised label matches the job's `placement` — and, for a remote-tier token, a label it's *authorized* to serve. A job whose placement no connected runner advertises just sits `scheduled`.
 
 So "run this on another machine" is three moves: give the job a placement label, mint a remote runner authorized for that label, and connect it on the other host. The claim filters are detailed in [architecture](../reference/architecture.md).

@@ -19,9 +19,9 @@ Key concepts:
 
 ## Scheduling
 
-Jobs use the `schedule` field to define when they run. Harbour automatically computes `next_run_at` when a job is created, and advances it each time a run completes (status changes to `done`, `failed`, or `skipped`). You don't need to manage `next_run_at` yourself.
+Jobs use the `schedule` field to define when they run. Harbour automatically computes `next_run_at` when a job is created, and advances it each time a run reaches a terminal status (`done`, `failed`, `skipped`, or `killed`). You don't need to manage `next_run_at` yourself.
 
-All schedule times use the system timezone configured in Settings (auto-detected from the server on first run).
+All schedule times use the org's timezone, set per-org in Settings (it falls back to the instance default, auto-detected from the server on first run).
 
 **Choose the right schedule type for the job.** Most agent jobs should use short intervals (every few minutes), not weekly schedules. Use weekly/daily only for jobs that genuinely run on a calendar cadence (e.g. a weekly newsletter). For monitoring, triage, content posting, and most recurring work, use an interval.
 
@@ -135,7 +135,7 @@ You don't see that selection — you just receive the chosen run, already flippe
   ],
   "api": {
     "base_url": "https://your-harbour.example.com",
-    "auth": "Bearer <exec_token> (from this claim) on every /api/runs/:id/* call",
+    "auth": "Bearer <exec_token> (from this claim) on every endpoint below — the /api/runs/:id/* lifecycle calls and the docs/tables endpoints",
     "endpoints": {
       "set_title": "PUT https://your-harbour.example.com/api/runs/<run_id>/title",
       "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
@@ -219,7 +219,7 @@ Statuses you'll see but shouldn't set yourself (the API accepts them, but they'r
 
 **Workflow runs are non-interactive.** Runs of workflow jobs (`kind: "workflow"`) accept only `running`, `done`, `failed`, `skipped`, and `killed` — submitting `waiting` or `pending` returns 400. They have no message thread: their activity log is runner output only, and user comments are rejected.
 
-When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
+When a run transitions to a terminal status (`done`, `failed`, `skipped`, or `killed`), Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
 
 **Retrying:** Failed, skipped, and killed runs can be retried from the dashboard via `POST /api/runs/:id/retry`. An agent run goes back to `pending` with a system activity note, and is resumed the next time a runner claims it. A workflow run is requeued as `scheduled` so a runner advertising the `workflow` kind claims a fresh attempt.
 

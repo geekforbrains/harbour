@@ -23,7 +23,7 @@ Harbour is polling-based — it never calls out to agents; they pull work on the
 - **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by the same runner that drives agent jobs. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
 - **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
-It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Every agent, job, and resource lives inside a project; resources never cross org lines.
+It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Resources never cross org lines.
 
 > Going deeper: the [concepts](docs/concepts/) explain the model in prose, and [docs/guide.md](docs/guide.md) is the exact wire contract an agent reads at `/api/guide`.
 

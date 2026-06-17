@@ -27,7 +27,7 @@ function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
   return {
     base_url: base,
-    auth: "Bearer <exec_token> (from this claim) on every /api/runs/:id/* call",
+    auth: "Bearer <exec_token> (from this claim) on every endpoint below — the /api/runs/:id/* lifecycle calls and the docs/tables endpoints",
     endpoints: {
       set_title: `PUT ${base}/api/runs/${runId}/title`,
       update_status: `PUT ${base}/api/runs/${runId}/status`,

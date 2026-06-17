@@ -87,8 +87,11 @@ The full route conventions are in [api.md](api.md) and
   libraries): check required fields, return
   `NextResponse.json({ error: "..." }, { status: 400 })`.
 - All responses via `NextResponse.json`; errors are always
-  `{ error: string }` with a correct status code (400/403/409/429; cross-org
-  lookups return 403, not 404).
+  `{ error: string }` with a correct status code (400/403/409/429). A cross-org
+  lookup of a route's **primary** (path-param) resource returns 403, not 404; but a
+  **body-supplied** resource id from another org (e.g. a doc/env-var/table link
+  target) returns 404 — uniform with a missing id, so it leaks no cross-tenant
+  existence.
 
 ## Database
 

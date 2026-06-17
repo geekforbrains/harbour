@@ -5,7 +5,7 @@
 # Rebuilding in place while the old server runs produces stale-chunk 404s/500s
 # until the process is restarted. Stopping before the build avoids that window
 # entirely (launchd's KeepAlive would otherwise respawn the server mid-build).
-# The agent-runner is restarted too so it picks up any changes under bin/.
+# The runner is restarted too so it picks up any changes under bin/.
 #
 # Currently macOS/launchd only. Extend for Linux/systemd when that install path
 # lands in bin/lib/install.mjs.
@@ -18,7 +18,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 SERVER_LABEL="com.harbour.server"
-RUNNER_LABEL="com.harbour.agent-runner"
+RUNNER_LABEL="com.harbour.runner"
 SERVER_PLIST="$HOME/Library/LaunchAgents/${SERVER_LABEL}.plist"
 DOMAIN="gui/$(id -u)"
 
@@ -43,7 +43,7 @@ if ! launchctl list | grep -q "${SERVER_LABEL}$"; then
 fi
 echo "==> OK: $SERVER_LABEL is running"
 
-# Agent-runner is optional — only restart if it's installed. kickstart -k
+# The runner is optional — only restart if it's installed. kickstart -k
 # is enough here (no build artifacts, just force a restart so the process
 # picks up any code changes under bin/).
 if launchctl list | grep -q "${RUNNER_LABEL}$"; then

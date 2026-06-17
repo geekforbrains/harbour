@@ -7,7 +7,7 @@ import { deleteRunAttachmentsDir } from "./attachments";
 import { linkEnvVarToJob } from "./env-vars";
 import { resolveRunPlacement } from "./runs";
 import { getDb } from "./schema";
-import { getTimezone } from "./settings";
+import { getOrgTimezone } from "./settings";
 import { linkTableToJob } from "./tables";
 
 export function createJob(
@@ -36,7 +36,7 @@ export function createJob(
   const orgId = orgIdForProject(projectId);
   if (!orgId) throw new Error("Project not found");
   const nextRunAt =
-    data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
+    data.active !== false ? getNextRunTime(data.schedule, undefined, getOrgTimezone(orgId)) : null;
 
   const create = db.transaction(() => {
     db.prepare(`
@@ -101,7 +101,7 @@ export function createWorkflow(
   const db = getDb();
   const id = uuid();
   const nextRunAt =
-    data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
+    data.active !== false ? getNextRunTime(data.schedule, undefined, getOrgTimezone(orgId)) : null;
   const placement = data.placement?.trim() || "local";
 
   const create = db.transaction(() => {
@@ -303,10 +303,12 @@ export function updateJob(
     values.push(data.active ? 1 : 0);
     // When activating a job that has no next_run_at, compute it from the schedule
     if (data.active && data.nextRunAt === undefined) {
-      const job = db.prepare(`SELECT schedule, next_run_at FROM jobs WHERE id = ?`).get(id) as any;
+      const job = db
+        .prepare(`SELECT schedule, next_run_at, org_id FROM jobs WHERE id = ?`)
+        .get(id) as any;
       if (job && !job.next_run_at && job.schedule) {
         const schedule = data.schedule || job.schedule;
-        const nextRunAt = getNextRunTime(schedule, undefined, getTimezone());
+        const nextRunAt = getNextRunTime(schedule, undefined, getOrgTimezone(job.org_id));
         if (nextRunAt !== null) {
           fields.push("next_run_at = ?");
           values.push(nextRunAt);
@@ -366,7 +368,7 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
 
   const runId = uuid();
   const now = Math.floor(Date.now() / 1000);
-  const title = defaultRunTitle(job.name, now);
+  const title = defaultRunTitle(job.name, now, getOrgTimezone(job.org_id));
   // Denormalize placement onto the run: agent runs route by their agent's
   // placement, workflow runs by the job's. Shared resolver keeps this in lockstep
   // with createRun's recurring-materialization path.
@@ -441,10 +443,10 @@ export function touchJobRan(id: string) {
 // Called after a run completes (done/failed/skipped).
 export function advanceJobSchedule(jobId: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT schedule, org_id FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job?.schedule) return;
 
-  const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());
+  const nextRunAt = getNextRunTime(job.schedule, undefined, getOrgTimezone(job.org_id));
   if (nextRunAt !== null) {
     db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(
       nextRunAt,

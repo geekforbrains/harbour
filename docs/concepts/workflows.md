@@ -151,7 +151,7 @@ This is the same `POST /api/runs/:id/activity` endpoint agents use, posted with 
 
 ## Payload Shape
 
-The workflow receives the same composed run context as an agent run, minus the agent runtime block and LLM API prompt.
+The workflow receives the same composed run context as an agent run, minus the agent runtime block and LLM API prompt — including the top-level `exec_token` and pre-resolved `api` block every claim carries (full `api` shape in the [Runner Protocol](../runner-guide.md)).
 
 ```json
 {
@@ -176,7 +176,9 @@ The workflow receives the same composed run context as an agent run, minus the a
   "docs": [],
   "tables": {},
   "env": {},
-  "attachments": []
+  "attachments": [],
+  "exec_token": "hbx_…",
+  "api": { "base_url": "…", "endpoints": { … }, "status_options": [ … ], "notes": [ … ] }
 }
 ```
 

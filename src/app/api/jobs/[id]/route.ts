@@ -63,6 +63,9 @@ export const PUT = withResourceAuth("job", "id", { role: "editor" })(
     if (body.envVarIds !== undefined && !Array.isArray(body.envVarIds)) {
       return NextResponse.json({ error: "envVarIds must be an array of strings" }, { status: 400 });
     }
+    if (body.tableIds !== undefined && !Array.isArray(body.tableIds)) {
+      return NextResponse.json({ error: "tableIds must be an array of strings" }, { status: 400 });
+    }
     if (body.thinking !== undefined) {
       // A thinking override rides the owning agent's CLI; workflow jobs have
       // no agent (and no CLI), so any non-empty level is rejected.

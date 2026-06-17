@@ -172,6 +172,20 @@ describe("PUT /api/jobs/:id gate clearing", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 when tableIds is not an array (parity with docIds/envVarIds)", async () => {
+    const { org, project, editor } = fixture();
+    const wf = createWorkflow(org.id, project.id, {
+      name: "WF",
+      schedule: '{"every":60}',
+      workflow: { runtime: "bash", content: "echo hi" },
+    })!;
+    const res = await jobPUT(
+      putReq(editor.id, wf.id, { tableIds: "not-an-array" }),
+      ctx({ id: wf.id }),
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("POST /api/tables validation", () => {

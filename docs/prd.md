@@ -48,8 +48,7 @@ The non-negotiables. A feature that violates one needs an explicit exception.
 - **Local-first state.** Everything lives under `~/.harbour` (DB, uploads,
   encryption key, runner config). Back up one directory and you have everything.
 - **Multi-tenant by construction.** Instance admin → **orgs** → **projects**.
-  Every agent, job, doc, secret, and table lives inside a project. Resources
-  never cross org lines.
+  Resources never cross org lines.
 - **Least privilege.** An agent can reach only its own run and the secrets and
   connection vars Harbour hands it — nothing more of the host or the database.
 - **Public-app-grade security.** Harbour is multi-user; it must be safe to expose
@@ -66,13 +65,12 @@ What Harbour must let people and agents do. For endpoint- and schema-level
 detail, see [docs/reference](reference/).
 
 **Agents**
-- Create external agents (API key) or Harbour agents (a local or remote CLI
-  runner: Claude Code, Codex, or Gemini).
+- Create a Harbour agent (Claude Code, Codex, or Gemini) run by a local or
+  remote CLI runner.
 - Set per-agent model, thinking/effort, and **identity color** — chosen from a
   curated palette, not auto-assigned.
 - Run an agent on a different machine (remote runner) with model/CLI config
   resolved live from Harbour.
-- Optional eager polling to drain a backlog without the 60s pause.
 
 **Jobs & runs**
 - Recurring jobs (schedule) plus one-off and triggered runs.
@@ -83,8 +81,8 @@ detail, see [docs/reference](reference/).
   its saved session via a comment.
 
 **Workflows**
-- Deterministic, agentless, scheduled shell commands claimed by separate
-  **workflow runners** — no LLM involved.
+- Deterministic, agentless, scheduled shell commands — no LLM involved. Claimed
+  by the same runner that drives agent jobs.
 - Agent **prerun** gates: a cheap command that decides whether to spend tokens on
   a run.
 
@@ -118,7 +116,7 @@ stable labels for each item):
 
 | Area | Requirement | Status |
 |---|---|---|
-| Authorization | Org → project roles; agents act only on their own resources; workflow runners use separate credentials | Done (v2) |
+| Authorization | Org → project roles; agents act only on their own resources; runners share one credential type | Done (v2) |
 | Onboarding | Shell-based first-run admin (no web signup); argon2id password hashing; token set-password links | Done (v2) |
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
 | Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
@@ -158,9 +156,6 @@ allowlist · H7 file permissions · H6 upload disk guard · M3 encrypt
 sensitive settings · M4 path containment · M5 row limits · H1 settings write
 allowlist. (H2 attachment force-download + nosniff and M1 login rate-limit /
 password policy shipped in v2 — see §6.)
-
-**Features:** agent identity-color picker (curated ~16-color palette in the
-create/edit agent dialog).
 
 ## 9. How the docs fit
 

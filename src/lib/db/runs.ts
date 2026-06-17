@@ -10,6 +10,7 @@ import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listRunners, type RunnerCapabilities, type RunnerScope, type RunnerTier } from "./runners";
 import { getDb } from "./schema";
+import { getOrgTimezone } from "./settings";
 import { getComposedTablesForJob } from "./tables";
 import { hashToken } from "./tokens";
 
@@ -41,7 +42,11 @@ export function createRun(jobId: string, agentId: string | null) {
   // Placement is denormalized onto the run so the hot claim query stays flat:
   // agent runs inherit the agent's placement, workflow runs the job's.
   const placement = resolveRunPlacement(agentId, job.placement);
-  const title = defaultRunTitle(job.name, Math.floor(Date.now() / 1000));
+  const title = defaultRunTitle(
+    job.name,
+    Math.floor(Date.now() / 1000),
+    getOrgTimezone(job.org_id),
+  );
   db.prepare(`
     INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, placement, claimed_at, title)
     VALUES (?, ?, ?, ?, ?, 'running', ?, unixepoch(), ?)

@@ -70,7 +70,6 @@ export default function AgentsPage() {
     id: string;
     name: string;
   } | null>(null);
-  const [eagerAgent, setEagerAgent] = useState(false);
   const [placement, setPlacement] = useState("");
 
   // CLI tool selection — every v2 agent is a harbour CLI agent; cli is required.
@@ -111,7 +110,6 @@ export default function AgentsPage() {
     if (color) body.color = color;
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
-    if (eagerAgent) body.eager = true;
     if (placement.trim()) body.placement = placement.trim();
 
     try {
@@ -140,7 +138,6 @@ export default function AgentsPage() {
     setSelectedModel("");
     setSelectedThinking("");
     setCliTools([]);
-    setEagerAgent(false);
     setPlacement("");
   }
 
@@ -355,23 +352,6 @@ export default function AgentsPage() {
                   defaultThinkingLabel="Default"
                 />
               )}
-              <div className="rounded-md border p-3 space-y-2">
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={eagerAgent}
-                    onChange={(e) => setEagerAgent(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <div className="text-sm">
-                    <p className="font-medium">Eager polling</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      After a run finishes, poll again immediately instead of waiting 60s. Drains
-                      backlogs fast — increases LLM cost.
-                    </p>
-                  </div>
-                </label>
-              </div>
               <div className="space-y-2">
                 <Label htmlFor="agent-placement">Placement</Label>
                 <Input

@@ -41,7 +41,7 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 An agent has **no credential of its own**. Everything an agent does rides on two tokens that belong to the *runner*, not the agent:
 
 - A **runner token** (`hbrn_…`) claims the agent's runs — identical for a local or a remote runner.
-- A per-run **exec token** (`hbx_…`), minted at claim and handed to the spawned CLI, authenticates every callback the run makes (status, activity, docs, tables, attachments). It's scoped to that one run and goes inert once the run is terminal.
+- A per-run **exec token** (`hbx_…`), minted at claim and handed to the spawned CLI, authenticates every callback the run makes — its own lifecycle (status, activity, output, title, attachments) and the agent's writes to shared docs and tables. It's scoped to that one run. Once the run is terminal it can no longer write shared resources (docs/tables reject it), but it stays valid for the run's own lifecycle callbacks so the postrun gate can post a final summary and override `done → failed`.
 
 This is why local and remote agents connect the same way: a runner claims the work and the CLI authenticates *as the run*. There is no long-lived per-agent API key to issue, rotate, or leak — programmatic management of Harbour itself uses an [admin API key](../admin-guide.md) instead.
 

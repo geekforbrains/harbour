@@ -122,7 +122,6 @@ export default function AgentDetailPage() {
   const [editColor, setEditColor] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
-  const [editEager, setEditEager] = useState(false);
   const [editPlacement, setEditPlacement] = useState("");
 
   async function handleUpdateAgent() {
@@ -133,7 +132,6 @@ export default function AgentDetailPage() {
         color: editColor,
         model: editModel,
         thinking: editThinking,
-        eager: editEager,
         placement: editPlacement.trim() || "local",
       });
     } catch {
@@ -198,7 +196,6 @@ export default function AgentDetailPage() {
               setEditColor(agent.color || "");
               setEditModel(agent.model || "");
               setEditThinking(agent.thinking || "");
-              setEditEager(!!agent.eager);
               setEditPlacement(agent.placement || "local");
               updateAgent.reset();
               setShowSettings(true);
@@ -439,23 +436,6 @@ export default function AgentDetailPage() {
                 defaultThinkingLabel="Default"
               />
             )}
-            <div className="rounded-md border p-3">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={editEager}
-                  onChange={(e) => setEditEager(e.target.checked)}
-                  className="mt-0.5"
-                />
-                <div className="text-sm">
-                  <p className="font-medium">Eager polling</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    After a run finishes, poll again immediately instead of waiting 60s. Drains
-                    backlogs fast — increases LLM cost.
-                  </p>
-                </div>
-              </label>
-            </div>
             <div className="space-y-1">
               <Label>Placement</Label>
               <Input
