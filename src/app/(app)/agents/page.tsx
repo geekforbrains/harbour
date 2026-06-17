@@ -201,8 +201,8 @@ export default function AgentsPage() {
                   <Bot className="h-4 w-4 text-amber-500" />
                 </div>
               ) : agent.pending_count > 0 ? (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-                  <Bot className="h-4 w-4 text-blue-500" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10">
+                  <Bot className="h-4 w-4 text-violet-500" />
                 </div>
               ) : (
                 <div
@@ -237,7 +237,7 @@ export default function AgentsPage() {
                 </Badge>
               )}
               {agent.pending_count > 0 && (
-                <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10 shrink-0">
+                <Badge className="text-[10px] bg-violet-500/10 text-violet-600 hover:bg-violet-500/10 shrink-0">
                   {agent.pending_count} pending
                 </Badge>
               )}
