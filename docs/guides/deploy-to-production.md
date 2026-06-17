@@ -14,7 +14,7 @@ Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. Yo
 - **A domain you control**, with an A record you can point at the host.
 - Whatever AI CLIs your agents use (Claude Code, Codex, Gemini CLI) — installed later, under the service user.
 
-Create a dedicated user. The runner refuses to drive Claude Code as root (`--dangerously-skip-permissions` is always passed, and Claude Code rejects it when running as root), so both services run unprivileged:
+Create a dedicated user. By default the runner launches Claude Code with `--dangerously-skip-permissions` (it's omitted only when an agent's workspace has a valid `.claude/settings.json` with a `permissions` object), and Claude Code refuses that flag when running as root — so both services run unprivileged:
 
 ```bash
 useradd -m -s /bin/bash harbour
