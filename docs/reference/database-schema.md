@@ -241,7 +241,8 @@ Streamed CLI events; backs the SSE stream.
 Files or embed URLs on a run.
 `id`, `run_id`, `activity_id` (FK → run_activity, SET NULL), `kind` (CHECK
 `file`/`embed`), `filename`, `storage_path` (relative to `uploadsDir()`),
-`mime_type`, `size_bytes`, `url`, `embed_provider`, `title`, `uploaded_by_*`,
+`mime_type`, `size_bytes`, `url`, `embed_provider`, `title`,
+`uploaded_by_type` (CHECK `user`/`agent`), `uploaded_by_id`, `uploaded_by_name`,
 `created_at`. Indexes: `idx_run_attachments_run`, `idx_run_attachments_activity`.
 
 ### `attachment_processing`
@@ -315,8 +316,8 @@ output over SSE.
 - **`captain_messages`** — `conversation_id`, `role` (CHECK `user`/`assistant`),
   `content` (accumulates as the response streams).
 - **`captain_output`** — `id` AUTOINCREMENT (SSE cursor), `conversation_id`,
-  `message_id` (FK → captain_messages, nullable), `event_type`, `content`,
-  `tool_name`.
+  `message_id` (FK → captain_messages, nullable, ON DELETE CASCADE),
+  `event_type`, `content`, `tool_name`.
 
 Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
 `idx_captain_messages_conversation`, `idx_captain_output_conversation`.
