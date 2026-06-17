@@ -141,6 +141,7 @@ writer, so two runners racing can't double-claim — "claims serialize for free.
 ## Run lifecycle
 
 ```
+                                +-- done     (terminal; postrun gate may override to failed)
                                 +-- failed   (terminal)
                                 +-- skipped  (terminal; prerun/workflow exit 77)
                                 +-- killed   (terminal; SIGTERM, resumable via comment)
@@ -232,7 +233,7 @@ writes the token (0600) and URL. The local runner's token is provisioned by
 `--dangerously-skip-permissions` *unless* the agent workspace has a valid
 `.claude/settings.json` with a `permissions` object (then the permission system
 runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`;
-`gemini` runs `--yolo -o stream-json`. All three normalize to the event vocab
+`gemini` runs `--yolo --skip-trust -o stream-json`. All three normalize to the event vocab
 `text_delta`/`thinking`/`tool_start`/`tool_end`/`info`/`result`/`error`, batched
 to the server every ~750ms and replayed to the dashboard via SSE.
 
