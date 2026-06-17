@@ -34,8 +34,13 @@ export function getDocById(id: string) {
   const doc = db.prepare(`SELECT * FROM docs WHERE id = ?`).get(id) as any;
   if (!doc) return null;
 
+  // created_at is integer seconds, so two revisions written in the same wall
+  // clock second tie; rowid (monotonic insert order) breaks the tie so the
+  // newest revision always wins rather than SQLite's arbitrary tie order.
   const revision = db
-    .prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .prepare(
+      `SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
     .get(id) as any;
 
   return { ...doc, content: revision?.content || "", last_revision: revision };
@@ -110,8 +115,10 @@ export function getComposedDocsForJob(
     SELECT d.id, d.title, dr.content
     FROM job_docs jd
     JOIN docs d ON d.id = jd.doc_id
-    LEFT JOIN doc_revisions dr ON dr.doc_id = d.id
-      AND dr.created_at = (SELECT MAX(created_at) FROM doc_revisions WHERE doc_id = d.id)
+    LEFT JOIN doc_revisions dr ON dr.rowid = (
+      SELECT rowid FROM doc_revisions WHERE doc_id = d.id
+      ORDER BY created_at DESC, rowid DESC LIMIT 1
+    )
     WHERE jd.job_id = ?
     ORDER BY d.title ASC
   `)
@@ -125,6 +132,6 @@ export function getComposedDocsForJob(
 export function getDocRevisions(docId: string) {
   const db = getDb();
   return db
-    .prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC`)
+    .prepare(`SELECT * FROM doc_revisions WHERE doc_id = ? ORDER BY created_at DESC, rowid DESC`)
     .all(docId);
 }
