@@ -75,10 +75,10 @@ function agentSetup() {
 }
 
 // ===========================================================================
-// Agent path — failStaleRuns keyed on claimed_at, not updated_at
+// Agent path — reapStaleRuns keyed on claimed_at, not updated_at
 // ===========================================================================
 
-describe("failStaleRuns (agent path): hard cap keyed on claimed_at", () => {
+describe("reapStaleRuns (agent path): hard cap keyed on claimed_at", () => {
   it("fails a run claimed longer ago than the job timeout even if updated_at is recent", () => {
     const { agent, job } = agentSetup();
     const run = createRun(job.id, agent.id)!; // born 'running', claimed_at = now

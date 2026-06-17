@@ -37,7 +37,7 @@ const KILL_POLL_INTERVAL_MS = 10_000;
 // Inactivity window for the agent CLI (issue #15): if the CLI produces no
 // output for this long, runCliTool SIGTERMs it. This is the ONLY runner-side
 // liveness limit — it catches startup hangs and mid-run stalls. The job's
-// `timeout_minutes` is a separate, server-side hard ceiling (failStaleRuns),
+// `timeout_minutes` is a separate, server-side hard ceiling (reapStaleRuns),
 // not enforced here, so a productive long run is never killed at a wallclock
 // cap as long as it keeps streaming. Override via HARBOUR_CLI_INACTIVITY_MS
 // (used for tests and for tuning chatty/quiet models).
