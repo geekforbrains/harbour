@@ -70,7 +70,9 @@ Three tables:
 
 ```sql
 CREATE TABLE captain_conversations (
-  id, title, cli, model, thinking,
+  id,
+  org_id  REFERENCES orgs(id)  ON DELETE CASCADE,
+  title, cli, model, thinking,
   session_id,        -- captured from CLI output, used to resume
   cwd,               -- override or null
   user_id REFERENCES users(id) ON DELETE CASCADE,
@@ -91,7 +93,7 @@ CREATE TABLE captain_output (
 
 The split between `captain_messages` (one row per turn, holds the final assembled text) and `captain_output` (raw stream events, multiple per turn) lets the chat UI show two views: the "rendered" message and, on hover/expand, the underlying tool calls. When the CLI exits cleanly the spawn finalizer reassembles all `text_delta` events into the assistant message's `content` so a fresh page load doesn't have to replay every event.
 
-Conversations are scoped to the user that created them — `captain_conversations.user_id` references `users(id)` with `ON DELETE CASCADE`. Each user sees only their own.
+Conversations are scoped per (org, user) — `captain_conversations` carries both `org_id` and `user_id` (each references its parent with `ON DELETE CASCADE`). Listing and lookups filter on both (`listConversations(orgId, userId)`), so a user sees only their own conversations within the current org, and switching orgs shows a different set.
 
 ## API
 
