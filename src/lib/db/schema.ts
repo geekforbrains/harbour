@@ -182,7 +182,7 @@ export function initializeSchema(db: Database.Database) {
       cli TEXT,                           -- 'claude' | 'codex' | 'gemini'
       model TEXT,
       thinking TEXT,
-      color TEXT,                         -- stored round-robin identity hue
+      color TEXT,                         -- stored identity hue (user-selectable; name-hash fallback when null)
       eager INTEGER NOT NULL DEFAULT 0,
       placement TEXT NOT NULL DEFAULT 'local', -- routes this agent's runs to a runner tier/label
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
