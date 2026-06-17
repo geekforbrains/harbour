@@ -103,7 +103,7 @@
 
 ### DigitalOcean deployment
 
-- New Terraform config in `terraform/` spins up a single Ubuntu 24.04 droplet running Harbour behind Caddy (HTTPS + Basic Auth), with fail2ban, UFW, unattended security upgrades, and the three AI CLIs pre-installed. One `terraform apply` brings a production box online in ~5 minutes. See [`terraform/README.md`](terraform/README.md).
+- New Terraform config in `terraform/` spins up a single Ubuntu 24.04 droplet running Harbour behind Caddy (HTTPS + Basic Auth), with fail2ban, UFW, unattended security upgrades, and the three AI CLIs pre-installed. One `terraform apply` brings a production box online in ~5 minutes. (The `terraform/` config was removed in v2 — see [deploying to production](docs/guides/deploy-to-production.md) for the current path.)
 - Production runs Harbour directly under systemd (not Docker) as a dedicated non-root `harbour` user — required because Claude Code refuses `--dangerously-skip-permissions` under root. Both the Next.js server and the agent runner run as sibling systemd services.
 - Python 3 + pip + venv + pipx pre-installed so the harbour user can run Python-based agent tooling without manual bootstrap.
 - Fail2ban's Caddy Basic Auth jail only counts 401s where an Authorization header was actually sent — so legitimate users don't self-ban on normal page loads (manifest, favicon, initial nav all arrive uncredentialed and would otherwise trip the jail).
