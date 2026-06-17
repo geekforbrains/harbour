@@ -30,7 +30,7 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
 | `cli` | `claude`, `codex`, or `gemini` (harbour only) |
-| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
+| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.5`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
 
