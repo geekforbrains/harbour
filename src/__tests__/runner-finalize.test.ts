@@ -3,6 +3,7 @@ import { getProvider } from "../../bin/lib/providers.mjs";
 import {
   buildApiPrompt,
   buildFinalizePrompt,
+  buildPrompt,
   FINALIZE_MAX_ATTEMPTS,
   finalizeStep,
   isTerminalStatus,
@@ -55,6 +56,39 @@ describe("buildApiPrompt (work prompt)", () => {
   it("keeps the API key and guide url", () => {
     expect(prompt).toContain(API_KEY);
     expect(prompt).toContain("https://h.test/api/guide");
+  });
+});
+
+// ===========================================================================
+// Work prompt: linked tables must be surfaced so the agent can learn their ids.
+// The claim payload carries `tables` (keyed by name, id only); the list endpoint
+// is org-scoped and rejects the run's exec token, so the prompt is the agent's
+// only source of table ids. Regression guard for the dropped `## Tables` block.
+// ===========================================================================
+
+describe("buildPrompt (work prompt) — tables block", () => {
+  const base = {
+    run: { id: "r1", status: "running", title: null, activity: [] },
+    job: { name: "Demo", instructions: "do the thing" },
+    api: API,
+  };
+
+  it("renders a ## Tables section with each linked table's name and id", () => {
+    const prompt = buildPrompt(
+      { ...base, tables: { ad_plans: { id: "tbl-abc" }, support_state: { id: "tbl-def" } } },
+      API_KEY,
+      false,
+    );
+    expect(prompt).toContain("## Tables");
+    expect(prompt).toContain("`ad_plans`");
+    expect(prompt).toContain("tbl-abc");
+    expect(prompt).toContain("`support_state`");
+    expect(prompt).toContain("tbl-def");
+  });
+
+  it("omits the Tables section when the run has no linked tables", () => {
+    expect(buildPrompt({ ...base, tables: {} }, API_KEY, false)).not.toContain("## Tables");
+    expect(buildPrompt(base, API_KEY, false)).not.toContain("## Tables");
   });
 });
 

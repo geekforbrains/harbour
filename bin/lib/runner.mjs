@@ -226,7 +226,7 @@ function renderAttachmentList(atts, indent = "") {
   return lines.join("\n");
 }
 
-function buildPrompt(payload, apiKey, isResume) {
+export function buildPrompt(payload, apiKey, isResume) {
   const apiPrompt = payload.api ? buildApiPrompt(payload.api, apiKey) : "";
   const allAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   // Group attachments by the activity entry they were linked to, so we can
@@ -293,6 +293,19 @@ function buildPrompt(payload, apiKey, isResume) {
     for (const doc of payload.docs) {
       prompt += `### ${doc.title}\n\n${doc.content || "(empty)"}\n\n`;
     }
+  }
+
+  // Tables attached to this job. Each is a read/write reference — only its id is
+  // given (no rows/columns inlined). The agent reads rows via `read_rows` and
+  // writes via `insert_rows`/update/delete, all targeted by the table id (see the
+  // API section). Without this block the agent has no way to learn its table ids:
+  // the list endpoint is org-scoped and rejects the run's exec token.
+  if (payload.tables && Object.keys(payload.tables).length > 0) {
+    prompt += `## Tables\n\nStructured SQLite tables attached to this job, keyed by name. Use the \`id\` shown here to read rows (\`read_rows\`: GET \`.../api/tables/<id>/rows\`) and write them (\`insert_rows\`: POST, plus PUT/DELETE \`.../rows/<_id>\`) — see the Harbour API section for the full URLs and auth. Don't open the database file directly.\n\n`;
+    for (const [name, info] of Object.entries(payload.tables)) {
+      prompt += `- \`${name}\` — id: \`${info?.id ?? ""}\`\n`;
+    }
+    prompt += "\n";
   }
 
   const activity = payload.run.activity || [];
