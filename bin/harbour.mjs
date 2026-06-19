@@ -7,6 +7,7 @@ import { runAdminCreate, runSetup } from "./lib/bootstrap.mjs";
 import { printRunnerStatus } from "./lib/config.mjs";
 import { connectRunner } from "./lib/connect.mjs";
 import { installRunner, uninstallRunner } from "./lib/install.mjs";
+import { runMigrate } from "./lib/migrate.mjs";
 import { runPool } from "./lib/runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,7 @@ Usage:
   harbour dev                Start the server (development)
   harbour setup              Create the first instance admin + local runner (first-run)
   harbour admin create       Create an instance admin (non-interactive flags)
+  harbour migrate            Translate a v1 backup into this fresh install
   harbour run                Claim and run all due work once (the runner)
   harbour connect <blob>     Enroll a remote runner from a minted credential blob
   harbour install            Schedule the runner as a service (polls every 60s)
@@ -75,6 +77,9 @@ async function main() {
       }
       break;
     }
+    case "migrate":
+      await runMigrate(rest.filter(Boolean));
+      break;
     case "run":
       await runPool();
       break;
