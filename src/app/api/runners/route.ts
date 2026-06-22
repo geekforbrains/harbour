@@ -8,7 +8,7 @@ import { publicBaseUrl } from "@/lib/request-url";
 // The runner registry is instance-level (execution is org-agnostic), so its
 // management is instance-admin-only. The local runner is auto-provisioned at
 // setup; this endpoint mints REMOTE runner credentials an operator enrolls on
-// another host with `harbour connect <blob>`.
+// another host with `npm run harbour-agent -- connect <blob>`.
 
 // The execution-pool view: every runner plus its in-flight slot count.
 export const GET = withInstanceAdmin(async () => {
@@ -39,8 +39,11 @@ export const POST = withInstanceAdmin(async (req) => {
     "utf-8",
   ).toString("base64");
 
+  // Minted for the standalone remote runner (harbour-agent), which mirrors this
+  // server's CLI form: `npm run harbour-agent -- connect <blob>`. A bundled
+  // runner from a Harbour checkout swaps `harbour-agent` -> `harbour`.
   return NextResponse.json(
-    { ...runner, connect: `npm run harbour -- connect ${blob}` },
+    { ...runner, connect: `npm run harbour-agent -- connect ${blob}` },
     { status: 201 },
   );
 });

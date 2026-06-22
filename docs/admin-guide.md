@@ -139,7 +139,7 @@ Content-Type: application/json
 { "name": "gpu-box", "labels": ["gpu"], "scope": { "orgId": "uuid" } }
 ```
 
-Only `name` is required. `labels` (array of strings) are the placement labels the runner is authorized to serve — an agent/workflow whose `placement` matches one of them routes to it. `scope` is optional `{ "orgId"?, "agentId"? }` to restrict the token to one org and/or one agent's work. The response includes the runner row plus a ready-made `connect` command — `npm run harbour -- connect <blob>` — to run on the remote host, where the base64 blob carries the URL, token, and name. The token is shown only here.
+Only `name` is required. `labels` (array of strings) are the placement labels the runner is authorized to serve — an agent/workflow whose `placement` matches one of them routes to it. `scope` is optional `{ "orgId"?, "agentId"? }` to restrict the token to one org and/or one agent's work. The response includes the runner row plus a ready-made `connect` command — `npm run harbour-agent -- connect <blob>`, for the standalone [harbour-agent](https://github.com/geekforbrains/harbour-agent) runner — to run on the remote host, where the base64 blob carries the URL, token, and name. The token is shown only here.
 
 ### Revoke a Runner
 ```

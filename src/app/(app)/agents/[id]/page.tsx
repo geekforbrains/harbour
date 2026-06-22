@@ -251,7 +251,7 @@ export default function AgentDetailPage() {
 
       <p className="text-xs text-muted-foreground">
         Runs on another machine? Mint a runner in Settings → Runners and enroll it with{" "}
-        <code>harbour connect</code>.
+        <code>npm run harbour-agent -- connect</code>.
       </p>
 
       {/* Jobs */}

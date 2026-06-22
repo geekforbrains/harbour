@@ -770,7 +770,7 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Mint a credential for a runner on another machine. Enroll it there with{" "}
-              <code className="font-mono">harbour connect &lt;blob&gt;</code>.
+              <code className="font-mono">npm run harbour-agent -- connect &lt;blob&gt;</code>.
             </p>
             <div className="space-y-2">
               <Label>Name</Label>

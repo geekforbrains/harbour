@@ -65,8 +65,10 @@ curl -X POST https://harbour.tailnet.example/api/runners \
 The response includes the runner row plus a `connect` field:
 
 ```bash
-npm run harbour -- connect <long-base64-blob>
+npm run harbour-agent -- connect <long-base64-blob>
 ```
+
+The minted command targets the standalone [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) runner (the self-managed path in step 3). If you instead run Harbour's bundled runner from a checkout, swap `harbour-agent` → `harbour`: `npm run harbour -- connect <blob>`.
 
 Traced through [`src/app/api/runners/route.ts`](../../src/app/api/runners/route.ts), the blob is `base64(JSON.stringify({ url, token, name }))` — the harbour URL, the runner's bearer token (`hbrn_…`), and a friendly name. The token is the only secret in it; treat the blob like a password. You can also pass an optional `scope` (`{ orgId?, agentId? }`) to restrict the token to one org's or one agent's work.
 

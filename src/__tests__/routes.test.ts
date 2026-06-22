@@ -710,8 +710,8 @@ describe("/api/runners (mint remote runner credentials — instance admin)", () 
     expect(body.tier).toBe("remote");
     expect(body.labels).toEqual(["gpu"]);
     expect(body.token).toMatch(/^hbrn_/);
-    expect(body.connect).toMatch(/^npm run harbour -- connect /);
-    const blob = body.connect.replace("npm run harbour -- connect ", "");
+    expect(body.connect).toMatch(/^npm run harbour-agent -- connect /);
+    const blob = body.connect.replace("npm run harbour-agent -- connect ", "");
     const decoded = JSON.parse(Buffer.from(blob, "base64").toString("utf-8"));
     expect(decoded).toMatchObject({ token: body.token, name: "GPU box" });
     expect(typeof decoded.url).toBe("string");
