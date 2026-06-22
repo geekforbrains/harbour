@@ -73,7 +73,9 @@ not the runner token. `claim` (and a `peek`) updates the runner's `last_polled_a
 3. its **kind** is in `capabilities.kinds` and — for agent runs — the agent's CLI
    is in `capabilities.clis`;
 4. its **lock unit** has nothing in flight: `agent_id` for agent runs, `job_id`
-   for workflow runs; `running | waiting | pending` all count as in flight.
+   for workflow runs. `running` and `pending` count as in flight; `waiting` does
+   **not** — a run paused for human review leaves the agent idle, so its other
+   work can still be claimed (#50).
 
 The claim is one atomic transaction (oldest-due first, guarded status flip), so
 concurrent claims **serialize for free** on the single SQLite writer — no runner

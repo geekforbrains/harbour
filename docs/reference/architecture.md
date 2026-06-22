@@ -129,7 +129,9 @@ The server is the sole arbiter. A run is claimable when:
   agent runs the agent's `cli` is in `capabilities.clis`.
 - **Lock unit is idle** — nothing else for that lock unit is in flight. The lock
   unit is `agent_id` for agent runs and `job_id` for workflow runs; in-flight
-  means status `running`, `waiting`, or `pending`. Distinct lock units run in
+  means status `running` or `pending`. A `waiting` run (paused for human review)
+  is *not* in flight — it has no timeout, so letting it hold the lock would strand
+  the agent's other work indefinitely (#50). Distinct lock units run in
   parallel (unbounded by org, capped only by the runner's pool size).
 
 Atomicity: the dueness check, placement/capability/lock-unit filters, recurring
