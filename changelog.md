@@ -1,5 +1,63 @@
 # Changelog
 
+## v2.0.0 — 2026-06-23
+
+**Official v2 release.** v1 is now sunset. Harbour v2 is the supported line
+going forward: a multi-tenant control plane organized around instance admins,
+orgs, projects, shared context, remote runners, workflows, and the unified
+runner protocol. Existing v1 installs should move to a fresh v2 install and use
+[`harbour migrate`](docs/guides/migrating-from-v1.md) to translate their data
+into the new schema.
+
+### v2 foundation
+
+- v2 replaces the single-tenant v1 data model with org/project scoping across
+  agents, jobs, runs, docs, secrets, and tables. API routes now authorize through
+  the v2 user/project wrappers, and first-run setup is a shell-admin flow instead
+  of unauthenticated web signup.
+- Shared context is now first-class at org and project scope, with docs, secrets,
+  and tables composed into each claimed run. Job links and pinning rules are
+  deterministic, with project-level context taking precedence over org defaults.
+- The runner protocol is kind-tagged and centered on `POST /api/runner/claim`,
+  so local and remote runners use the same claim path for agent runs and
+  workflow runs.
+
+### Migration
+
+- Added `harbour migrate`, which reads a v1 Harbour home and translates agents,
+  jobs, runs, docs, secrets, and tables into a v2 install. The migration keeps v1
+  untouched and writes into the new v2 schema.
+- Added a v1 migration guide covering fresh v2 setup, dry-run review, migrated
+  data scope, and post-migration checks.
+
+### Runners and workflows
+
+- Remote runner setup now mints a `harbour agent connect <blob>` command, making
+  it easier to move agent execution to another machine without hand-copying
+  runner config.
+- A single runner can advertise capabilities and serve many agents. The docs now
+  frame remote runners protocol-first and clarify PATH, CLI detection, labels,
+  and remote-workflow behavior.
+- Workflow-only jobs, workflow gates, live runner updates, kill handling, and
+  schedule advancement all land in the v2 line.
+
+### Dashboard and docs
+
+- The dashboard ships the v2 design system and React Query data layer, including
+  org/project switching, instance-admin user management, shared-context screens,
+  workflow views, and updated remote-runner flows.
+- README screenshots and the documentation tree were refreshed for v2. Release
+  docs now cover the dev-to-main merge, GitHub Release creation, and Node 24 CI
+  alignment.
+
+### Fixes since beta
+
+- Agent work prompts now surface linked table context.
+- Unknown table-row `orderBy` values return 400 instead of 500.
+- Same-second doc revision lookups now use a rowid tiebreaker.
+- Project delete copy, Captain workspace defaults, status colors, scheduler
+  docs, schema docs, and release/validation drift were corrected.
+
 ## v2.0.0-beta.1 — 2026-06-09
 
 **Beta — not an official release yet.** The first public cut of the v2 rebuild. v2 is a clean break: the schema is rebuilt around multi-tenancy and there is **no v1 → v2 migration**, so v2 starts from a fresh database. First-run setup moves to the shell (`harbour setup`); web signup is gone.
