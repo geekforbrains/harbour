@@ -35,7 +35,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 - [Running a runner on a different machine](guides/run-on-different-machine.md) — minting a credential and running a remote runner (`harbour-agent`, your own, or the bundled one; e.g. over Tailscale)
 - [Deploying to production](guides/deploy-to-production.md) — Linux/systemd with a TLS proxy in front
 - [Migrating from v1](guides/migrating-from-v1.md) — fresh v2 install + `harbour migrate` to translate your old data across
-- [Cutting a release](guides/releasing.md) — changelog, version bump, tag
+- [Cutting a release](guides/releasing.md) — dev-to-main merge, changelog, version bump, tag, GitHub Release
 
 ## Reference — change the code
 
