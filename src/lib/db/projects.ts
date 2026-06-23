@@ -1,30 +1,77 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
+import { InvalidNameError, NameCollisionError, slugify } from "../slug";
+import { getDb, isUniqueViolation } from "./schema";
 
-// --- Project CRUD ---
+// --- Org-scoped project CRUD ---
 
-export function createProject(name: string) {
+function projectCollisionError(existingName: string, slug: string) {
+  return new NameCollisionError(
+    `A project named "${existingName}" already exists in this organization ` +
+      `(folder name "${slug}") — names must be unique ignoring case and punctuation.`,
+  );
+}
+
+export function createProject(orgId: string, name: string) {
   const db = getDb();
+  const slug = slugify(name);
+  if (!slug) {
+    throw new InvalidNameError("Project name must contain at least one letter or number.");
+  }
+  // Slugs are unique per org, archived projects included — an archived project
+  // keeps its slug so a new same-name project can't inherit its leftover
+  // workspace directories on runner machines.
+  const existing = db
+    .prepare(`SELECT name FROM projects WHERE org_id = ? AND slug = ?`)
+    .get(orgId, slug) as { name: string } | undefined;
+  if (existing) throw projectCollisionError(existing.name, slug);
   const id = uuid();
-  db.prepare(`INSERT INTO projects (id, name) VALUES (?, ?)`).run(id, name);
+  try {
+    db.prepare(`INSERT INTO projects (id, org_id, name, slug) VALUES (?, ?, ?, ?)`).run(
+      id,
+      orgId,
+      name,
+      slug,
+    );
+  } catch (err) {
+    // Race backstop: a concurrent create can slip past the pre-check; the
+    // unique index catches it.
+    if (isUniqueViolation(err)) {
+      const winner = db
+        .prepare(`SELECT name FROM projects WHERE org_id = ? AND slug = ?`)
+        .get(orgId, slug) as { name: string } | undefined;
+      throw projectCollisionError(winner?.name ?? name, slug);
+    }
+    throw err;
+  }
   return getProjectById(id);
 }
 
 export function getProjectById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as any || null;
+  return (db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as any) || null;
 }
 
-export function listProjects() {
+/**
+ * List projects for an org. By default only active (non-archived) projects are
+ * returned; pass includeArchived to include soft-deleted ones.
+ */
+export function listProjects(orgId: string, opts: { includeArchived?: boolean } = {}) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all();
+  const archivedFilter = opts.includeArchived ? "" : "AND archived_at IS NULL";
+  return db
+    .prepare(`SELECT * FROM projects WHERE org_id = ? ${archivedFilter} ORDER BY name ASC`)
+    .all(orgId);
 }
 
 export function updateProject(id: string, data: { name?: string }) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
-  if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
+  if (data.name !== undefined) {
+    // Rename never touches the slug — workspace paths stay stable.
+    fields.push("name = ?");
+    values.push(data.name);
+  }
   if (fields.length === 0) return getProjectById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
@@ -32,120 +79,29 @@ export function updateProject(id: string, data: { name?: string }) {
   return getProjectById(id);
 }
 
+/** Soft-delete: mark archived. Data is preserved and the project is hidden. */
+export function archiveProject(id: string) {
+  const db = getDb();
+  db.prepare(
+    `UPDATE projects SET archived_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND archived_at IS NULL`,
+  ).run(id);
+  return getProjectById(id);
+}
+
+/** Restore a soft-deleted project. */
+export function unarchiveProject(id: string) {
+  const db = getDb();
+  db.prepare(`UPDATE projects SET archived_at = NULL, updated_at = unixepoch() WHERE id = ?`).run(
+    id,
+  );
+  return getProjectById(id);
+}
+
+/**
+ * Hard delete: admin escape hatch. ON DELETE CASCADE wipes everything beneath
+ * the project (agents, jobs, runs, project-level resources).
+ */
 export function deleteProject(id: string) {
   const db = getDb();
   db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
-}
-
-// --- Linking: Agents ---
-
-export function linkAgentToProject(projectId: string, agentId: string) {
-  const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO project_agents (project_id, agent_id) VALUES (?, ?)`).run(projectId, agentId);
-}
-
-export function unlinkAgentFromProject(projectId: string, agentId: string) {
-  const db = getDb();
-  db.prepare(`DELETE FROM project_agents WHERE project_id = ? AND agent_id = ?`).run(projectId, agentId);
-}
-
-export function listAgentIdsForProject(projectId: string): string[] {
-  const db = getDb();
-  return (db.prepare(`SELECT agent_id FROM project_agents WHERE project_id = ?`).all(projectId) as { agent_id: string }[]).map(r => r.agent_id);
-}
-
-// --- Linking: Jobs ---
-
-export function linkJobToProject(projectId: string, jobId: string) {
-  const db = getDb();
-
-  db.transaction(() => {
-    // Link the job itself
-    db.prepare(`INSERT OR IGNORE INTO project_jobs (project_id, job_id) VALUES (?, ?)`).run(projectId, jobId);
-
-    // Auto-link the job's agent
-    const job = db.prepare(`SELECT agent_id FROM jobs WHERE id = ?`).get(jobId) as { agent_id: string } | undefined;
-    if (job) {
-      db.prepare(`INSERT OR IGNORE INTO project_agents (project_id, agent_id) VALUES (?, ?)`).run(projectId, job.agent_id);
-    }
-
-    // Auto-link the job's docs
-    const docs = db.prepare(`SELECT doc_id FROM job_docs WHERE job_id = ?`).all(jobId) as { doc_id: string }[];
-    for (const d of docs) {
-      db.prepare(`INSERT OR IGNORE INTO project_docs (project_id, doc_id) VALUES (?, ?)`).run(projectId, d.doc_id);
-    }
-
-    // Auto-link the job's env vars
-    const envVars = db.prepare(`SELECT env_var_id FROM job_env_vars WHERE job_id = ?`).all(jobId) as { env_var_id: string }[];
-    for (const ev of envVars) {
-      db.prepare(`INSERT OR IGNORE INTO project_env_vars (project_id, env_var_id) VALUES (?, ?)`).run(projectId, ev.env_var_id);
-    }
-
-    // Auto-link the job's databases
-    const databases = db.prepare(`SELECT database_id FROM job_databases WHERE job_id = ?`).all(jobId) as { database_id: string }[];
-    for (const d of databases) {
-      db.prepare(`INSERT OR IGNORE INTO project_databases (project_id, database_id) VALUES (?, ?)`).run(projectId, d.database_id);
-    }
-  })();
-}
-
-export function unlinkJobFromProject(projectId: string, jobId: string) {
-  const db = getDb();
-  db.prepare(`DELETE FROM project_jobs WHERE project_id = ? AND job_id = ?`).run(projectId, jobId);
-}
-
-export function listJobIdsForProject(projectId: string): string[] {
-  const db = getDb();
-  return (db.prepare(`SELECT job_id FROM project_jobs WHERE project_id = ?`).all(projectId) as { job_id: string }[]).map(r => r.job_id);
-}
-
-// --- Linking: Docs ---
-
-export function linkDocToProject(projectId: string, docId: string) {
-  const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO project_docs (project_id, doc_id) VALUES (?, ?)`).run(projectId, docId);
-}
-
-export function unlinkDocFromProject(projectId: string, docId: string) {
-  const db = getDb();
-  db.prepare(`DELETE FROM project_docs WHERE project_id = ? AND doc_id = ?`).run(projectId, docId);
-}
-
-export function listDocIdsForProject(projectId: string): string[] {
-  const db = getDb();
-  return (db.prepare(`SELECT doc_id FROM project_docs WHERE project_id = ?`).all(projectId) as { doc_id: string }[]).map(r => r.doc_id);
-}
-
-// --- Linking: Env Vars ---
-
-export function linkEnvVarToProject(projectId: string, envVarId: string) {
-  const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO project_env_vars (project_id, env_var_id) VALUES (?, ?)`).run(projectId, envVarId);
-}
-
-export function unlinkEnvVarFromProject(projectId: string, envVarId: string) {
-  const db = getDb();
-  db.prepare(`DELETE FROM project_env_vars WHERE project_id = ? AND env_var_id = ?`).run(projectId, envVarId);
-}
-
-export function listEnvVarIdsForProject(projectId: string): string[] {
-  const db = getDb();
-  return (db.prepare(`SELECT env_var_id FROM project_env_vars WHERE project_id = ?`).all(projectId) as { env_var_id: string }[]).map(r => r.env_var_id);
-}
-
-// --- Linking: Databases ---
-
-export function linkDatabaseToProject(projectId: string, databaseId: string) {
-  const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO project_databases (project_id, database_id) VALUES (?, ?)`).run(projectId, databaseId);
-}
-
-export function unlinkDatabaseFromProject(projectId: string, databaseId: string) {
-  const db = getDb();
-  db.prepare(`DELETE FROM project_databases WHERE project_id = ? AND database_id = ?`).run(projectId, databaseId);
-}
-
-export function listDatabaseIdsForProject(projectId: string): string[] {
-  const db = getDb();
-  return (db.prepare(`SELECT database_id FROM project_databases WHERE project_id = ?`).all(projectId) as { database_id: string }[]).map(r => r.database_id);
 }

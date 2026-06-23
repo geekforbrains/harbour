@@ -1,4 +1,4 @@
-import { RunAttachment } from "./db/attachments";
+import type { RunAttachment } from "./db/attachments";
 
 /**
  * Serialize a RunAttachment for the wire. Hides on-disk storage_path,
@@ -21,9 +21,8 @@ export type SerializedAttachment = {
 };
 
 export function serializeAttachment(att: RunAttachment, baseUrl: string): SerializedAttachment {
-  const url = att.kind === "file"
-    ? `${baseUrl}/api/runs/${att.run_id}/attachments/${att.id}/file`
-    : att.url;
+  const url =
+    att.kind === "file" ? `${baseUrl}/api/runs/${att.run_id}/attachments/${att.id}/file` : att.url;
   return {
     id: att.id,
     run_id: att.run_id,

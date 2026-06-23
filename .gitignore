@@ -45,16 +45,11 @@ harbour.db
 harbour.db-wal
 harbour.db-shm
 
-# docker compose local state (HARBOUR_HOME bind mount)
-/data
-
 # playwright
 .playwright-cli/
 
 # claude code worktrees
 .claude/worktrees/
-data/
-data-remote/
 
-# security audit (working doc, not for distribution)
-AUDIT.md
+# e2e
+/.e2e/

@@ -1,5 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { getProvider } from "../../bin/lib/providers.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CLI_CONFIG } from "@/lib/cli-config";
+import { slugify } from "@/lib/slug";
+import {
+  detectCapabilities,
+  ensureWorkingDir,
+  getProvider,
+  resetBinaryCache,
+  resolveBinary,
+  runCliTool,
+  sanitizeThinking,
+  WORKSPACE_SEGMENT_RE,
+} from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
 // They guard against silent flag drift in the upstream CLIs (issue #24 was
@@ -76,6 +90,78 @@ describe("codex provider (issue #24)", () => {
   });
 });
 
+describe("codex createParser", () => {
+  function agentMessage(text: string) {
+    return JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } });
+  }
+
+  it("inserts a paragraph break before each agent message after the first", () => {
+    // Codex emits complete, distinct agent_message items (narration before
+    // tool calls, then a summary). Consumers join text_delta events with "" —
+    // without separators the messages run together into one blob.
+    const parser = getProvider("codex").createParser();
+
+    const first = parser.parseLine(agentMessage("First message."));
+    const second = parser.parseLine(agentMessage("Second message."));
+
+    expect(first.events[0].content).toBe("First message.");
+    expect(second.events[0].content).toBe("\n\nSecond message.");
+  });
+
+  it("does not prefix the first message when earlier lines emitted no text", () => {
+    const parser = getProvider("codex").createParser();
+
+    parser.parseLine(JSON.stringify({ type: "thread.started", thread_id: "t-1" }));
+    const first = parser.parseLine(agentMessage("Hello."));
+
+    expect(first.events[0].content).toBe("Hello.");
+  });
+});
+
+// Issue #39: a thinking level the CLI doesn't accept (e.g. "off", written via
+// the API before validation existed, or left behind by CLI version drift) must
+// not fail the run. The runner sanitizes the resolved level before building
+// the command: known levels pass, unknown ones are dropped and reported so the
+// run proceeds on the CLI default.
+describe("sanitizeThinking (issue #39)", () => {
+  it("passes a known level through", () => {
+    expect(sanitizeThinking("claude", "high")).toEqual({ thinking: "high", dropped: null });
+    expect(sanitizeThinking("codex", "xhigh")).toEqual({ thinking: "xhigh", dropped: null });
+  });
+
+  it("drops an unknown level instead of failing the run", () => {
+    expect(sanitizeThinking("claude", "off")).toEqual({ thinking: null, dropped: "off" });
+  });
+
+  it("treats empty as unset", () => {
+    expect(sanitizeThinking("claude", null)).toEqual({ thinking: null, dropped: null });
+    expect(sanitizeThinking("claude", "")).toEqual({ thinking: null, dropped: null });
+    expect(sanitizeThinking("claude", undefined)).toEqual({ thinking: null, dropped: null });
+  });
+
+  it("silently drops any level for a cli with no thinking flag", () => {
+    // Gemini ignores thinking entirely — dropping a stale value is not worth
+    // a warning on every run.
+    expect(sanitizeThinking("gemini", "high")).toEqual({ thinking: null, dropped: null });
+  });
+
+  it("silently drops for an unknown cli", () => {
+    expect(sanitizeThinking("cursor", "high")).toEqual({ thinking: null, dropped: null });
+  });
+});
+
+// The dashboard/API validate against CLI_CONFIG (src/lib/cli-config.ts); the
+// runner sanitizes against each provider's thinkingLevels. These are two
+// bundles (TS app vs plain-JS runner) so the lists are duplicated by
+// necessity — this test locks them together so they can't drift.
+describe("provider thinkingLevels match CLI_CONFIG", () => {
+  for (const [cli, config] of Object.entries(CLI_CONFIG)) {
+    it(`${cli}: thinkingLevels === CLI_CONFIG.${cli}.thinkingOptions`, () => {
+      expect(getProvider(cli).thinkingLevels).toEqual(config.thinkingOptions);
+    });
+  }
+});
+
 describe("gemini provider (issue #24)", () => {
   const gemini = getProvider("gemini");
 
@@ -114,5 +200,188 @@ describe("gemini provider (issue #24)", () => {
     expect(cmd.args).toContain("--resume");
     const rIdx = cmd.args.indexOf("--resume");
     expect(cmd.args[rIdx + 1]).toBe("session-uuid");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCliTool inactivity timer (issue #15)
+//
+// A single inactivity timer replaces the old 30s startup timer + fixed
+// wallclock spawn timeout. It resets on every chunk of output, so a streaming
+// agent never gets killed at an arbitrary cap; a silent process (startup hang
+// or mid-run stall) is SIGTERM'd after the window. The resolved object carries
+// `timedOut` so the runner can report the cause precisely.
+// ---------------------------------------------------------------------------
+describe("runCliTool inactivity timer (issue #15)", () => {
+  const NODE = process.execPath;
+
+  it("kills a process that produces output then goes silent past the window", async () => {
+    const script = `process.stdout.write("hello\\n"); setInterval(() => {}, 1000);`;
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+    });
+    expect(res.timedOut).toBe(true);
+  }, 8000);
+
+  it("kills a process that never produces any output (startup hang)", async () => {
+    const script = `setInterval(() => {}, 1000);`;
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+    });
+    expect(res.timedOut).toBe(true);
+  }, 8000);
+
+  it("does NOT kill a process that keeps streaming within the window", async () => {
+    // Emit a line every 50ms (< 300ms window) for ~450ms, then exit cleanly.
+    const script = `let n = 0; const t = setInterval(() => { process.stdout.write("tick " + (n++) + "\\n"); if (n >= 9) { clearInterval(t); process.exit(0); } }, 50);`;
+    const lines: string[] = [];
+    const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
+      inactivityTimeoutMs: 300,
+      killGraceMs: 150,
+      onLine: (l: string) => lines.push(l),
+    });
+    expect(res.timedOut).toBe(false);
+    expect(res.code).toBe(0);
+    expect(lines.length).toBeGreaterThanOrEqual(9);
+  }, 8000);
+});
+
+// ---------------------------------------------------------------------------
+// Workspace path segments (issue #40)
+//
+// The server assigns slugs (src/lib/slug.ts) and the runner validates each
+// path segment against WORKSPACE_SEGMENT_RE before mkdir. Two bundles (TS app
+// vs plain-JS runner), so lock them together: every slug the server can
+// produce is either "" (rejected at creation as an invalid name) or accepted
+// by the runner verbatim — the server can never mint a segment the runner
+// refuses.
+// ---------------------------------------------------------------------------
+describe("slugify output is always a valid workspace segment", () => {
+  const NASTY_NAMES = [
+    "Dev Agent",
+    "Dev_Agent",
+    "  My  Org!! ",
+    "日本語",
+    "🚀 Launch Crew 🚀",
+    "../../../etc/passwd",
+    "..",
+    "a/b/c",
+    "C:\\Users\\agent",
+    "UPPER CASE NAME",
+    "tabs\tand\nnewlines",
+    "dots.dashes-and---runs",
+    "café au lait",
+    "name (copy) #2!",
+    "-leading-and-trailing-",
+    "null\u0000byte",
+    "zwsp\u200bname",
+    "",
+    "   ",
+    "🚀🚀",
+  ];
+
+  it("every non-empty slug matches WORKSPACE_SEGMENT_RE", () => {
+    for (const name of NASTY_NAMES) {
+      const slug = slugify(name);
+      if (slug !== "") {
+        expect(slug, `slugify(${JSON.stringify(name)})`).toMatch(WORKSPACE_SEGMENT_RE);
+      }
+    }
+  });
+
+  it("the battery exercises both outcomes (guard against a vacuous loop)", () => {
+    const slugs = NASTY_NAMES.map(slugify);
+    expect(slugs).toContain("");
+    expect(slugs).toContain("dev-agent");
+  });
+});
+
+describe("ensureWorkingDir", () => {
+  const prevHome = process.env.HARBOUR_HOME;
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-ws-test-"));
+    process.env.HARBOUR_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HARBOUR_HOME;
+    else process.env.HARBOUR_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("creates the nested org/project/agent directory under HARBOUR_HOME", () => {
+    const dir = ensureWorkingDir(["acme", "website", "dev-agent"]);
+    expect(dir).toBe(path.join(home, "workspaces", "acme", "website", "dev-agent"));
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("supports the legacy single-segment (flat) layout", () => {
+    const dir = ensureWorkingDir(["dev-agent"]);
+    expect(dir).toBe(path.join(home, "workspaces", "dev-agent"));
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("refuses invalid segments instead of transforming them", () => {
+    expect(() => ensureWorkingDir([".."])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir(["a/b"])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir([""])).toThrow(/Invalid workspace path segment/);
+    expect(() => ensureWorkingDir(["UPPER"])).toThrow(/Invalid workspace path segment/);
+    // One bad segment poisons the whole path, wherever it sits.
+    expect(() => ensureWorkingDir(["acme", "..", "dev-agent"])).toThrow(
+      /Invalid workspace path segment/,
+    );
+    // Validation happens before mkdir — a refused run creates nothing.
+    expect(fs.existsSync(path.join(home, "workspaces"))).toBe(false);
+  });
+
+  it("rejects an empty segment list", () => {
+    expect(() => ensureWorkingDir([])).toThrow(/No workspace path segments/);
+  });
+});
+
+// Honest CLI detection: the runner advertises a CLI only when it's actually on
+// PATH — no bare-name fallback — so it never claims work it can't execute and
+// the absent-capability surface stays accurate.
+describe("detectCapabilities — honest CLI detection", () => {
+  const ORIGINAL_PATH = process.env.PATH;
+
+  afterEach(() => {
+    process.env.PATH = ORIGINAL_PATH;
+    resetBinaryCache();
+  });
+
+  it("does not advertise CLIs that are not on PATH", () => {
+    // System dirs hold none of claude/codex/gemini.
+    process.env.PATH = "/usr/bin:/bin";
+    resetBinaryCache();
+    const caps = detectCapabilities();
+    expect(caps.clis).toEqual([]);
+    expect(caps.kinds).toEqual(["workflow"]); // no "agent" kind without a CLI
+  });
+
+  it("advertises a CLI that IS on PATH", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-cli-"));
+    try {
+      const fake = path.join(dir, "codex");
+      fs.writeFileSync(fake, "#!/bin/sh\necho fake\n");
+      fs.chmodSync(fake, 0o755);
+      process.env.PATH = `${dir}:/usr/bin:/bin`;
+      resetBinaryCache();
+      const caps = detectCapabilities();
+      expect(caps.clis).toContain("codex");
+      expect(caps.kinds).toContain("agent");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveBinary returns null for a missing binary (no bare-name fallback)", () => {
+    process.env.PATH = "/usr/bin:/bin";
+    resetBinaryCache();
+    expect(resolveBinary("definitely-not-a-real-binary-xyz")).toBeNull();
   });
 });

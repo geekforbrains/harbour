@@ -1,6 +1,6 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /**
  * Centralized paths for Harbour's local state.
@@ -36,8 +36,14 @@ export function encryptionKeyPath(): string {
   return path.join(harbourHome(), "encryption.key");
 }
 
-export function runnersFile(): string {
-  return path.join(harbourHome(), "runners.json");
+/** The bundled runner's bearer token (`hbrn_…`), mode 0600. Local-only. */
+export function runnerTokenFile(): string {
+  return path.join(harbourHome(), "runner.token");
+}
+
+/** Where the runner reaches Harbour. Non-secret; written by `harbour connect`. */
+export function runnerUrlFile(): string {
+  return path.join(harbourHome(), "runner.url");
 }
 
 export function maxUploadMb(): number {

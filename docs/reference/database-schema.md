@@ -1,397 +1,354 @@
 # Database schema
 
-A dense reference. Source of truth: `src/lib/db/schema.ts`. The numbers below are computed from a freshly initialized DB, not paraphrased.
+One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
+`foreign_keys = ON`, `busy_timeout = 5000`. **Source of truth:
+`src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
+v1 → v2 migration; a fresh database is the only supported path.
 
-- **Tables: 28**
-- **Indexes: 18 explicit** (plus auto-indexes on PRIMARY KEY / UNIQUE columns)
+- **27 tables**, **35 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
+  INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
+  `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
 
-Notation in the column tables:
-- **PK** — PRIMARY KEY (composite PKs noted in the description column)
-- **FK** — REFERENCES, with the cascade behavior in parentheses
-- **NN** — NOT NULL
-- **U** — UNIQUE
-- **CHECK** — has a CHECK constraint (described inline)
-- Default values shown only when non-trivial; `created_at`/`updated_at` default to `unixepoch()` everywhere.
+Notation: **PK** / **FK**(cascade) / **NN** / **U** / **CHECK**. Defaults shown
+only when non-trivial.
 
-## Auth
+## Tenancy shape
+
+The defining v2 structure — **instance admin → orgs → projects** — is enforced
+in the schema, not bolted on:
+
+- **Operational entities** (`agents`, `jobs`, `runs`) carry a direct
+  `project_id` FK. There are **no** `project_*` junction tables (v1 had them).
+- **Resources** (`docs`, `env_vars`, `tables`) are **dual-tier**: a NOT NULL
+  `org_id` plus a NULLABLE `project_id`. `project_id IS NULL` ⇒ org-level (shared
+  across the org); otherwise project-level.
+- **Jobs are dual-tier too**, but only for workflows: `jobs` carries a NOT NULL
+  `org_id` plus a NULLABLE `project_id`; `project_id IS NULL` ⇒ an org-level
+  workflow job. Agent jobs are always
+  project-level (a table CHECK enforces it). Scope is fixed at creation —
+  `updateJob` cannot move a job between tiers — and an org-level job may link
+  only org-level resources (linking a project-scoped doc/env var/table into
+  an org-scoped job would widen its blast radius; the query layer rejects it
+  and routes return 400).
+- **Org-scoped** infrastructure: `captain_conversations`. The `runners`
+  registry is **instance-level** (org-agnostic — execution doesn't see tenancy).
+- `runs.org_id` and `runs.project_id` are denormalized (copied from the job) so
+  org-scoped run queries need no join and org-level runs (`project_id` NULL)
+  stay reachable.
+
+## Slugs
+
+`orgs`, `projects`, and `agents` each carry a `slug` (TEXT NN) — the
+filesystem-safe workspace path segment runners use to nest workspaces as
+`<org-slug>/<project-slug>/<agent-slug>`. Semantics (algorithm in
+`src/lib/slug.ts`, enforcement in the create paths of the query layer):
+
+- **Assigned at creation** from the name (lowercase; runs of non-`[a-z0-9]`
+  collapse to a single `-`; trimmed). A name that slugifies to `""` is rejected.
+- **Immutable on rename** — workspace paths stay stable.
+- **Unique per scope**, enforced by unique indexes: org slugs instance-wide
+  (`idx_orgs_slug`), project slugs per org (`idx_projects_org_slug`), agent
+  slugs per project (`idx_agents_project_slug`). Archived rows keep their slug
+  and still block reuse, so a new same-name org/project can't inherit leftover
+  workspace directories on runner machines.
+
+## Identity & access
 
 ### `users`
-Human accounts for dashboard auth.
-
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
-| `id` | TEXT | PK | uuid v4 |
+| `id` | TEXT | PK | uuid |
 | `email` | TEXT | NN, U | |
-| `password_hash` | TEXT | NN | bcryptjs hash |
+| `password_hash` | TEXT | | argon2id; **NULLABLE** — admin-created until a set-password link is consumed |
 | `display_name` | TEXT | NN | |
+| `is_instance_admin` | INTEGER | NN, default 0 | owns the install; spans all orgs |
+| `created_at` / `updated_at` | INTEGER | NN | |
+
+### `orgs`
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | |
+| `name` | TEXT | NN | |
+| `slug` | TEXT | NN, U | creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
+| `settings` | TEXT | NN, default `'{}'` | JSON, org-scoped (e.g. `timezone`) |
+| `archived_at` | INTEGER | | soft-delete |
+| `created_at` / `updated_at` | INTEGER | NN | |
+
+Index: `idx_orgs_slug(slug)` (UNIQUE).
+
+### `memberships`
+Maps a user to an org with a role. Instance admins need **no** membership row.
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `user_id` | TEXT | PK, FK → `users` (CASCADE) | composite PK `(user_id, org_id)` |
+| `org_id` | TEXT | PK, FK → `orgs` (CASCADE) | |
+| `role` | TEXT | NN, CHECK in (`editor`, `viewer`) | |
 | `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+
+Index: `idx_memberships_org(org_id)`.
 
 ### `sessions`
-Cookie-backed user sessions.
+Cookie-backed user sessions. `id` is the `harbour_session` cookie value.
+`user_id` (FK → users, CASCADE), `expires_at`, `created_at`. Index:
+`idx_sessions_user`.
 
+### `set_password_tokens`
+Single-use invite / reset links.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
-| `id` | TEXT | PK | the cookie value |
-| `user_id` | TEXT | NN, FK → `users(id)` (CASCADE) | |
-| `expires_at` | INTEGER | NN | epoch seconds |
+| `id` | TEXT | PK | |
+| `token_hash` | TEXT | NN, U | sha256 of `base64url(randomBytes(32))` |
+| `user_id` | TEXT | NN, FK → `users` (CASCADE) | |
+| `created_by_user_id` | TEXT | FK → `users` (SET NULL) | |
+| `expires_at` | INTEGER | NN | 24h TTL |
+| `consumed_at` | INTEGER | | single-use; consumed atomically in a txn |
 | `created_at` | INTEGER | NN | |
 
-Index: `idx_sessions_user(user_id)`.
+Index: `idx_set_password_tokens_hash`.
 
-## Agents and jobs
+### `admin_api_keys`
+Bearer keys that resolve to the **creator's** user identity.
+`id`, `name`, `api_key_hash` (NN, U — sha256), `created_by_user_id` (NN, FK →
+users CASCADE), `last_used_at`, timestamps.
+
+## Hierarchy
+
+### `projects`
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | |
+| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
+| `name` | TEXT | NN | |
+| `slug` | TEXT | NN | unique per org; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
+| `archived_at` | INTEGER | | soft-delete (normal path); hard delete is the admin escape hatch |
+| `created_at` / `updated_at` | INTEGER | NN | |
+
+Indexes: `idx_projects_org`, `idx_projects_org_slug(org_id, slug)` (UNIQUE).
+
+## Operational entities
 
 ### `agents`
-Top-level entity. Each agent has zero-or-many jobs and one API key.
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | |
+| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
+| `name` | TEXT | NN | |
+| `slug` | TEXT | NN | unique per project; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
+| `description` | TEXT | | |
+| `cli` | TEXT | | `claude` / `codex` / `gemini` — required by the create API (every agent is CLI-driven) |
+| `model` / `thinking` | TEXT | | default model + effort override |
+| `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
+| `eager` | INTEGER | NN, default 0 | legacy/no-op — the pool drains all due work each cycle regardless (kept for compatibility) |
+| `placement` | TEXT | NN, default `'local'` | routes this agent's runs to a runner tier/label (denormalized onto `runs.placement` at creation) |
+| `created_at` / `updated_at` | INTEGER | NN | |
 
+There is no stored `type` column — every agent is CLI-driven and claimed by the
+unified runner (routed via `placement` + the `runners` registry, not per-agent
+config). Indexes: `idx_agents_project`,
+`idx_agents_project_slug(project_id, slug)` (UNIQUE).
+
+### `runners`
+The **instance-level runner registry** — one row per runner (the auto-provisioned
+local pool plus any remote runners). Org-agnostic on purpose: execution is
+org-agnostic; tenancy only shapes what users see. Replaces the file-based agent
+runner config (`runners.json`) and the per-org `workflow_runners` table.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
 | `name` | TEXT | NN | |
-| `description` | TEXT | | |
-| `api_key_hash` | TEXT | NN | sha256 hex of the bearer key |
-| `last_polled_at` | INTEGER | | updated by `/api/agents/:id/next` |
-| `type` | TEXT | NN, default `'external'` | `'external'` or `'harbour'` |
-| `cli` | TEXT | | `'claude'` / `'codex'` / `'gemini'` (harbour agents) |
-| `model` | TEXT | | default model override (harbour agents) |
-| `thinking` | TEXT | | default thinking/effort override |
-| `remote` | INTEGER | NN, default 0 | runner lives off-host |
-| `eager` | INTEGER | NN, default 0 | drain queue back-to-back instead of waiting 60s between runs (harbour agents only) |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+| `token_hash` | TEXT | NN, U | sha256 of the bearer token (`hbrn_…`) |
+| `tier` | TEXT | NN, CHECK in (`local`, `remote`) | local = trusted/unscoped; remote = scoped |
+| `labels` | TEXT | NN, default `'[]'` | JSON: placement labels this token is **authorized** to serve |
+| `capabilities` | TEXT | | JSON `{kinds,clis,labels}` — last-**advertised** host capabilities (health/display) |
+| `scope` | TEXT | | JSON `{orgId?,agentId?}` or NULL (unscoped — local tier) |
+| `last_polled_at` | INTEGER | | updated on every claim/peek; drives the health surface |
+| `created_at` / `updated_at` | INTEGER | NN | |
+
+Index: `idx_runners_token(token_hash)` (UNIQUE).
 
 ### `jobs`
-Static configuration for recurring work.
-
+Static configuration for recurring work (agent or workflow).
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | **nullable** for workflow-only jobs |
-| `name` | TEXT | NN | |
-| `description` | TEXT | | |
-| `instructions` | TEXT | | the prompt body for agent jobs |
+| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
+| `project_id` | TEXT | FK → `projects` (CASCADE) | **NULL = org-level (workflow jobs only)** |
+| `kind` | TEXT | NN, default `agent`, CHECK in (`agent`, `workflow`) | |
+| `agent_id` | TEXT | FK → `agents` (CASCADE) | set for agent jobs, **NULL for workflow jobs** |
+| `name` / `description` / `instructions` | TEXT | | `instructions` is the agent prompt body |
 | `schedule` | TEXT | NN | normalized JSON: `{"every":N}` or `{"days":[0-6],"time":"HH:MM"}` |
-| `workflow_command` | TEXT | | shell command (gate or full job) |
-| `workflow_only` | INTEGER | NN, default 0 | 1 = no agent involved |
+| `prerun_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the prerun gist; NULL exactly when `prerun_script` is |
+| `prerun_script` | TEXT | | agent gate body: exit 0 continues, 77 skips, other fails |
+| `postrun_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the postrun gist; NULL exactly when `postrun_script` is |
+| `postrun_script` | TEXT | | post-agent hook body, runs after status finalization |
+| `postrun_gates` | INTEGER | NN, default 0 | 0 = informational (never changes status); 1 = enforcing (nonzero overrides `done`→`failed`) |
+| `workflow_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the workflow gist; NULL exactly when `workflow_script` is |
+| `workflow_script` | TEXT | | workflow job command body (no agent / LLM) |
+| `placement` | TEXT | NN, default `'local'` | workflow jobs: routes runs to a runner tier/label (agent jobs inherit from their agent) |
 | `timeout_minutes` | INTEGER | NN, default 30 | |
-| `one_off` | INTEGER | NN, default 0 | 1 = deactivate after first run |
+| `model` / `thinking` | TEXT | | per-job override |
+| `title_format` | TEXT | | hint for how agents name runs |
 | `active` | INTEGER | NN, default 1 | |
-| `last_run_at` | INTEGER | | |
-| `next_run_at` | INTEGER | | populated by schedule advance |
-| `model` | TEXT | | per-job override (harbour agents) |
-| `thinking` | TEXT | | per-job override |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+| `last_run_at` / `next_run_at` | INTEGER | | schedule advance |
+| `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_jobs_agent(agent_id)`, `idx_jobs_schedule(agent_id, active, next_run_at)`.
+Table CHECK: `kind != 'agent' OR project_id IS NOT NULL` — agent jobs can never
+be org-level.
+
+Indexes: `idx_jobs_org`, `idx_jobs_project`, `idx_jobs_agent`,
+`idx_jobs_schedule(kind, agent_id, active, next_run_at)`.
 
 ### `runs`
 A single execution of a job.
-
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `job_id` | TEXT | NN, FK → `jobs(id)` (CASCADE) | |
-| `agent_id` | TEXT | FK → `agents(id)` (CASCADE) | nullable for agentless workflow runs |
-| `status` | TEXT | NN, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
-| `scheduled_for` | INTEGER | | for one-off runs |
-| `claimed_at` | INTEGER | | set when status flips to `running` |
+| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | denormalized from the job |
+| `project_id` | TEXT | FK → `projects` (CASCADE) | denormalized from the job; **NULL = org-level job's run** |
+| `job_id` | TEXT | NN, FK → `jobs` (CASCADE) | |
+| `agent_id` | TEXT | FK → `agents` (SET NULL) | NULL for workflow runs |
+| `status` | TEXT | NN, default `running`, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
+| `title` | TEXT | | short run title (agent-settable) |
+| `placement` | TEXT | NN, default `'local'` | denormalized from the agent (agent runs) or job (workflow runs) at creation; keeps the claim query flat |
+| `claimed_by` | TEXT | FK → `runners` (SET NULL) | which runner claimed this run |
+| `exec_token_hash` | TEXT | | sha256 of the per-run executor token (`hbx_…`); minted at claim, the CLI's run-scoped callback credential |
+| `scheduled_for` | INTEGER | | one-off / triggered runs |
+| `claimed_at` | INTEGER | | set when flipped to `running` |
 | `completed_at` | INTEGER | | set on terminal status |
 | `kill_requested_at` | INTEGER | | dashboard kill trigger |
-| `extra_instructions` | TEXT | | trigger-time override appended to prompt |
-| `session_id` | TEXT | | CLI session ID for resume |
-| `session_cwd` | TEXT | | working dir captured for resume |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+| `extra_instructions` | TEXT | | trigger-time append |
+| `session_id` / `session_cwd` | TEXT | | CLI session + cwd for resume |
+| `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_runs_job(job_id)`, `idx_runs_agent(agent_id)`, `idx_runs_status(status)`.
+Indexes: `idx_runs_org`, `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
+`idx_runs_status`, `idx_runs_claimed_by`.
 
 ### `run_activity`
-Ordered log of human/agent/system messages on a run.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `run_id` | TEXT | NN, FK → `runs(id)` (CASCADE) | |
-| `author_type` | TEXT | NN, CHECK in (`agent`, `user`, `system`) | |
-| `author_id` | TEXT | | |
-| `author_name` | TEXT | | |
-| `content` | TEXT | | |
-| `created_at` | INTEGER | NN | |
-
-Indexes: `idx_run_activity_run(run_id)`, `idx_run_activity_run_time(run_id, created_at)`.
+Ordered message log. On workflow runs this is runner output only
+(`workflow`/`system` authors), never a conversation.
+`id`, `run_id`, `author_type` (NN, CHECK in `agent`/`user`/`system`/`workflow`),
+`author_id`, `author_name`, `content`, `created_at`. Indexes:
+`idx_run_activity_run`, `idx_run_activity_run_time(run_id, created_at)`.
 
 ### `run_output`
-Streamed CLI events captured during execution. Backs the SSE stream at `/api/runs/:id/output/stream`.
+Streamed CLI events; backs the SSE stream.
+`id` (INTEGER PK AUTOINCREMENT — the `?after=N` cursor), `run_id`, `event_type`
+(`text_delta`/`tool_start`/`tool_end`/`thinking`/`info`/`error`/`result`),
+`content`, `tool_name`, `created_at`. Index: `idx_run_output_run`.
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | INTEGER | PK AUTOINCREMENT | monotonic; the SSE `?after=N` cursor |
-| `run_id` | TEXT | NN, FK → `runs(id)` (CASCADE) | |
-| `event_type` | TEXT | NN | `text_delta \| tool_start \| tool_end \| thinking \| info \| error \| result` |
-| `content` | TEXT | | |
-| `tool_name` | TEXT | | populated on `tool_*` events |
-| `created_at` | INTEGER | NN | |
+### `run_attachments`
+Files or embed URLs on a run.
+`id`, `run_id`, `activity_id` (FK → run_activity, SET NULL), `kind` (CHECK
+`file`/`embed`), `filename`, `storage_path` (relative to `uploadsDir()`),
+`mime_type`, `size_bytes`, `url`, `embed_provider`, `title`,
+`uploaded_by_type` (CHECK `user`/`agent`), `uploaded_by_id`, `uploaded_by_name`,
+`created_at`. Indexes: `idx_run_attachments_run`, `idx_run_attachments_activity`.
 
-Index: `idx_run_output_run(run_id)`.
+### `attachment_processing`
+ffmpeg + whisper state for a video attachment. `attachment_id` is **UNIQUE**
+(one row per attachment; re-process deletes the old row first).
+`status` CHECK in (`queued`, `processing`, `done`, `failed`); `transcript_path`,
+`screenshots_dir`, `screenshot_count`, `screenshot_interval`,
+`duration_seconds` (REAL), `error`, `started_at`, `completed_at`. Indexes:
+`idx_attachment_processing_attachment`, `idx_attachment_processing_run`.
 
-## Shared context
+## Resources (dual-tier)
+
+Each carries `org_id` (NN) and a NULLABLE `project_id` (`NULL` = org-level).
 
 ### `docs`
-Top-level markdown documents. Linked to jobs via `job_docs`; pinned docs auto-attach to all new jobs.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `title` | TEXT | NN | |
-| `pinned` | INTEGER | NN, default 0 | auto-attach toggle |
-| `created_by_type` | TEXT | CHECK in (`user`, `agent`) | |
-| `created_by_id` | TEXT | | |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+`org_id`, `project_id`, `title`, `pinned` (default 0), `created_by_type`
+(CHECK `user`/`agent`), `created_by_id`, timestamps. Index:
+`idx_docs_org_project(org_id, project_id)`.
 
 ### `doc_revisions`
-Append-only history. Newest row's `content` is the live body; older rows are diffable via `/api/docs/:id/revisions`.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `doc_id` | TEXT | NN, FK → `docs(id)` (CASCADE) | |
-| `content` | TEXT | NN | full markdown snapshot |
-| `author_type` | TEXT | CHECK in (`user`, `agent`) | |
-| `author_id` | TEXT | | |
-| `created_at` | INTEGER | NN | |
-
-Index: `idx_doc_revisions_doc(doc_id)`.
-
-### `databases`
-Named registry of agent-managed SQLite tables (the underlying tables are siblings in the same DB).
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `name` | TEXT | NN, U | display name |
-| `table_name` | TEXT | NN, U | actual SQLite identifier |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
-
-### `database_migrations`
-Per-database DDL history (column additions, etc.).
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `database_id` | TEXT | NN, FK → `databases(id)` (CASCADE) | |
-| `version` | INTEGER | NN | monotonic |
-| `description` | TEXT | | |
-| `sql` | TEXT | NN | the executed DDL |
-| `created_at` | INTEGER | NN | |
-
-Index: `idx_database_migrations_db(database_id)`.
+Append-only history; newest row's `content` is the live body.
+`doc_id` (FK → docs CASCADE), `content` (NN), `author_type`, `author_id`,
+`created_at`. Index: `idx_doc_revisions_doc`.
 
 ### `env_vars`
-Encrypted key-value pairs (AES-256-GCM via `~/.harbour/encryption.key`).
+Encrypted secrets (labeled "Secrets" in the UI).
+`org_id`, `project_id`, `name`, `encrypted_value` (NN — AES-256-GCM as
+`hex(iv):hex(tag):hex(ciphertext)`, 12-byte IV, 16-byte tag), `pinned`,
+timestamps. **Name uniqueness is enforced in the query layer**, not by a DB
+constraint, so a project-level name can override an org-level one. Index:
+`idx_env_vars_org_project`.
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `name` | TEXT | NN, U | env variable name |
-| `encrypted_value` | TEXT | NN | `hex(iv):hex(tag):hex(ciphertext)` (12-byte IV, 16-byte tag) |
-| `pinned` | INTEGER | NN, default 0 | auto-attach toggle |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
+### `tables`
+Registry of agent-managed SQLite tables (the data tables are siblings in the
+same file). `org_id`, `project_id`, `name`, `table_name` (NN, **U** — globally
+unique physical identifier), `pinned` (INTEGER NN, default 0 — pinned tables
+are pre-selected for new jobs in the dashboard, parity with `docs`/`env_vars`). Index:
+`idx_tables_org_project`.
 
-The plaintext is decrypted lazily inside `getDecryptedEnvVarsForJob()` and only travels in agent `/next` payloads.
+### `table_migrations`
+Per-table DDL history. `table_id`, `version` (NN), `description`, `sql`
+(NN), `created_at`. Index: `idx_table_migrations_tbl`.
 
-### `settings`
-Tiny key-value store. Keys include `timezone`, `signup_enabled`, `recent_runs_limit`, `captain_cli`, `captain_model`, `captain_thinking`, `captain_cwd`, `video_auto_process`, `video_screenshot_interval`, `video_transcript_provider`, `video_openai_api_key`, `video_gemini_api_key`.
+## Job-linked junctions
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `key` | TEXT | PK | |
-| `value` | TEXT | NN | |
-
-## Junctions (linking tables)
-
-All composite PKs, all `ON DELETE CASCADE` on both sides.
+The **only** junction tables in v2. Composite PKs, `ON DELETE CASCADE` both
+sides. These attach a resource to a specific job (tier 3, on top of the org- and
+project-level tiers).
 
 | Table | A | B |
 |---|---|---|
 | `job_docs` | `job_id` → `jobs` | `doc_id` → `docs` |
-| `job_databases` | `job_id` → `jobs` | `database_id` → `databases` |
 | `job_env_vars` | `job_id` → `jobs` | `env_var_id` → `env_vars` |
-| `project_agents` | `project_id` → `projects` | `agent_id` → `agents` |
-| `project_jobs` | `project_id` → `projects` | `job_id` → `jobs` |
-| `project_docs` | `project_id` → `projects` | `doc_id` → `docs` |
-| `project_env_vars` | `project_id` → `projects` | `env_var_id` → `env_vars` |
-| `project_databases` | `project_id` → `projects` | `database_id` → `databases` |
+| `job_tables` | `job_id` → `jobs` | `table_id` → `tables` |
 
-## Attachments and processing
+## Settings
 
-### `run_attachments`
-Files uploaded or embed URLs attached to a run. Holds either a file (storage_path) or an embed (url + provider).
+### `settings`
+`key` (PK), `value` (NN). **True instance-global KV only** — e.g. Captain config
+and video-processing settings. Org-scoped config (like `timezone`) lives in
+`orgs.settings` JSON, not here. There is **no** `signup_enabled` key (no web
+signup).
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `run_id` | TEXT | NN, FK → `runs(id)` (CASCADE) | |
-| `activity_id` | TEXT | FK → `run_activity(id)` (SET NULL) | links attachment to the activity entry it landed with |
-| `kind` | TEXT | NN, CHECK in (`file`, `embed`) | |
-| `filename` | TEXT | | file kind |
-| `storage_path` | TEXT | | relative to `uploadsDir()` |
-| `mime_type` | TEXT | | |
-| `size_bytes` | INTEGER | | |
-| `url` | TEXT | | embed kind |
-| `embed_provider` | TEXT | | `youtube \| loom \| vimeo \| ...` |
-| `title` | TEXT | | |
-| `uploaded_by_type` | TEXT | CHECK in (`user`, `agent`) | |
-| `uploaded_by_id` | TEXT | | |
-| `uploaded_by_name` | TEXT | | |
-| `created_at` | INTEGER | NN | |
+## Captain (per-org)
 
-Indexes: `idx_run_attachments_run(run_id)`, `idx_run_attachments_activity(activity_id)`.
+In-browser CLI chat; a server-side process manager spawns a CLI tool and streams
+output over SSE.
 
-### `attachment_processing`
-Tracks ffmpeg+whisper processing state for video attachments.
+- **`captain_conversations`** — `org_id`, `user_id`, `title`, `cli` (NN),
+  `model`, `thinking`, `session_id`, `cwd` (overrides default `~/.harbour/captain/`).
+- **`captain_messages`** — `conversation_id`, `role` (CHECK `user`/`assistant`),
+  `content` (accumulates as the response streams).
+- **`captain_output`** — `id` AUTOINCREMENT (SSE cursor), `conversation_id`,
+  `message_id` (FK → captain_messages, nullable, ON DELETE CASCADE),
+  `event_type`, `content`, `tool_name`.
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `attachment_id` | TEXT | NN, U, FK → `run_attachments(id)` (CASCADE) | one row per attachment max |
-| `run_id` | TEXT | NN | denormalized for easy lookup |
-| `status` | TEXT | NN, CHECK in (`queued`, `processing`, `done`, `failed`) | |
-| `transcript_path` | TEXT | | relative to uploads dir |
-| `screenshots_dir` | TEXT | | relative to uploads dir |
-| `screenshot_count` | INTEGER | NN, default 0 | |
-| `screenshot_interval` | INTEGER | | seconds between frames |
-| `duration_seconds` | REAL | | |
-| `error` | TEXT | | populated when `status='failed'` |
-| `started_at` | INTEGER | | |
-| `completed_at` | INTEGER | | |
-| `created_at` | INTEGER | NN | |
-
-Indexes: `idx_attachment_processing_attachment`, `idx_attachment_processing_run`.
-
-## Captain
-
-In-browser CLI chat. Server-side process manager spawns a CLI tool, streams output back via SSE.
-
-### `captain_conversations`
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `title` | TEXT | NN | |
-| `cli` | TEXT | NN | `claude \| codex \| gemini` |
-| `model` | TEXT | | |
-| `thinking` | TEXT | | |
-| `session_id` | TEXT | | CLI session for continuity |
-| `cwd` | TEXT | | overrides default `~/.harbour/captain/` |
-| `user_id` | TEXT | NN, FK → `users(id)` (CASCADE) | |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
-
-Index: `idx_captain_conversations_user(user_id)`.
-
-### `captain_messages`
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `conversation_id` | TEXT | NN, FK → `captain_conversations(id)` (CASCADE) | |
-| `role` | TEXT | NN, CHECK in (`user`, `assistant`) | |
-| `content` | TEXT | NN, default `''` | accumulates as the response streams |
-| `created_at` | INTEGER | NN | |
-
-Index: `idx_captain_messages_conversation`.
-
-### `captain_output`
-Per-message stream events (text deltas, tool calls).
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | INTEGER | PK AUTOINCREMENT | SSE cursor |
-| `conversation_id` | TEXT | NN, FK → `captain_conversations(id)` (CASCADE) | |
-| `message_id` | TEXT | FK → `captain_messages(id)` (CASCADE) | nullable |
-| `event_type` | TEXT | NN | same vocabulary as `run_output` |
-| `content` | TEXT | | |
-| `tool_name` | TEXT | | |
-| `created_at` | INTEGER | NN | |
-
-Index: `idx_captain_output_conversation`.
-
-## Admin
-
-### `admin_api_keys`
-Bearer keys that resolve to the **creator's** user identity for API auth.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `name` | TEXT | NN | |
-| `api_key_hash` | TEXT | NN, U | sha256 hex |
-| `created_by_user_id` | TEXT | NN, FK → `users(id)` (CASCADE) | |
-| `last_used_at` | INTEGER | | |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
-
-## Projects
-
-### `projects`
-Optional view-layer grouping. Entities don't know about projects; the five `project_*` junctions hold the references.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `name` | TEXT | NN | |
-| `created_at` | INTEGER | NN | |
-| `updated_at` | INTEGER | NN | |
-
-Junction tables: see [Junctions](#junctions-linking-tables). Auto-link behavior — adding a job to a project also links its agent, docs, env vars, and databases — lives in `src/lib/db/projects.ts` (`linkJobToProject`).
-
-## FK graph
-
-```
-users ─────── sessions
-   ├──── admin_api_keys
-   └──── captain_conversations ──── captain_messages ──── captain_output
-
-agents ──── jobs ──── runs ──── run_activity ──── run_attachments (via activity_id)
-                       │           │                ↑
-                       │           └── run_output   │
-                       │                            │
-                       └────────── run_attachments ─┘
-
-docs ─── doc_revisions          databases ─── database_migrations
-   │                                │
-   └── job_docs ─── jobs            └── job_databases ─── jobs
-
-env_vars ─── job_env_vars ─── jobs
-
-projects
-   ├── project_agents ──── agents
-   ├── project_jobs ────── jobs
-   ├── project_docs ────── docs
-   ├── project_env_vars ── env_vars
-   └── project_databases ─ databases
-
-attachment_processing ─ run_attachments
-```
+Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
+`idx_captain_messages_conversation`, `idx_captain_output_conversation`.
 
 ## Notable invariants
 
-- **Polling-ladder atomicity.** The claim sequence inside `getAgentNextRun` and `getNextWorkflowRun` runs as one `db.transaction`.
-- **One-of-a-kind processing record.** `attachment_processing.attachment_id` is `UNIQUE` — a re-process deletes the old row first.
-- **Agentless jobs.** When `workflow_only=1`, `agent_id` may be NULL on both `jobs` and `runs`. Picked up by `/api/workflows/next`.
-- **Env var encryption.** Plaintext never lands in the DB. The encryption key is read from `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
-- **Schedule normalization.** Non-JSON legacy schedule strings are coerced to canonical JSON during initialization (`src/lib/db/schema.ts:441-451`).
+- **Polling-ladder atomicity.** `claimNextRun` / `peekClaim`
+  (`src/lib/db/runs.ts`, behind `POST /api/runner/claim`) run the whole
+  select-and-claim in one **IMMEDIATE** transaction, so concurrent claims
+  serialize on the single SQLite writer. The guarded claim UPDATEs
+  (`AND status = 'scheduled'/'pending'`) plus a lock-unit check — `agent_id`
+  for agent runs, `job_id` for workflow runs, nothing in flight
+  (`running`/`waiting`/`pending`) — make a lost race a no-op, never a
+  double-claim.
+- **Dual-tier resolution.** For `docs`/`env_vars`/`tables`, `project_id IS
+  NULL` means org-level; the query layer resolves project-over-org on name
+  collisions.
+- **Workflows.** `jobs.kind = 'workflow'` ⇒ `agent_id` is NULL on both the job
+  and its runs; claimed via `POST /api/runner/claim` like any other run (a
+  runner advertising the `workflow` kind), no separate poll endpoint.
+  Workflow jobs may be org-level (`project_id` NULL — scope fixed at creation,
+  org-level resources only); agent jobs never are (table CHECK).
+- **Env-var encryption.** Plaintext never lands in the DB; the key is read from
+  `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
+- **`run_activity.author_type`** allows `workflow`; `ensureRunActivityAuthorTypes`
+  rebuilds the table once for DBs created before that value was permitted.
 
-## Migrations
+## Schema initialization
 
-`schema.ts` follows three sections in order, all triggered by a single `initializeSchema(db)` call from `getDb()` on first use:
-
-1. **`db.exec(...)` of `CREATE TABLE IF NOT EXISTS ...`** — idempotent table and index creation. This block describes the **target shape**; running it on an empty DB creates everything from scratch.
-2. **Procedural ALTER blocks** — additive column adds (e.g. `agents.cli`, `jobs.workflow_only`) and CHECK-constraint changes (rebuilding `runs` to add `'pending'`, `'scheduled'`, `'killed'` over time). Each block guards itself with a `PRAGMA table_info` lookup or `sqlite_master.sql LIKE` test, so re-running is a no-op.
-3. **Backfills** — ensure encryption key is initialized, ensure `timezone` and `signup_enabled` settings exist.
-
-There is no separate migrations folder; the function above is the only migration runner. New schema changes go in as additional ALTER blocks — pattern: read `PRAGMA table_info`, branch on the column's existence, run the ALTER inside the same `initializeSchema` pass.
+A single `initializeSchema(db)` call from `getDb()` on first use runs the
+`CREATE TABLE IF NOT EXISTS` block (the target shape), the one-time
+`run_activity` author-type rebuild, and an encryption-key backfill. There is no
+migrations folder; the schema file **is** the schema — change the target shape
+directly and start from a fresh DB.

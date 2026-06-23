@@ -1,41 +1,33 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns, createOneOffRun } from "@/lib/db/queries";
+import { withOrgAuth } from "@/lib/auth";
+import {
+  listRecentRuns,
+  listRunningRuns,
+  listScheduledRuns,
+  listWaitingRuns,
+} from "@/lib/db/queries";
 import { getRecentRunsLimit } from "@/lib/db/settings";
 
-export const GET = withAuth(async (req) => {
-  const filter = req.nextUrl.searchParams.get("filter");
-  const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  if (filter === "waiting") {
-    return NextResponse.json(listWaitingRuns(projectId));
-  }
-  const limit = getRecentRunsLimit();
-  if (filter === "recent") {
-    return NextResponse.json(listRecentRuns(limit, projectId));
-  }
+// NOTE: the run list queries filter by projectId only (Phase 1). Org scoping is
+// enforced by withOrgAuth; full org-level run composition lands in a later phase.
+export const GET = withOrgAuth(
+  async (req, auth) => {
+    const filter = req.nextUrl.searchParams.get("filter");
+    const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
+    if (filter === "waiting") {
+      return NextResponse.json(listWaitingRuns(auth.orgId, projectId));
+    }
+    const limit = getRecentRunsLimit();
+    if (filter === "recent") {
+      return NextResponse.json(listRecentRuns(auth.orgId, limit, projectId));
+    }
 
-  // Default: return all sections
-  return NextResponse.json({
-    scheduled: listScheduledRuns(projectId),
-    running: listRunningRuns(projectId),
-    waiting: listWaitingRuns(projectId),
-    recent: listRecentRuns(limit, projectId),
-  });
-});
-
-export const POST = withAuth(async (req) => {
-  const body = await req.json();
-  if (!body.agentId || !body.name) {
-    return NextResponse.json({ error: "agentId and name are required" }, { status: 400 });
-  }
-
-  const result = createOneOffRun(body.agentId, {
-    name: body.name,
-    instructions: body.instructions,
-    docIds: body.docIds,
-    envVarIds: body.envVarIds,
-    runAt: body.runAt,
-  });
-
-  return NextResponse.json(result, { status: 201 });
-});
+    return NextResponse.json({
+      scheduled: listScheduledRuns(auth.orgId, projectId),
+      running: listRunningRuns(auth.orgId, projectId),
+      waiting: listWaitingRuns(auth.orgId, projectId),
+      recent: listRecentRuns(auth.orgId, limit, projectId),
+    });
+  },
+  { role: "viewer" },
+);

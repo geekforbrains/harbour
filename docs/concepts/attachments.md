@@ -26,7 +26,7 @@ There are two **kinds**:
 
 | Kind | Storage | What you see |
 |---|---|---|
-| `file` | Bytes on disk under `~/.harbour/uploads/runs/<run-id>/<uuid>__<filename>`. Row carries `filename`, `storage_path` (relative to the uploads dir), `mime_type`, `size_bytes`. | Inline preview for images/video, a download link for everything else. |
+| `file` | Bytes on disk under `~/.harbour/uploads/runs/<run-id>/<uuid>__<filename>`. Row carries `filename`, `storage_path` (relative to the uploads dir), `mime_type`, `size_bytes`. | Inline preview for types on a strict allowlist (raster images, PDF, plain text, common audio/video); everything else — including SVG and HTML, which can carry scripts — is forced to download. |
 | `embed` | Just a URL. Provider auto-detected — `youtube`, `loom`, `vimeo`, or `generic`. Row carries `url` and `embed_provider`. | An iframe for the three known providers, a plain link for `generic`. |
 
 A worked example: the agent finishes a run, uploads a Loom recording of the output. `POST /api/runs/<run-id>/attachments` with `Content-Type: application/json` and body `{"url": "https://loom.com/..."}`. Provider gets detected as `loom`, an embed row is created, the dashboard renders it as a Loom iframe inside the run's attachment panel.
@@ -78,7 +78,7 @@ For embeds: a plain `fetch` POST with JSON body.
 
 ## Auth
 
-The agent that owns the run (via `requireAgentOwnership`) can upload, as can any signed-in dashboard user. This matches the broader model: agents only manipulate runs they're actively working on; the dashboard user is privileged.
+Attachment routes use `withRunExecutorOrUser`: the run's per-run exec token — bound to exactly that run, so an executor can't reach another run's attachments — or any user with the right role in the run's org acting from the dashboard (reads need `viewer`, uploads/deletes need `editor`). See the [auth model](../reference/architecture.md#auth-model).
 
 ## Endpoints
 
@@ -91,7 +91,7 @@ GET    /api/runs/:id/attachments/:aid/file      — download a file attachment
 
 ## Video processing pipeline
 
-Video files attached to runs can be auto-processed into a transcript + screenshot storyboard so an agent gets a usable summary in `/next` instead of a multi-megabyte binary.
+Video files attached to runs can be auto-processed into a transcript + screenshot storyboard so an agent gets a usable summary in the run payload instead of a multi-megabyte binary.
 
 It's opt-in: `video_auto_process` setting must be `"true"`. When enabled, every uploaded file whose mime type starts with `video/` (or matches a known video extension) kicks off `processVideoAttachment(attachmentId, runId)` fire-and-forget.
 
@@ -111,7 +111,7 @@ The pipeline:
 5. **Storyboard** assembly — interleaved `[Screenshot N — MM:SS — <url>]` markers with the matching transcript snippet for each window.
 6. Status flips to `done`. Transcript path and screenshot count get written back to the row.
 
-When an agent polls `/next`, the route enriches each video attachment with a `processing` block — status, screenshot URL prefix, duration, and an inline transcript or storyboard capped at `TRANSCRIPT_CAP` (5000 chars). Anything larger needs a separate fetch via the screenshots/transcript endpoints.
+When a runner claims the run, the payload builder enriches each video attachment with a `processing` block — status, screenshot URL prefix, duration, and an inline transcript or storyboard capped at `TRANSCRIPT_CAP` (5000 chars). Anything larger needs a separate fetch via the screenshots/transcript endpoints.
 
 If `ffmpeg` isn't on the PATH, the pipeline records a system activity message on the run ("Video processing skipped — ffmpeg not found") and exits cleanly. The video remains accessible as the original file.
 
@@ -124,5 +124,5 @@ If you're hunting in code:
 - `src/lib/upload-client.ts` — `uploadFileToRun`, `createEmbedAttachment`, `deleteAttachment`, `attachmentsUrlFor`.
 - `src/lib/attachments-serialize.ts` — `SerializedAttachment` and how the file URL is built.
 - `src/lib/paths.ts` — `runUploadsDir`, `maxUploadMb` (default 500), `processedDir`.
-- `src/lib/video-processing.ts` — the ffprobe/ffmpeg/whisper pipeline, storyboard generation, `readStoryboard`/`readTranscript` for `/next` injection.
+- `src/lib/video-processing.ts` — the ffprobe/ffmpeg/whisper pipeline, storyboard generation, `readStoryboard`/`readTranscript` for run-payload injection.
 - `src/lib/db/schema.ts` — the `run_attachments` and `attachment_processing` tables.

@@ -1,20 +1,28 @@
-import { spawn, execSync } from "child_process";
-import path from "path";
-import os from "os";
-import fs from "fs";
-import crypto from "crypto";
+import { execSync, spawn } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-// Cache resolved binary paths
+// Cache resolved binary paths. A name resolves to its absolute path, or to
+// null when it isn't on PATH — there is NO bare-name fallback, so
+// detectCapabilities advertises only CLIs the runner can actually spawn (a
+// runner that advertised a missing CLI would claim work it then can't run).
 const binaryPathCache = {};
-function resolveBinary(name) {
-  if (!binaryPathCache[name]) {
+export function resolveBinary(name) {
+  if (!(name in binaryPathCache)) {
     try {
       binaryPathCache[name] = execSync(`which ${name}`, { encoding: "utf-8" }).trim();
     } catch {
-      binaryPathCache[name] = name; // fallback to bare name
+      binaryPathCache[name] = null; // not on PATH — do not advertise or spawn it
     }
   }
   return binaryPathCache[name];
+}
+
+/** Clear the resolved-binary cache. For tests that manipulate process.env.PATH. */
+export function resetBinaryCache() {
+  for (const key of Object.keys(binaryPathCache)) delete binaryPathCache[key];
 }
 
 // Normalized event types emitted by all providers:
@@ -32,18 +40,27 @@ function formatToolInput(toolName, inputJson) {
   try {
     const input = JSON.parse(inputJson);
     switch (toolName) {
-      case "Bash": return input.command || null;
-      case "Read": return input.file_path || null;
-      case "Write": return input.file_path || null;
-      case "Edit": return input.file_path || null;
-      case "Grep": return input.pattern || null;
-      case "Glob": return input.pattern || null;
-      case "Agent": return input.description || null;
-      case "WebSearch": return input.query || null;
-      case "WebFetch": return input.url || null;
+      case "Bash":
+        return input.command || null;
+      case "Read":
+        return input.file_path || null;
+      case "Write":
+        return input.file_path || null;
+      case "Edit":
+        return input.file_path || null;
+      case "Grep":
+        return input.pattern || null;
+      case "Glob":
+        return input.pattern || null;
+      case "Agent":
+        return input.description || null;
+      case "WebSearch":
+        return input.query || null;
+      case "WebFetch":
+        return input.url || null;
       default: {
         const str = JSON.stringify(input);
-        return str.length > 200 ? str.slice(0, 200) + "..." : str;
+        return str.length > 200 ? `${str.slice(0, 200)}...` : str;
       }
     }
   } catch {
@@ -55,13 +72,23 @@ function formatToolInput(toolName, inputJson) {
 
 const PROVIDERS = {
   claude: {
+    // Resume capability: the finalize turn (issue #34) resumes the same CLI
+    // session via buildCommand(sessionId, isNewSession=false). All shipped
+    // providers support it; the flag lets the runner pick resume vs a fresh
+    // finalize turn generically without provider-specific branching.
+    canResume: true,
+    // Levels the CLI's --effort flag accepts. Mirrors CLI_CONFIG in
+    // src/lib/cli-config.ts (two bundles, so duplicated by necessity);
+    // providers.test.ts locks the two together.
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
     generateSessionId() {
       return crypto.randomUUID();
     },
     buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
       const args = [
         "-p",
-        "--output-format", "stream-json",
+        "--output-format",
+        "stream-json",
         "--verbose",
         "--include-partial-messages",
       ];
@@ -128,7 +155,7 @@ const PROVIDERS = {
                 if (evt.delta?.type === "text_delta" && evt.delta.text) {
                   let text = evt.delta.text;
                   if (needsLeadingBreak) {
-                    text = "\n\n" + text;
+                    text = `\n\n${text}`;
                     needsLeadingBreak = false;
                   }
                   events.push({ event_type: "text_delta", content: text });
@@ -174,7 +201,10 @@ const PROVIDERS = {
                 if (block.type === "tool_result") {
                   events.push({
                     event_type: "tool_end",
-                    content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+                    content:
+                      typeof block.content === "string"
+                        ? block.content
+                        : JSON.stringify(block.content),
                     tool_name: null,
                   });
                 }
@@ -208,7 +238,9 @@ const PROVIDERS = {
             content = obj.result;
           }
           if (obj.session_id) sessionId = obj.session_id;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
       if (!content) content = stdout;
       return { content: content.trim(), sessionId };
@@ -216,6 +248,10 @@ const PROVIDERS = {
   },
 
   codex: {
+    canResume: true,
+    // Levels model_reasoning_effort accepts — kept in sync with CLI_CONFIG
+    // (see claude.thinkingLevels above).
+    thinkingLevels: ["low", "medium", "high", "xhigh"],
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
       // generic config override instead: -c model_reasoning_effort=<level>.
@@ -231,6 +267,26 @@ const PROVIDERS = {
       if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
+    },
+    // Codex emits each agent_message as a complete, distinct message (narration
+    // before tool calls, then a final summary) — unlike claude's token deltas.
+    // Joining them with "" runs sentences together; this stateful wrapper
+    // inserts a paragraph break before every message after the first.
+    createParser() {
+      let hasEmittedText = false;
+      const base = this;
+      return {
+        parseLine(line) {
+          const parsed = base.parseLine(line);
+          for (const evt of parsed.events || []) {
+            if (evt.event_type === "text_delta" && evt.content) {
+              if (hasEmittedText) evt.content = `\n\n${evt.content}`;
+              hasEmittedText = true;
+            }
+          }
+          return parsed;
+        },
+      };
     },
     parseLine(line) {
       try {
@@ -259,9 +315,10 @@ const PROVIDERS = {
           if (obj.item.type === "command_execution") {
             events.push({
               event_type: "tool_end",
-              content: obj.item.aggregated_output != null && obj.item.aggregated_output !== ""
-                ? obj.item.aggregated_output
-                : `exit ${obj.item.exit_code}`,
+              content:
+                obj.item.aggregated_output != null && obj.item.aggregated_output !== ""
+                  ? obj.item.aggregated_output
+                  : `exit ${obj.item.exit_code}`,
               tool_name: "shell",
             });
           }
@@ -270,7 +327,9 @@ const PROVIDERS = {
         if (obj.type === "turn.completed") {
           events.push({
             event_type: "result",
-            content: obj.usage ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out` : null,
+            content: obj.usage
+              ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out`
+              : null,
           });
         }
 
@@ -301,7 +360,7 @@ const PROVIDERS = {
               let text = "";
               for (const c of obj.item.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  text += (c.text || "") + "\n";
+                  text += `${c.text || ""}\n`;
                 }
               }
               if (text.trim()) lastMessage = text.trim();
@@ -314,13 +373,15 @@ const PROVIDERS = {
               let text = "";
               for (const c of obj.message.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  text += (c.text || "") + "\n";
+                  text += `${c.text || ""}\n`;
                 }
               }
               if (text.trim()) lastMessage = text.trim();
             }
           }
-        } catch { /* Not JSON line */ }
+        } catch {
+          /* Not JSON line */
+        }
       }
 
       if (!lastMessage.trim()) lastMessage = stdout;
@@ -329,6 +390,10 @@ const PROVIDERS = {
   },
 
   gemini: {
+    canResume: true,
+    // Gemini takes no thinking level at all (see buildCommand) — kept in sync
+    // with CLI_CONFIG (see claude.thinkingLevels above).
+    thinkingLevels: [],
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
       // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
       // by model selection) and requires --skip-trust for headless mode in
@@ -374,7 +439,9 @@ const PROVIDERS = {
           const stats = obj.stats;
           events.push({
             event_type: "result",
-            content: stats ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms` : null,
+            content: stats
+              ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms`
+              : null,
           });
         }
 
@@ -404,7 +471,9 @@ const PROVIDERS = {
           if (obj.type === "message" && obj.role === "assistant" && obj.content) {
             content += obj.content;
           }
-        } catch { /* Not JSON — skip stderr noise */ }
+        } catch {
+          /* Not JSON — skip stderr noise */
+        }
       }
 
       if (!content.trim()) content = stdout;
@@ -419,9 +488,88 @@ export function getProvider(cli) {
   return provider;
 }
 
-export function ensureWorkingDir(agentName) {
+/** The CLI providers this runtime knows how to drive. */
+export const KNOWN_CLIS = Object.keys(PROVIDERS);
+
+/**
+ * Detect what this host can execute, advertised on every claim (Runner Protocol).
+ *   clis   — installed CLIs (claude/codex/gemini) found on PATH.
+ *   kinds  — always "workflow" (shell gates need only bash/python/node); plus
+ *            "agent" when at least one CLI is present.
+ *   labels — placement labels this runner serves; default ["local"], overridable
+ *            via HARBOUR_RUNNER_LABELS (comma-separated) for a remote runner.
+ */
+export function detectCapabilities() {
+  const clis = KNOWN_CLIS.filter((cli) => !!resolveBinary(cli));
+  const kinds = clis.length > 0 ? ["agent", "workflow"] : ["workflow"];
+  const labels = (process.env.HARBOUR_RUNNER_LABELS || "local")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { kinds, clis, labels: labels.length > 0 ? labels : ["local"] };
+}
+
+/**
+ * Guard the resolved thinking level against the provider's accepted list
+ * (issue #39: `--effort off` failed every run at CLI launch). A level the
+ * CLI won't accept — written before API validation existed, or stranded by
+ * CLI version drift — is dropped so the run proceeds on the CLI default.
+ *
+ * Returns { thinking, dropped }: `dropped` carries the discarded value when
+ * it's worth warning about, i.e. only for CLIs that take a level at all
+ * (gemini ignores thinking entirely, so dropping a stale value is silent).
+ */
+export function sanitizeThinking(cli, thinking) {
+  if (!thinking) return { thinking: null, dropped: null };
+  const levels = PROVIDERS[cli]?.thinkingLevels || [];
+  if (levels.includes(thinking)) return { thinking, dropped: null };
+  return { thinking: null, dropped: levels.length > 0 ? thinking : null };
+}
+
+/**
+ * Resolve which cli/model/thinking a run should use. Harbour is the source of
+ * truth: the claim payload's agent block carries the agent's live config and is
+ * authoritative — including its nulls, so a model you cleared in the dashboard
+ * stays cleared. A per-job override always wins.
+ *
+ * Precedence: job override → agent block.
+ */
+export function resolveRunConfig(payload) {
+  const job = payload?.job || {};
+  const agent = payload?.agent ?? {};
+  return {
+    cli: agent.cli ?? null,
+    model: job.model || agent.model || null,
+    thinking: job.thinking || agent.thinking || null,
+  };
+}
+
+// What a single workspace path segment must look like. Exported so tests can
+// lock this against the server's slugify — every slug the server assigns must
+// pass this regex, or the runner will refuse the run.
+export const WORKSPACE_SEGMENT_RE = /^[a-z0-9-]+$/;
+
+/**
+ * Resolve (and create) a workspace directory from pre-slugged path segments:
+ * ensureWorkingDir(["acme", "website", "dev-agent"]) →
+ * ~/.harbour/workspaces/acme/website/dev-agent.
+ *
+ * Segments are validated, never transformed: re-slugifying runner-side could
+ * map two distinct server slugs onto one directory, silently reintroducing
+ * the same-name workspace collision the nested layout exists to eliminate.
+ * A segment that fails WORKSPACE_SEGMENT_RE is a hard error.
+ */
+export function ensureWorkingDir(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    throw new Error("No workspace path segments provided");
+  }
+  for (const segment of segments) {
+    if (typeof segment !== "string" || !WORKSPACE_SEGMENT_RE.test(segment)) {
+      throw new Error(`Invalid workspace path segment: ${JSON.stringify(segment)}`);
+    }
+  }
   const home = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
-  const dir = path.join(home, "workspaces", agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
+  const dir = path.join(home, "workspaces", ...segments);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -430,13 +578,32 @@ export function ensureWorkingDir(agentName) {
 
 /**
  * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
- * Returns { code, stdout, stderr, aborted } when the process exits.
+ * Returns { code, stdout, stderr, aborted, timedOut } when the process exits.
+ *
+ * Liveness is governed by a single INACTIVITY timer (issue #15): it is armed at
+ * spawn and reset on every chunk of output. If the process produces nothing for
+ * `inactivityTimeoutMs` (default 3 min) it is SIGTERM'd, then SIGKILL'd after
+ * `killGraceMs`, and `timedOut` is set. This catches both startup hangs (auth
+ * prompts, login waits) and mid-run stalls (a blocked API call that never
+ * returns), while a productive agent streaming JSON resets the timer
+ * continuously and is never killed at an arbitrary wallclock cap. The job's
+ * `timeout_minutes` is enforced separately, server-side, as a hard ceiling.
  *
  * Pass `signal` (an AbortSignal) to request a graceful kill: SIGTERM is sent
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
+ *
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} cwd
+ * @param {{ inactivityTimeoutMs?: number, killGraceMs?: number, onLine?: (line: string) => void, signal?: AbortSignal, extraEnv?: Record<string, string> }} [opts]
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
+export function runCliTool(
+  binary,
+  args,
+  cwd,
+  { inactivityTimeoutMs = 3 * 60 * 1000, killGraceMs = 3000, onLine, signal, extraEnv } = {},
+) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards, then layer
     // run-scoped env vars (decrypted Harbour env vars for this job) on top.
@@ -455,13 +622,14 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       if (fs.statSync(workspaceBin).isDirectory()) {
         env.PATH = `${workspaceBin}:${env.PATH || ""}`;
       }
-    } catch { /* no workspace bin/, ignore */ }
+    } catch {
+      /* no workspace bin/, ignore */
+    }
 
     const child = spawn(binary, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env,
-      timeout: timeoutMs,
     });
 
     // Close stdin immediately — CLI tools should not wait for interactive input
@@ -470,8 +638,8 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     let stdout = "";
     let stderr = "";
     let lineBuffer = "";
-    let gotOutput = false;
     let aborted = false;
+    let timedOut = false;
     let killFollowupTimer = null;
     let closeFired = false;
     let postExitTimer = null;
@@ -482,23 +650,40 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     // destroy them so the wrapper can resolve.
     const POST_EXIT_GRACE_MS = 2000;
 
-    // Kill the process if no stdout arrives within the startup window.
-    // Catches auth prompts, interactive login hangs, etc.
-    const startupTimer = setTimeout(() => {
-      if (!gotOutput) {
-        child.kill("SIGTERM");
-        // Give it a moment to exit, then force kill
-        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
-      }
-    }, startupTimeoutMs);
+    // Single inactivity timer (issue #15): armed at spawn, reset on every chunk
+    // of output. Replaces the old 30s startup timer + fixed wallclock spawn
+    // timeout. If the process is silent for inactivityTimeoutMs we SIGTERM it,
+    // then SIGKILL after killGraceMs in case it traps the signal. Silence at
+    // startup (auth prompt / login hang) and silence mid-run (a stalled API
+    // call) are the same failure mode — no output — so one timer covers both.
+    let inactivityTimer = null;
+    function armInactivity() {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+        setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }, killGraceMs);
+      }, inactivityTimeoutMs);
+    }
+    armInactivity();
 
     // Abort handler: SIGTERM → killGraceMs grace → SIGKILL
     function handleAbort() {
       if (aborted) return;
       aborted = true;
-      try { child.kill("SIGTERM"); } catch {}
+      try {
+        child.kill("SIGTERM");
+      } catch {}
       killFollowupTimer = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch {}
+        try {
+          child.kill("SIGKILL");
+        } catch {}
       }, killGraceMs);
     }
     if (signal) {
@@ -507,10 +692,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     }
 
     child.stdout.on("data", (data) => {
-      if (!gotOutput) {
-        gotOutput = true;
-        clearTimeout(startupTimer);
-      }
+      armInactivity(); // any output proves the process is alive — reset the clock
       const chunk = data.toString();
       stdout += chunk;
 
@@ -526,25 +708,43 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       }
     });
 
-    child.stderr.on("data", (data) => { stderr += data.toString(); });
+    child.stderr.on("data", (data) => {
+      armInactivity();
+      stderr += data.toString();
+    });
 
     child.on("error", (err) => {
-      clearTimeout(startupTimer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
       if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
+      if (err && err.code === "ENOENT") {
+        // The binary vanished between capability detection and spawn (or PATH
+        // differs). Point at the usual cause: a launchd/systemd service has its
+        // own fixed PATH, not the interactive shell's.
+        reject(
+          new Error(
+            `"${binary}" was not found on the runner's PATH — install it or add its directory to the service PATH (a service does not inherit your shell PATH).`,
+          ),
+        );
+        return;
+      }
       reject(err);
     });
     child.on("exit", () => {
       postExitTimer = setTimeout(() => {
         if (closeFired) return;
-        try { child.stdout?.destroy(); } catch {}
-        try { child.stderr?.destroy(); } catch {}
+        try {
+          child.stdout?.destroy();
+        } catch {}
+        try {
+          child.stderr?.destroy();
+        } catch {}
       }, POST_EXIT_GRACE_MS);
     });
     child.on("close", (code) => {
       closeFired = true;
-      clearTimeout(startupTimer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
       if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
@@ -552,7 +752,7 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       if (onLine && lineBuffer.trim()) {
         onLine(lineBuffer.trim());
       }
-      resolve({ code, stdout, stderr, aborted });
+      resolve({ code, stdout, stderr, aborted, timedOut });
     });
   });
 }

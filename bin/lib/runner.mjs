@@ -1,15 +1,22 @@
-import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
-import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
-import { spawn } from "child_process";
-import { mkdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { spawn } from "node:child_process";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadRunnerCredentials, loadSessions, saveSessions } from "./config.mjs";
+import {
+  detectCapabilities,
+  ensureWorkingDir,
+  getProvider,
+  resolveRunConfig,
+  runCliTool,
+  sanitizeThinking,
+} from "./providers.mjs";
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
     method,
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
   };
@@ -27,12 +34,36 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 // ~750ms; this catches long silent stretches.
 const KILL_POLL_INTERVAL_MS = 10_000;
 
-function buildApiPrompt(api, apiKey) {
-  const setTitleUrl = api.endpoints.set_title?.replace("PUT ", "") || "";
-  const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
-  const activityUrl = api.endpoints.post_activity.replace("POST ", "");
-  const uploadUrl = api.endpoints.upload_attachment?.replace("POST ", "") || "";
-  const guideUrl = api.endpoints.guide.replace("GET ", "");
+// Inactivity window for the agent CLI (issue #15): if the CLI produces no
+// output for this long, runCliTool SIGTERMs it. This is the ONLY runner-side
+// liveness limit — it catches startup hangs and mid-run stalls. The job's
+// `timeout_minutes` is a separate, server-side hard ceiling (reapStaleRuns),
+// not enforced here, so a productive long run is never killed at a wallclock
+// cap as long as it keeps streaming. Override via HARBOUR_CLI_INACTIVITY_MS
+// (used for tests and for tuning chatty/quiet models).
+const CLI_INACTIVITY_TIMEOUT_MS = Number(process.env.HARBOUR_CLI_INACTIVITY_MS) || 3 * 60 * 1000;
+
+// Strip the leading HTTP verb the claim payload's `api` block prefixes each
+// endpoint with ("PUT https://…" → "https://…").
+function stripVerb(endpoint) {
+  return (endpoint || "").replace(/^[A-Z]+ /, "");
+}
+
+/**
+ * The WORK prompt's API section. Note what is intentionally ABSENT: the old
+ * "You MUST set a final run status … or it will be marked as failed" mandate.
+ * That advice fell out of context on long runs, so runs finished statusless and
+ * got force-failed. Status is now guaranteed by execution — the harness drives a
+ * dedicated finalize turn (buildFinalizePrompt) after the work turn. We still
+ * document the status endpoint here because setting `waiting` mid-run (to hand
+ * off to a human) is a legitimate action the agent takes during the work itself.
+ */
+export function buildApiPrompt(api, apiKey) {
+  const setTitleUrl = stripVerb(api.endpoints.set_title);
+  const runStatusUrl = stripVerb(api.endpoints.update_status);
+  const activityUrl = stripVerb(api.endpoints.post_activity);
+  const uploadUrl = stripVerb(api.endpoints.upload_attachment);
+  const guideUrl = stripVerb(api.endpoints.guide);
 
   return `## Harbour API
 
@@ -41,17 +72,10 @@ Your output will be posted as a comment on this run. Write a clear, concise summ
 Before doing anything else, set a short title for this run (max 80 chars) so humans can identify it on the dashboard:
   curl -X PUT ${setTitleUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"title":"your short title"}'
 
-You MUST set a final run status when finished. If you don't, the run will be marked as failed.
 Use these curl commands with the provided API key:
 
-Set status to done (completed successfully):
-  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"done"}'
-
-Set status to waiting (you need human input — explain what you need in an activity message first):
+If you need human input to continue, set status to waiting (explain what you need in an activity message first):
   curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"waiting"}'
-
-Set status to failed (something went wrong):
-  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"failed"}'
 
 Post an activity message (visible on dashboard):
   curl -X POST ${activityUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"content":"your message"}'
@@ -64,6 +88,110 @@ Download an attachment file (use the url shown in the Attachments section):
 
 Full API spec (docs, databases, etc): ${guideUrl}
 `;
+}
+
+/** The valid finish set — a run cannot leave the runner without one of these. */
+export const TERMINAL_STATUSES = Object.freeze(["done", "waiting", "failed", "skipped"]);
+
+/** Cap on finalize attempts before we force `failed` as a backstop. */
+export const FINALIZE_MAX_ATTEMPTS = 3;
+
+/** True when `status` is a valid terminal/finish value. */
+export function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.includes(status);
+}
+
+/** Whether the finalize turn should run (i.e. the agent left no terminal status). */
+export function shouldRunFinalize(status) {
+  return !isTerminalStatus(status);
+}
+
+/**
+ * Decide how the finalize turn invokes the CLI:
+ *   - "resume" — resume the SAME session so the agent has full context of the
+ *     work it just did. Requires the provider to support resume AND a session id.
+ *   - "fresh"  — no resumable session (provider can't resume, or session id was
+ *     lost); send a fresh turn whose prompt carries the activity log as context.
+ * Resume is always same-provider (resume is provider-bound), so we never need to
+ * pick a different CLI.
+ *
+ * @param {{ canResume?: boolean }} provider
+ * @param {string|null} sessionId
+ * @returns {{ mode: 'resume'|'fresh' }}
+ */
+export function resolveFinalizeMode(provider, sessionId) {
+  if (provider?.canResume && sessionId) return { mode: "resume" };
+  return { mode: "fresh" };
+}
+
+/**
+ * The FINALIZE prompt: a tight, single-purpose turn whose only job is to set a
+ * valid terminal status. This is where the old work-prompt mandate now lives —
+ * but enforced by the harness re-checking status after the turn, not by the
+ * model remembering.
+ *
+ * @param {object} api
+ * @param {string} apiKey
+ * @param {object} opts
+ * @param {'resume'|'fresh'} opts.mode
+ * @param {string} [opts.activityContext] - the run's activity log, inlined ONLY
+ *   in fresh mode (a resumed session already has it).
+ */
+export function buildFinalizePrompt(api, apiKey, { mode = "resume", activityContext = "" } = {}) {
+  const runStatusUrl = stripVerb(api.endpoints.update_status);
+  const set = TERMINAL_STATUSES.join(", ");
+
+  let context = "";
+  if (mode === "fresh" && activityContext) {
+    context = `Here is the activity log of the work that was just done:\n\n${activityContext}\n\n`;
+  }
+
+  return `${context}You MUST set a final run status now. Review what you just did and set the run status to exactly one of {${set}} via the status endpoint:
+  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"<status>"}'
+
+Choose:
+  - done    — the task completed successfully
+  - waiting — you need human input to continue (explain what you need in an activity message first)
+  - failed  — something went wrong and the task could not be completed
+  - skipped — there was no work to do
+
+Do nothing else. Set the status and stop.
+`;
+}
+
+/**
+ * One step of the finalize loop, given the status re-checked AFTER a finalize
+ * turn and the attempt number (1-based). Pure so the loop's stop/continue/force
+ * logic is unit-testable apart from the CLI plumbing.
+ *
+ *   - terminal status reached → stop with that outcome (waiting is valid)
+ *   - non-terminal, attempts remain → continue
+ *   - non-terminal on the last attempt → force `failed` (backstop)
+ *
+ * @param {{ status: string, attempt: number }} args
+ * @returns {{ done: boolean, outcome?: string, forced: boolean }}
+ */
+export function finalizeStep({ status, attempt }) {
+  if (isTerminalStatus(status)) return { done: true, outcome: status, forced: false };
+  if (attempt >= FINALIZE_MAX_ATTEMPTS) return { done: true, outcome: "failed", forced: true };
+  return { done: false, forced: false };
+}
+
+/**
+ * Resolve the outcome when a kill lands during a CLI turn. A kill is MOOT when
+ * the run already reached a terminal status before SIGTERM took effect — the
+ * agent finished (or parked on `waiting`) first, so we respect that status
+ * rather than forcing `killed`. Forcing `killed` on top would be wrong and, for
+ * a terminal value, an illegal transition (e.g. done → killed is rejected by the
+ * status guard). Any non-terminal status (running/pending/none) is a real kill.
+ *
+ * Shared by both the work turn and the finalize turn so the rule lives once.
+ *
+ * @param {string|null|undefined} statusAtKill - status read back after the kill
+ * @returns {string} the terminal outcome to report
+ */
+export function resolveKillOutcome(statusAtKill) {
+  return isTerminalStatus(statusAtKill) ? statusAtKill : "killed";
 }
 
 function formatBytes(n) {
@@ -98,7 +226,7 @@ function renderAttachmentList(atts, indent = "") {
   return lines.join("\n");
 }
 
-function buildPrompt(payload, apiKey, isResume) {
+export function buildPrompt(payload, apiKey, isResume) {
   const apiPrompt = payload.api ? buildApiPrompt(payload.api, apiKey) : "";
   const allAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   // Group attachments by the activity entry they were linked to, so we can
@@ -120,7 +248,9 @@ function buildPrompt(payload, apiKey, isResume) {
       if (a.content) out.push(`[${a.author_type}] ${a.content}`);
       const linked = attsByActivity.get(a.id);
       if (linked?.length) {
-        out.push(`[${a.author_type}] attached ${linked.length} ${linked.length === 1 ? "attachment" : "attachments"}:`);
+        out.push(
+          `[${a.author_type}] attached ${linked.length} ${linked.length === 1 ? "attachment" : "attachments"}:`,
+        );
         out.push(renderAttachmentList(linked, "  "));
       }
       out.push("");
@@ -130,9 +260,11 @@ function buildPrompt(payload, apiKey, isResume) {
 
   if (isResume) {
     const activity = payload.run.activity || [];
-    const lastAgentIdx = activity.findLastIndex(a => a.author_type === "agent");
+    const lastAgentIdx = activity.findLastIndex((a) => a.author_type === "agent");
     const newEntries = lastAgentIdx >= 0 ? activity.slice(lastAgentIdx + 1) : activity;
-    const humanEntries = newEntries.filter(a => a.author_type === "user" || a.author_type === "system");
+    const humanEntries = newEntries.filter(
+      (a) => a.author_type === "user" || a.author_type === "system",
+    );
 
     let resumePrompt = `The human has responded to your previous work. Here is their message:\n\n${renderActivityBlock(humanEntries)}\n\n`;
 
@@ -163,16 +295,17 @@ function buildPrompt(payload, apiKey, isResume) {
     }
   }
 
-  if (payload.data && Object.keys(payload.data).length > 0) {
-    prompt += `## Reference Data\n\n`;
-    for (const [name, rows] of Object.entries(payload.data)) {
-      prompt += `### ${name}\n\n`;
-      if (rows.length > 0) {
-        prompt += `\`\`\`json\n${JSON.stringify(rows.slice(0, 20), null, 2)}\n\`\`\`\n\n`;
-      } else {
-        prompt += `(no rows)\n\n`;
-      }
+  // Tables attached to this job. Each is a read/write reference — only its id is
+  // given (no rows/columns inlined). The agent reads rows via `read_rows` and
+  // writes via `insert_rows`/update/delete, all targeted by the table id (see the
+  // API section). Without this block the agent has no way to learn its table ids:
+  // the list endpoint is org-scoped and rejects the run's exec token.
+  if (payload.tables && Object.keys(payload.tables).length > 0) {
+    prompt += `## Tables\n\nStructured SQLite tables attached to this job, keyed by name. Use the \`id\` shown here to read rows (\`read_rows\`: GET \`.../api/tables/<id>/rows\`) and write them (\`insert_rows\`: POST, plus PUT/DELETE \`.../rows/<_id>\`) — see the Harbour API section for the full URLs and auth. Don't open the database file directly.\n\n`;
+    for (const [name, info] of Object.entries(payload.tables)) {
+      prompt += `- \`${name}\` — id: \`${info?.id ?? ""}\`\n`;
     }
+    prompt += "\n";
   }
 
   const activity = payload.run.activity || [];
@@ -186,15 +319,14 @@ function buildPrompt(payload, apiKey, isResume) {
   }
 
   if (payload.env && Object.keys(payload.env).length > 0) {
-    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run. Use them when making API calls or authenticating with services.\n\n`;
-    for (const [key, value] of Object.entries(payload.env)) {
-      prompt += `- \`${key}\`: \`${value}\`\n`;
+    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run as real environment variables. Read each by name from your environment (e.g. \`$KEY\` or \`printenv KEY\`) — values are not printed here. Use them when making API calls or authenticating with services.\n\n`;
+    for (const key of Object.keys(payload.env)) {
+      prompt += `- \`${key}\`\n`;
     }
     prompt += "\n";
   }
 
-  // Workflow output is appended by the runner after executing the workflow command
-  // (see runSingleAgent — workflows are run as shell processes, not by the LLM)
+  // Prerun output is appended by the runner after executing the prerun command.
 
   prompt += apiPrompt;
 
@@ -202,19 +334,85 @@ function buildPrompt(payload, apiKey, isResume) {
 }
 
 /**
- * Run a workflow command. Pipes the full payload JSON to stdin.
- * Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
+ * How each gate runtime is executed and the extension of its materialized file.
+ * Mirrors src/lib/runtimes.ts — the web side validates which runtimes are
+ * allowed; this is how the runner actually runs one: `bash`→`bash file`,
+ * `python`→`python3 file`, `node`→`node file`.
+ */
+export const RUNTIME_EXEC = { bash: "bash", python: "python3", node: "node" };
+export const RUNTIME_EXT = { bash: "sh", python: "py", node: "js" };
+const DEFAULT_RUNTIME = "bash";
+
+/**
+ * Absolute per-job directory a gate script runs from:
+ * `$HARBOUR_HOME/workflows/<scriptsDir>`. Pure (no I/O) so the path logic is
+ * unit-testable. scriptsDir is a RELATIVE path computed server-side
+ * (getJobScriptsDir) from already-validated slugs, so the runner never derives
+ * paths from untrusted data. harbourHome defaults to $HARBOUR_HOME (then
+ * ~/.harbour). Throws when scriptsDir is missing — a gate can't run without a
+ * server-assigned home, and only a malformed/unknown job lacks one.
+ *
+ * @param {object} args
+ * @param {string} [args.harbourHome] - HARBOUR_HOME root (defaults to env/~)
+ * @param {string|null} [args.scriptsDir] - payload.job.scripts_dir (relative)
+ * @returns {string} absolute cwd
+ */
+export function resolveJobDir({
+  harbourHome = process.env.HARBOUR_HOME || join(homedir(), ".harbour"),
+  scriptsDir,
+} = {}) {
+  if (!scriptsDir) {
+    throw new Error("Cannot run a gate script without a server-assigned scripts_dir");
+  }
+  return join(harbourHome, "workflows", scriptsDir);
+}
+
+/**
+ * Materialize a gate's body into `cwd` and return how to run it. mkdir -p's cwd,
+ * writes `<role>.<ext>` (ext from the runtime) with mode 0o700, and returns the
+ * spawn argv pieces — e.g. a `python` prerun yields
+ * `{ binary: "python3", args: ["prerun.py"] }`, run from cwd. An unknown runtime
+ * falls back to bash so a stale payload can never crash the runner. The only I/O
+ * is the mkdir + single file write inside the job's own dir.
+ *
+ * @param {string} cwd - absolute per-job dir (from resolveJobDir)
+ * @param {{ runtime: string, content: string }} gate
+ * @param {string} role - "prerun" | "postrun" | "workflow" (the file's base name)
+ * @returns {{ binary: string, args: string[], file: string }}
+ */
+export function materializeGate(cwd, gate, role) {
+  const runtime = gate && RUNTIME_EXEC[gate.runtime] ? gate.runtime : DEFAULT_RUNTIME;
+  const file = `${role}.${RUNTIME_EXT[runtime]}`;
+  mkdirSync(cwd, { recursive: true });
+  const path = join(cwd, file);
+  writeFileSync(path, gate?.content ?? "");
+  chmodSync(path, 0o700);
+  return { binary: RUNTIME_EXEC[runtime], args: [file], file };
+}
+
+/**
+ * Spawn a materialized gate/workflow script. Pipes the full payload JSON to
+ * stdin. Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
  * Returns { code, stdout, stderr }.
  *
+ * @param {string[]} argv - [binary, ...args] from materializeGate, e.g.
+ *   `["python3", "prerun.py"]`; run from `cwd` where the file was written.
+ * @param {string} payloadJson - run payload + activity, piped to stdin
+ * @param {string} cwd - the job's materialized scripts dir
  * @param {object} opts
- * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow-only)
+ * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow)
  * @param {AbortSignal} [opts.signal] - abort signal for kill handling
+ * @param {number} [opts.killGraceMs] - ms to wait after SIGTERM before SIGKILL on abort
+ * @param {Record<string,string>} [opts.extraEnv] - env vars layered onto the
+ *   child's environment (job-linked secrets + HARBOUR_* run credentials), so a
+ *   script can expand `$VAR` and post live progress updates to its run.
  */
-function runWorkflow(command, payloadJson, cwd, opts = {}) {
-  const { timeoutMs = 30_000, signal } = opts;
+export function runWorkflow(argv, payloadJson, cwd, opts = {}) {
+  const { timeoutMs = 30_000, signal, extraEnv, killGraceMs = 3000 } = opts;
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-c", command], {
+    const child = spawn(argv[0], argv.slice(1), {
       cwd,
+      env: { ...process.env, ...(extraEnv || {}) },
       stdio: ["pipe", "pipe", "pipe"],
       timeout: timeoutMs,
     });
@@ -223,238 +421,252 @@ function runWorkflow(command, payloadJson, cwd, opts = {}) {
     let stderr = "";
     let closeFired = false;
     let postExitTimer = null;
+    let sigkillTimer = null;
     // Workflows can background processes (dev servers, docker) that inherit
     // our stdout/stderr. Guard against "close" never firing by destroying
     // the pipes shortly after the workflow process itself exits.
     const POST_EXIT_GRACE_MS = 2000;
 
-    child.stdout.on("data", (data) => { stdout += data.toString(); });
-    child.stderr.on("data", (data) => { stderr += data.toString(); });
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
     child.on("error", (err) => {
       if (postExitTimer) clearTimeout(postExitTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
       reject(err);
     });
     child.on("exit", () => {
       postExitTimer = setTimeout(() => {
         if (closeFired) return;
-        try { child.stdout?.destroy(); } catch {}
-        try { child.stderr?.destroy(); } catch {}
+        try {
+          child.stdout?.destroy();
+        } catch {}
+        try {
+          child.stderr?.destroy();
+        } catch {}
       }, POST_EXIT_GRACE_MS);
     });
     child.on("close", (code) => {
       closeFired = true;
       if (postExitTimer) clearTimeout(postExitTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
       resolve({ code, stdout, stderr });
     });
 
-    // Kill on abort signal
+    // Kill on abort: SIGTERM, then SIGKILL after a grace period in case the
+    // child traps/ignores SIGTERM (mirrors runCliTool). Without escalation a
+    // workflow that swallows SIGTERM would hang until the job timeout, leaving
+    // the run stuck `running` with the dashboard Kill button frozen.
     if (signal) {
-      if (signal.aborted) {
-        child.kill("SIGTERM");
-      } else {
-        signal.addEventListener("abort", () => child.kill("SIGTERM"), { once: true });
-      }
+      const terminate = () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+        sigkillTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }, killGraceMs);
+      };
+      if (signal.aborted) terminate();
+      else signal.addEventListener("abort", terminate, { once: true });
     }
 
-    // Pipe the payload to stdin
-    child.stdin.write(payloadJson);
-    child.stdin.end();
+    // Pipe the payload to stdin. A script that never reads stdin (or exits
+    // before we finish writing) closes the pipe early; swallow the resulting
+    // EPIPE rather than letting it surface as an unhandled stream error.
+    child.stdin.on("error", () => {});
+    try {
+      child.stdin.write(payloadJson);
+      child.stdin.end();
+    } catch {
+      /* pipe already closed */
+    }
   });
 }
 
-// Cap on consecutive eager iterations within a single launchd tick.
-// Guards against a bug in getAgentNextRun ever returning non-null in a loop.
-// 50 is plenty for any realistic backlog; launchd respawns us next minute anyway.
-export const EAGER_MAX_ITERATIONS = 50;
+/**
+ * Run a job gate command (prerun OR postrun) with the shared scaffolding both
+ * need: ensure ~/.harbour/workflows exists, pipe the payload JSON on stdin, and
+ * poll for a mid-gate kill request that aborts the child (SIGTERM→grace→SIGKILL
+ * inside runWorkflow). Returns { code, stdout, stderr, killed }.
+ *
+ * Extracted so prerun and postrun share one implementation rather than two
+ * copies of the kill-poll/timeout dance.
+ *
+ * The gate's body is materialized into the job's per-job scripts dir
+ * (resolveJobDir + materializeGate) and run there via its runtime's interpreter,
+ * so `prerun.py` / `workflow.sh` sit beside any sibling gate. Both gates of one
+ * job share the same scripts_dir, so postrun runs from the same place prerun did.
+ *
+ * @param {object} args
+ * @param {{ runtime: string, content: string }} args.gate - the gate to run
+ * @param {string} args.role          - "prerun" | "postrun" (the file's base name)
+ * @param {string|null} args.scriptsDir - payload.job.scripts_dir (relative)
+ * @param {string} args.payloadJson   - run payload + activity, piped to stdin
+ * @param {string} args.url           - harbour base url (for kill polling)
+ * @param {string} args.apiKey
+ * @param {string} args.runId
+ * @param {string} args.agentName     - for log lines
+ * @param {string} args.label         - "Prerun" | "Postrun" (log prefix)
+ * @param {number} [args.timeoutMs]   - gate timeout (default 30s)
+ * @param {number} [args.killPollIntervalMs]
+ * @param {Record<string,string>} [args.extraEnv]
+ */
+async function runGateCommand({
+  gate,
+  role,
+  scriptsDir,
+  payloadJson,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  label,
+  timeoutMs = 30_000,
+  killPollIntervalMs = KILL_POLL_INTERVAL_MS,
+  extraEnv,
+}) {
+  const dir = resolveJobDir({ scriptsDir });
+  const { binary, args } = materializeGate(dir, gate, role);
+
+  const killController = new AbortController();
+  let killed = false;
+  const killPoll = setInterval(async () => {
+    if (killed) return;
+    try {
+      const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
+      if (res?.kill_requested) {
+        killed = true;
+        killController.abort();
+        console.log(`  [${agentName}] Kill requested during ${label.toLowerCase()} — stopping`);
+      }
+    } catch {
+      /* best effort */
+    }
+  }, killPollIntervalMs);
+
+  try {
+    const wfResult = await runWorkflow([binary, ...args], payloadJson, dir, {
+      timeoutMs,
+      signal: killController.signal,
+      extraEnv,
+    });
+    return { ...wfResult, killed };
+  } finally {
+    clearInterval(killPoll);
+  }
+}
+
+// ---- Postrun gate (#29) ----------------------------------------------------
+// A deterministic post-agent hook, the symmetric twin of the prerun gate. It
+// runs AFTER the run reaches a terminal status (after #34's finalize), with the
+// run payload + activity on stdin, in ~/.harbour/workflows — same shape prerun
+// receives. Two modes, set by the job's postrun_gates flag:
+//
+//   OFF — informational (default): cleanup / notification / chaining. Runs on
+//     ANY terminal outcome where the agent turn executed; its output is captured
+//     as a workflow activity entry; it NEVER changes the run's status.
+//   ON  — enforcing: proof-of-work verification. Runs after `done` only; a
+//     nonzero exit overrides `done -> failed` (the edge #30 reserves for us),
+//     surfacing the gate's stderr as the failure reason.
+//
+// WHY only outcomes where the agent turn executed (and never a pure prerun-skip):
+// the gate is a hook on the *agent's work*. A prerun skip (exit 77) means there
+// was no work to do, so the agent turn never ran — there is nothing to clean up,
+// verify, or chain from. Firing postrun there would run cleanup against a run
+// that did nothing, and (in enforcing mode) could never apply anyway since the
+// run is `skipped`, not `done`. The prerun-skip/fail paths return before the
+// single-exit seam, so they never reach the postrun branch; we additionally pass
+// an explicit `agentRan` flag so the decision is testable and intentional.
+
+/** Terminal outcomes the informational (non-gating) postrun may fire on. */
+const POSTRUN_INFORMATIONAL_OUTCOMES = Object.freeze(["done", "failed", "killed", "skipped"]);
 
 /**
- * Decide whether the eager loop should continue after one run finishes.
- * Pure function — exposed for unit testing. Encodes:
- *   - "no-work" / "poll-error": always exit (nothing to do or transient issue)
- *   - eager off: never loop (single shot per tick)
- *   - failed / killed: exit (let the 60s gap absorb transient errors;
- *                            kill = user said stop)
- *   - done / waiting / skipped: continue draining
+ * Whether to invoke the postrun command at all. Pure so the runner's seam logic
+ * is unit-testable apart from the CLI/shell plumbing.
  *
- * @param {string} outcome - one of: no-work, poll-error, done, waiting, skipped, failed, killed, running
- * @param {boolean} eager - the agent's eager flag (live from /next payload)
+ * @param {object} args
+ * @param {{runtime: string, content: string}|null|undefined} args.command - the job's postrun gate
+ * @param {string} args.outcome - the run's finalized terminal status
+ * @param {boolean} args.gates - postrun_gates flag (true = enforcing)
+ * @param {boolean} args.agentRan - did the agent work turn actually execute?
  * @returns {boolean}
  */
-export function shouldContinueEagerLoop(outcome, eager) {
-  if (outcome === "no-work" || outcome === "poll-error") return false;
-  if (!eager) return false;
-  return outcome === "done" || outcome === "waiting" || outcome === "skipped";
+export function shouldRunPostrun({ command, outcome, gates, agentRan }) {
+  if (!command) return false; // null/absent/empty → no-op, zero tax
+  if (!agentRan) return false; // pure prerun-skip etc. → never fires
+  if (gates) return outcome === "done"; // enforcing: done only
+  return POSTRUN_INFORMATIONAL_OUTCOMES.includes(outcome); // informational: any terminal
 }
 
 /**
- * Process at most one run for this runner.
- * Returns { outcome, eager } where outcome is:
- *   'no-work'    — poll returned null (no queued/scheduled/due work)
- *   'poll-error' — fetch threw (network/server error)
- *   'done'       — run finished normally
- *   'waiting'    — run paused for human input
- *   'skipped'    — workflow gate exited 77, or run skipped
- *   'failed'     — CLI/workflow error, agent didn't set status, etc.
- *   'killed'     — user requested kill mid-run
- * `eager` reflects the live `agent.eager` flag from the /next payload (or the
- * cached runner config if the payload didn't include one).
+ * Given the postrun command's exit code, decide whether the gate overrides the
+ * run's status. Pure. Informational mode never overrides; enforcing mode turns a
+ * `done` into `failed` on any nonzero exit (and only that edge — the transition
+ * guard in updateRunStatus permits exactly done -> failed for the gate).
+ *
+ * @param {object} args
+ * @param {boolean} args.gates - postrun_gates flag (true = enforcing)
+ * @param {number} args.code - the postrun command's exit code
+ * @param {string} args.outcome - the run's finalized terminal status
+ * @returns {{ status: string|null }} status to set, or null to leave unchanged
  */
-async function processNextRun(runner) {
-  const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
-  const provider = getProvider(cli);
-  const sessions = loadSessions();
+export function postrunStatusOverride({ gates, code, outcome }) {
+  if (!gates) return { status: null }; // informational: never changes status
+  if (outcome === "done" && code !== 0) return { status: "failed" };
+  return { status: null };
+}
 
-  console.log(`  [${agentName}] Polling...`);
+/**
+ * Decide what status a kill landing DURING postrun should set. Postrun only ever
+ * runs AFTER the run reaches a terminal status (done/failed/skipped/killed), so a
+ * kill at this point can't re-finalize an already-finished run: done -> killed,
+ * failed -> killed and skipped -> killed are all illegal under
+ * LEGAL_RUN_TRANSITIONS (and killed -> killed is a no-op). The run is finished;
+ * only postrun cleanup was still executing. So we NEVER issue a status PUT here —
+ * we honor the existing terminal outcome. Pure, mirrors postrunStatusOverride.
+ *
+ * @param {object} _args
+ * @param {string} _args.outcome - the run's already-finalized terminal status
+ * @returns {{ status: string|null }} status to set, or null to leave unchanged
+ */
+export function postrunKillStatus(_args) {
+  return { status: null };
+}
 
-  // Poll for next run
-  let payload;
-  try {
-    payload = await apiCall(`${url}/api/agents/${agentId}/next`, apiKey);
-  } catch (err) {
-    console.error(`  [${agentName}] Poll failed: ${err.message}`);
-    return { outcome: "poll-error", eager: false };
-  }
-
-  if (!payload || !payload.run) {
-    console.log(`  [${agentName}] Nothing to do.`);
-    return { outcome: "no-work", eager: false };
-  }
-
-  // Live eager flag from server, falling back to cached runner config
-  const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
-
-  const runId = payload.run.id;
-  const existingSession = sessions[runId];
-  const isResume = !!existingSession;
-  let sessionId = existingSession?.sessionId || null;
-  const isNewSession = !isResume;
-
-  // For Claude, generate a session ID upfront so we can always resume
-  const workingDir = ensureWorkingDir(agentName);
-  if (isNewSession && provider.generateSessionId) {
-    sessionId = provider.generateSessionId();
-    // Report pre-generated session ID immediately
-    apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
-      .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
-  }
-
-  console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
-
-  // Execute workflow command (if defined)
-  let workflowOutput = "";
-  const isWorkflowOnly = !!payload.job?.workflow_only;
-  if (!isResume && payload.job?.workflow) {
-    const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
-    mkdirSync(workflowDir, { recursive: true });
-
-    // Timeout: 30s for gate (workflow+agent), job timeout for workflow-only
-    const workflowTimeoutMs = isWorkflowOnly
-      ? (payload.job.timeout_minutes || 30) * 60 * 1000
-      : 30_000;
-
-    // Kill polling for workflow execution
-    const workflowKillController = new AbortController();
-    let workflowKilled = false;
-    const workflowKillPoll = setInterval(async () => {
-      if (workflowKilled) return;
-      try {
-        const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
-        if (res?.kill_requested) {
-          workflowKilled = true;
-          workflowKillController.abort();
-          console.log(`  [${agentName}] Kill requested during workflow — stopping`);
-        }
-      } catch { /* best effort */ }
-    }, KILL_POLL_INTERVAL_MS);
-
-    try {
-      const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
-        timeoutMs: workflowTimeoutMs,
-        signal: workflowKillController.signal,
-      });
-      clearInterval(workflowKillPoll);
-
-      if (workflowKilled) {
-        try {
-          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
-        } catch { /* best effort */ }
-        return { outcome: "killed", eager };
-      }
-
-      if (wfResult.code === 77) {
-        // Skip — no work to do
-        console.log(`  [${agentName}] Workflow exited 77 — skipping`);
-        if (wfResult.stderr?.trim()) {
-          try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() });
-          } catch { /* best effort */ }
-        }
-        try {
-          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
-        } catch { /* best effort */ }
-        return { outcome: "skipped", eager };
-      }
-
-      if (wfResult.code !== 0) {
-        // Error — any non-zero except 77
-        console.error(`  [${agentName}] Workflow exited ${wfResult.code} — failed`);
-        const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
-        try {
-          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
-          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-        } catch { /* best effort */ }
-        return { outcome: "failed", eager };
-      }
-
-      // Exit 0 — success
-      if (isWorkflowOnly) {
-        // Workflow-only: log output and mark done
-        const output = wfResult.stdout?.trim();
-        if (output) {
-          try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
-          } catch { /* best effort */ }
-        }
-        try {
-          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
-        } catch { /* best effort */ }
-        console.log(`  [${agentName}] Workflow-only run ${runId} completed.`);
-        return { outcome: "done", eager };
-      }
-
-      // Workflow + agent: capture output for prompt context
-      workflowOutput = wfResult.stdout?.trim() || "";
-    } catch (err) {
-      clearInterval(workflowKillPoll);
-      console.error(`  [${agentName}] Workflow command failed: ${err.message}`);
-      try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
-        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-      } catch { /* best effort */ }
-      return { outcome: "failed", eager };
-    }
-  }
-
-  // Workflow-only jobs should have returned above; if we get here with no CLI, fail
-  if (isWorkflowOnly) {
-    console.error(`  [${agentName}] Workflow-only job has no workflow command — failing`);
-    try {
-      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
-    return { outcome: "failed", eager };
-  }
-
-  // Build prompt — append workflow output as additional context
-  let prompt = buildPrompt(payload, apiKey, isResume);
-  if (workflowOutput) {
-    prompt += `## Workflow Output\n\n${workflowOutput}\n\n`;
-  }
-
-  // Build CLI command — job-level model/thinking override agent defaults
-  const model = payload.job?.model || agentModel;
-  const thinking = payload.job?.thinking || agentThinking;
-  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
-
+/**
+ * Run ONE CLI turn end-to-end: invoke the CLI, stream its output to Harbour,
+ * handle a mid-turn kill request, and parse the final result. Both the work
+ * turn and the finalize turn (issue #34) go through this — the kill/stream
+ * plumbing exists in exactly one place.
+ *
+ * Returns { result, sessionId, output, killed, statusAtKill }:
+ *   - result      — the raw { code, stdout, stderr, aborted } from runCliTool
+ *   - sessionId   — the session id captured during the turn (may be newer than
+ *                   the one passed in, e.g. a provider that mints it at init)
+ *   - output      — parsed final content (provider.parseResult)
+ *   - killed      — true if a kill request fired during the turn
+ *   - statusAtKill— the run's status read back after a kill (only when killed)
+ *
+ * Throws if runCliTool itself throws (spawn/exec failure) — the caller maps
+ * that to a hard failure.
+ */
+async function runCliTurn({
+  cmd,
+  provider,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  sessionId,
+  extraEnv,
+  sessionAlreadyReported,
+}) {
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
   let flushTimer = null;
@@ -495,7 +707,9 @@ async function processNextRun(runner) {
     try {
       const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
       if (res?.kill_requested) triggerKill("poll");
-    } catch { /* best effort — server may be restarting */ }
+    } catch {
+      /* best effort — server may be restarting */
+    }
   }, KILL_POLL_INTERVAL_MS);
 
   function queueEvent(evt) {
@@ -510,29 +724,30 @@ async function processNextRun(runner) {
 
   // Create a stateful parser if the provider supports it (e.g. Claude
   // accumulates tool input deltas), otherwise fall back to stateless parseLine.
-  const parser = provider.createParser
-    ? provider.createParser()
-    : provider;
+  const parser = provider.createParser ? provider.createParser() : provider;
 
   // Line handler: parse each JSONL line from the CLI tool
-  let sessionReported = !!sessionId; // already reported if pre-generated
+  let turnSessionId = sessionId;
+  let sessionReported = !!sessionAlreadyReported;
   function onLine(line) {
     if (!parser.parseLine) return;
     const parsed = parser.parseLine(line);
     if (!parsed) return;
 
     // Capture session ID from init events
-    if (parsed.sessionId && !sessionId) {
-      sessionId = parsed.sessionId;
-    } else if (parsed.sessionId) {
-      sessionId = parsed.sessionId;
+    if (parsed.sessionId) {
+      turnSessionId = parsed.sessionId;
     }
 
     // Report session ID to the server (once) so it's available on the dashboard
-    if (sessionId && !sessionReported) {
+    if (turnSessionId && !sessionReported) {
       sessionReported = true;
-      apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
-        .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
+      apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
+        session_id: turnSessionId,
+        cwd: cmd.cwd,
+      }).catch((err) =>
+        console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
+      );
     }
 
     for (const evt of parsed.events) {
@@ -540,107 +755,403 @@ async function processNextRun(runner) {
     }
   }
 
-  // Execute CLI tool with streaming (use per-job timeout, fallback to 30 min)
-  const timeoutMinutes = payload.job?.timeout_minutes || 30;
-  const timeoutMs = timeoutMinutes * 60 * 1000;
   let result;
   try {
     result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
-      timeoutMs,
+      inactivityTimeoutMs: CLI_INACTIVITY_TIMEOUT_MS,
       onLine,
       signal: killController.signal,
+      extraEnv: extraEnv || {},
+    });
+  } finally {
+    clearInterval(killPollTimer);
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  }
+
+  // Flush any remaining buffered events after the CLI exits.
+  await flushEvents();
+
+  const parsed = provider.parseResult(result.stdout, turnSessionId);
+  const output = parsed.content || result.stdout || result.stderr || "(no output)";
+  const finalSessionId = parsed.sessionId || turnSessionId;
+
+  // On a kill, re-read the server's status: the agent may have finished
+  // naturally in the tiny window between the kill request and SIGTERM landing.
+  let statusAtKill = null;
+  if (killed) {
+    statusAtKill = "running";
+    try {
+      const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
+      statusAtKill = run.status;
+    } catch {
+      /* best effort */
+    }
+  }
+
+  return { result, sessionId: finalSessionId, output, killed, statusAtKill };
+}
+
+/**
+ * Execute an already-claimed agent run. `payload` is the claim response (carries
+ * the run, job, agent config, workspace, env, and its per-run exec_token);
+ * `creds` is { url, execToken }. The exec token is the run-scoped credential for
+ * every /api/runs/:id/* callback — the high-value runner token never gets here.
+ *
+ * Returns { outcome, eager } where outcome is one of:
+ *   'done'    — run finished normally
+ *   'waiting' — run paused for human input
+ *   'skipped' — prerun command exited 77, or run skipped
+ *   'failed'  — CLI error, agent didn't set status, etc.
+ *   'killed'  — user requested kill mid-run
+ * `eager` reflects the live `agent.eager` flag from the claim payload (the pool
+ * drains all due work each cycle regardless, so it's informational now).
+ */
+export async function processNextRun(payload, { url, execToken }) {
+  const apiKey = execToken;
+  const agentName = payload.workspace?.agent || payload.job?.name || "agent";
+  const sessions = loadSessions();
+
+  // cli/model/thinking come live from the claim payload (harbour is the source
+  // of truth). Resolve before anything that needs the provider.
+  const { cli, model: agentModel, thinking: resolvedThinking } = resolveRunConfig(payload);
+  if (!cli) {
+    console.error(`  [${agentName}] No CLI configured for this agent — set one in the dashboard.`);
+    return { outcome: "config-error", eager: false };
+  }
+  const provider = getProvider(cli);
+
+  // A thinking level the CLI won't accept must not fail the run (issue #39:
+  // `--effort off` killed every launch) — drop it and run on the CLI default.
+  const { thinking: agentThinking, dropped: droppedThinking } = sanitizeThinking(
+    cli,
+    resolvedThinking,
+  );
+
+  // Live eager flag from the claim payload.
+  const eager = !!payload.agent?.eager;
+
+  const runId = payload.run.id;
+
+  if (droppedThinking) {
+    const warning = `Ignoring unsupported thinking level \`${droppedThinking}\` for ${cli} — running with the CLI default. Fix the agent or job's thinking setting in the dashboard.`;
+    console.error(`  [${agentName}] ${warning}`);
+    apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: warning }).catch(() => {
+      /* best effort */
+    });
+  }
+
+  const existingSession = sessions[runId];
+  const isResume = !!existingSession;
+  let sessionId = existingSession?.sessionId || null;
+  const isNewSession = !isResume;
+
+  // ---- Workspace resolution (issue #40) -------------------------------------
+  // Workspaces mirror the data-model hierarchy on disk —
+  // ~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/ — built from
+  // the payload's `workspace` block of server-assigned, immutable slugs.
+  // Resolution ladder:
+  //   1. A resumed session's pinned cwd, verbatim. Claude CLI sessions are
+  //      cwd-scoped, so a moved cwd breaks --resume — the path saved at run
+  //      start wins over any rename or layout change made since.
+  //   2. A resumed session WITHOUT a cwd was persisted by a pre-upgrade
+  //      runner, which necessarily started under the legacy flat layout —
+  //      resume there so the session and working tree are found.
+  //   3. payload.workspace → the nested layout (the normal path — the claim
+  //      payload always carries a workspace block for agent runs).
+  //   4. No workspace block → legacy flat fallback (effectively dead against a
+  //      current server; kept only as a defensive last resort).
+  // Note: agentName here is the agent's slug (from workspace.agent), so the flat
+  // fallback is keyed on the slug — not the display name the pre-#40 runner used.
+  const legacySlug = agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const ws = payload.workspace;
+  let workingDir;
+  try {
+    if (existingSession?.cwd) {
+      workingDir = existingSession.cwd;
+      mkdirSync(workingDir, { recursive: true });
+    } else if (existingSession) {
+      workingDir = ensureWorkingDir([legacySlug]);
+    } else if (
+      ws &&
+      typeof ws.org === "string" &&
+      typeof ws.project === "string" &&
+      typeof ws.agent === "string"
+    ) {
+      workingDir = ensureWorkingDir([ws.org, ws.project, ws.agent]);
+    } else {
+      console.warn(
+        `  [${agentName}] Server sent no workspace block (predates workspace scoping) — using the legacy flat workspace layout.`,
+      );
+      workingDir = ensureWorkingDir([legacySlug]);
+    }
+  } catch (err) {
+    const message = `Cannot resolve workspace directory: ${err.message}. Refusing to run — fix the slugs server-side.`;
+    console.error(`  [${agentName}] ${message}`);
+    apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: message }).catch(() => {
+      /* best effort */
+    });
+    return { outcome: "config-error", eager: false };
+  }
+
+  // For Claude, generate a session ID upfront so we can always resume
+  if (isNewSession && provider.generateSessionId) {
+    sessionId = provider.generateSessionId();
+    // Report pre-generated session ID immediately
+    apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
+      session_id: sessionId,
+      cwd: workingDir,
+    }).catch((err) =>
+      console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
+    );
+  }
+
+  console.log(
+    `  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`,
+  );
+
+  // Execute agent prerun command (if defined). This is a cheap gate to avoid
+  // spending LLM tokens when there is no work.
+  let prerunOutput = "";
+  if (!isResume && payload.job?.prerun) {
+    try {
+      const wfResult = await runGateCommand({
+        gate: payload.job.prerun,
+        role: "prerun",
+        scriptsDir: payload.job.scripts_dir,
+        payloadJson: JSON.stringify(payload),
+        url,
+        apiKey,
+        runId,
+        agentName,
+        label: "Prerun",
+      });
+
+      if (wfResult.killed) {
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+        } catch {
+          /* best effort */
+        }
+        return { outcome: "killed", eager };
+      }
+
+      if (wfResult.code === 77) {
+        // Skip — no work to do
+        console.log(`  [${agentName}] Prerun exited 77 — skipping`);
+        if (wfResult.stderr?.trim()) {
+          try {
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+              content: wfResult.stderr.trim(),
+            });
+          } catch {
+            /* best effort */
+          }
+        }
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+        } catch {
+          /* best effort */
+        }
+        return { outcome: "skipped", eager };
+      }
+
+      if (wfResult.code !== 0) {
+        // Error — any non-zero except 77
+        console.error(`  [${agentName}] Prerun exited ${wfResult.code} — failed`);
+        const errOutput =
+          wfResult.stderr?.trim() ||
+          wfResult.stdout?.trim() ||
+          `Prerun exited with code ${wfResult.code}`;
+        // Two independent best-effort calls (issue #15): a failed activity POST
+        // must not skip the status PUT, or the run dangles in 'running'.
+        try {
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+            content: errOutput,
+          });
+        } catch {
+          /* best effort */
+        }
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+        } catch {
+          /* best effort */
+        }
+        return { outcome: "failed", eager };
+      }
+
+      // Exit 0 — success, capture output for prompt context
+      prerunOutput = wfResult.stdout?.trim() || "";
+    } catch (err) {
+      console.error(`  [${agentName}] Prerun command failed: ${err.message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: `Prerun error: ${err.message}`,
+        });
+      } catch {
+        /* best effort */
+      }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch {
+        /* best effort */
+      }
+      return { outcome: "failed", eager };
+    }
+  }
+
+  // Build the work prompt — append prerun output as additional context.
+  let prompt = buildPrompt(payload, apiKey, isResume);
+  if (prerunOutput) {
+    prompt += `## Prerun Output\n\n${prerunOutput}\n\n`;
+  }
+
+  // model/thinking were already resolved (job override > agent default) above.
+  const cmd = provider.buildCommand(
+    prompt,
+    agentModel,
+    workingDir,
+    sessionId,
+    isNewSession,
+    agentThinking,
+  );
+
+  // ---- Single exit path -----------------------------------------------------
+  // Every terminal return below funnels through finish(): it does the session
+  // save/cleanup, fires the postrun gate (#29) AFTER status finalization, and
+  // returns { outcome, eager }. The postrun gate may override the outcome
+  // (enforcing mode: done -> failed), so finish() returns the resolved outcome.
+  //
+  //   opts.agentRan         — did the agent work turn actually execute? Postrun
+  //                           only fires when it did (a pure prerun-skip never
+  //                           reaches finish, so this is true at every callsite
+  //                           except a CLI-spawn failure where the turn never ran).
+  //   opts.preserveSession  — keep the saved session for resume even though the
+  //                           outcome isn't `waiting` (the kill path).
+  async function finish(
+    outcome,
+    finalSessionId,
+    { agentRan = true, preserveSession = false } = {},
+  ) {
+    if (finalSessionId && (outcome === "waiting" || preserveSession)) {
+      // cwd pins the workspace for resumes: the CLI session lives under this
+      // directory, so later turns must run there even if the agent is renamed
+      // or the layout changes in the meantime.
+      sessions[runId] = { sessionId: finalSessionId, cli, cwd: workingDir };
+      saveSessions(sessions);
+    } else {
+      delete sessions[runId];
+      saveSessions(sessions);
+    }
+
+    // ---- Postrun gate (#29) — runs AFTER status finalization ----------------
+    const resolved = await runPostrun({
+      job: payload.job,
+      outcome,
+      agentRan,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      env: payload.env || {},
+      payloadJson: JSON.stringify(payload),
+    });
+
+    console.log(`  [${agentName}] Run ${runId} completed with status: ${resolved}`);
+    return { outcome: resolved, eager };
+  }
+
+  // ---- Work turn ------------------------------------------------------------
+  let turn;
+  try {
+    turn = await runCliTurn({
+      cmd,
+      provider,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      sessionId,
       extraEnv: payload.env || {},
+      sessionAlreadyReported: !!sessionId,
     });
   } catch (err) {
-    clearInterval(killPollTimer);
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
+    // Independent best-effort calls (issue #15): the status PUT must fire even
+    // if the activity POST throws, else the run is stuck 'running'.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Runner error: CLI tool "${cli}" failed to execute: ${err.message}`,
       });
-      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
-    return { outcome: "failed", eager };
-  }
-
-  clearInterval(killPollTimer);
-
-  // Flush any remaining buffered events
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
-  await flushEvents();
-
-  // Handle user-initiated kill: save session, post activity, set status=killed,
-  // and bail before the normal "did agent set final status?" failsafe below
-  // (which would otherwise overwrite killed → failed).
-  if (killed) {
-    // Race: agent may have finished naturally in the tiny window between
-    // kill request and SIGTERM landing. If the server already has a terminal
-    // status, respect it — the kill was moot.
-    let statusAtKill = "running";
-    try {
-      const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
-      statusAtKill = run.status;
-    } catch { /* best effort */ }
-
-    if (["done", "waiting", "skipped", "failed"].includes(statusAtKill)) {
-      console.log(`  [${agentName}] Kill landed too late — run already ${statusAtKill}; respecting existing status`);
-      // Save session for waiting (normal behavior), clean up otherwise.
-      if (statusAtKill === "waiting") {
-        const parsedLate = provider.parseResult(result.stdout, sessionId);
-        const lateSessionId = parsedLate.sessionId || sessionId;
-        if (lateSessionId) {
-          sessions[runId] = { sessionId: lateSessionId, cli };
-          saveSessions(sessions);
-        }
-      } else {
-        delete sessions[runId];
-        saveSessions(sessions);
-      }
-      // Race: agent finished before kill landed — report the actual final
-      // status so eager mode can decide correctly (done/waiting/skipped → continue,
-      // failed → exit).
-      return { outcome: statusAtKill, eager };
-    } else {
-      const parsedOnKill = provider.parseResult(result.stdout, sessionId);
-      const killSessionId = parsedOnKill.sessionId || sessionId;
-      if (killSessionId) {
-        sessions[runId] = { sessionId: killSessionId, cli };
-        saveSessions(sessions);
-        console.log(`  [${agentName}] Session saved for resume: ${killSessionId}`);
-      } else {
-        console.warn(`  [${agentName}] No session ID captured before kill — resume will start fresh`);
-      }
-      try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-          content: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
-        });
-        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
-      } catch (err) {
-        console.error(`  [${agentName}] Failed to finalize kill: ${err.message}`);
-      }
-      console.log(`  [${agentName}] Run ${runId} killed.`);
-      return { outcome: "killed", eager };
+    } catch {
+      /* best effort */
     }
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch {
+      /* best effort */
+    }
+    // The CLI never spawned — the agent turn did not execute, so postrun (which
+    // hooks the agent's work) does not fire here.
+    return finish("failed", turn?.sessionId || sessionId, { agentRan: false });
   }
 
-  // Parse final result for activity summary
-  const parsed = provider.parseResult(result.stdout, sessionId);
-  const output = parsed.content || result.stdout || result.stderr || "(no output)";
-  const newSessionId = parsed.sessionId || sessionId;
+  const { result, output } = turn;
+  const workSessionId = turn.sessionId;
 
-  // Check if CLI exited with error
+  // ---- Kill ----------------------------------------------------------------
+  // User-initiated kill: save session, post activity, set status=killed, and
+  // bail BEFORE the finalize turn (which would otherwise resume the killed run).
+  if (turn.killed) {
+    const killOutcome = resolveKillOutcome(turn.statusAtKill);
+    if (killOutcome !== "killed") {
+      // Race: agent finished naturally before SIGTERM landed — respect the
+      // status it set so eager mode decides correctly.
+      console.log(
+        `  [${agentName}] Kill landed too late — run already ${killOutcome}; respecting existing status`,
+      );
+      return finish(killOutcome, workSessionId);
+    }
+    if (!workSessionId) {
+      console.warn(`  [${agentName}] No session ID captured before kill — resume will start fresh`);
+    }
+    // Split (issue #15): a failed activity POST must not skip the status PUT
+    // that records the kill — otherwise the run stays 'running'.
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content:
+          "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
+      });
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to post kill activity: ${err.message}`);
+    }
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to finalize kill status: ${err.message}`);
+    }
+    console.log(`  [${agentName}] Run ${runId} killed.`);
+    // The agent turn ran, so informational postrun fires (cleanup on kill);
+    // preserveSession keeps the session saved for a later resume-via-comment.
+    return finish("killed", workSessionId, { preserveSession: true });
+  }
+
+  // ---- CLI hard error -------------------------------------------------------
+  // Non-zero exit: the session may be broken, so we do NOT attempt finalize —
+  // we fail directly (as today). The kill path above already returned.
   if (result.code !== 0) {
     console.error(`  [${agentName}] CLI exited with code ${result.code}`);
 
-    // Build a human-readable error reason
     let reason;
-    if (result.code === 143) {
-      reason = `Process was killed (SIGTERM) — likely hit the ${timeoutMinutes}-minute timeout before the CLI exited cleanly.`;
+    if (result.timedOut) {
+      const mins = Math.round(CLI_INACTIVITY_TIMEOUT_MS / 60000);
+      reason = `Process killed after ${mins} minute(s) with no output — the CLI stalled (startup hang, or a blocked call that never returned).`;
+    } else if (result.code === 143) {
+      reason = `Process was killed (SIGTERM) before the CLI exited cleanly.`;
     } else if (result.code === 137) {
-      reason = `Process was force-killed (SIGKILL) — out of memory or hard timeout.`;
+      reason = `Process was force-killed (SIGKILL) — out of memory, or it ignored SIGTERM.`;
     } else {
       reason = `CLI exited with code ${result.code}.`;
     }
@@ -648,38 +1159,42 @@ async function processNextRun(runner) {
     // Filter out raw streaming protocol lines from stdout — keep only readable content
     const sanitizedOutput = output
       .split("\n")
-      .filter(line => {
+      .filter((line) => {
         const trimmed = line.trim();
         if (!trimmed) return false;
-        // Skip raw JSONL streaming protocol lines
         try {
           const obj = JSON.parse(trimmed);
-          if (obj.type === "stream_event" || obj.type === "assistant" || obj.type === "system") return false;
-        } catch { /* not JSON — keep it */ }
+          if (obj.type === "stream_event" || obj.type === "assistant" || obj.type === "system")
+            return false;
+        } catch {
+          /* not JSON — keep it */
+        }
         return true;
       })
       .join("\n")
       .trim();
 
-    // Combine reason + stderr + any remaining meaningful output
     let errorContent = `**${reason}**`;
     if (result.stderr?.trim()) errorContent += `\n\nstderr:\n${result.stderr.trim()}`;
     if (sanitizedOutput) errorContent += `\n\nOutput:\n${sanitizedOutput}`;
     if (errorContent.length > 4000) errorContent = errorContent.slice(-4000);
 
+    // Independent best-effort calls (issue #15) — see the CLI-spawn path above.
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: errorContent,
-      });
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errorContent });
+    } catch {
+      /* best effort */
+    }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
 
-    delete sessions[runId];
-    saveSessions(sessions);
-    return { outcome: "failed", eager };
+    return finish("failed", workSessionId);
   }
 
-  // Post output as activity (high-level summary)
+  // ---- Post work output -----------------------------------------------------
   const truncatedOutput = output.length > 50000 ? output.slice(-50000) : output;
   try {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
@@ -689,185 +1204,568 @@ async function processNextRun(runner) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
   }
 
-  // Check if the agent already set a terminal status (done/failed/waiting/skipped).
-  // If not, the agent didn't follow the instructions — mark as failed.
+  // ---- Status check + finalize turn (issue #34) -----------------------------
+  // The work prompt no longer mandates a final status. If the agent already set
+  // a valid terminal value (e.g. `waiting` mid-run), we're done. Otherwise the
+  // harness DRIVES a finalize turn: resume the same session with a tight prompt
+  // asking only for a status, re-check, repeat up to FINALIZE_MAX_ATTEMPTS, and
+  // force `failed` on exhaustion as a backstop.
   let currentStatus = "running";
   try {
-    const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
+    const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
     currentStatus = run.status;
-  } catch { /* best effort — fall through to failsafe */ }
-
-  const terminalStatuses = ["done", "failed", "waiting", "skipped"];
-  if (!terminalStatuses.includes(currentStatus)) {
-    console.warn(`  [${agentName}] Agent did not set a final status (still "${currentStatus}") — marking as failed`);
-    try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: "Run marked as failed: agent did not set a final status.",
-      });
-      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
-    currentStatus = "failed";
+  } catch {
+    /* best effort — fall through to finalize */
   }
 
-  // Save session for resume if waiting, clean up otherwise
-  if (newSessionId && currentStatus === "waiting") {
-    sessions[runId] = { sessionId: newSessionId, cli };
-    saveSessions(sessions);
-  } else {
-    delete sessions[runId];
-    saveSessions(sessions);
+  if (!shouldRunFinalize(currentStatus)) {
+    return finish(currentStatus, workSessionId);
   }
 
-  console.log(`  [${agentName}] Run ${runId} completed with status: ${currentStatus}`);
-  return { outcome: currentStatus, eager };
+  const finalized = await runFinalizeLoop({
+    provider,
+    url,
+    apiKey,
+    runId,
+    agentName,
+    sessionId: workSessionId,
+    model: agentModel,
+    thinking: agentThinking,
+    workingDir,
+    extraEnv: payload.env || {},
+    activityContext: truncatedOutput,
+    api: payload.api,
+  });
+
+  return finish(finalized.outcome, finalized.sessionId || workSessionId);
 }
 
 /**
- * Top-level driver for a single runner. Polls /next once per iteration; if the
- * agent has eager polling enabled and the run finished cleanly (done/waiting/
- * skipped), immediately polls again instead of waiting for the next launchd
- * tick. Bails on no-work, poll errors, kills, and failures.
+ * Drive the finalize loop: make the run set a valid terminal status by
+ * execution rather than prompt-advice. Resumes the SAME CLI session when
+ * possible (full context of the work just done); falls back to a fresh turn
+ * carrying the activity log when there's no resumable session.
+ *
+ * Returns { outcome, sessionId } where outcome is a terminal status. On
+ * exhaustion the outcome is `failed` with a system note (backstop).
+ *
+ * Model: reuses the job's already-resolved model (issue #34 decision — no
+ * separate finalize_model field yet). The invocation is structured so an
+ * override could be slotted in trivially (swap `model` here).
  */
-async function runSingleAgent(runner) {
-  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
-    const { outcome, eager } = await processNextRun(runner);
-    if (!shouldContinueEagerLoop(outcome, eager)) return;
-    console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
+async function runFinalizeLoop({
+  provider,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  sessionId,
+  model,
+  thinking,
+  workingDir,
+  extraEnv,
+  activityContext,
+  api,
+}) {
+  // `api` is required to build the status-endpoint curl. Without it we can't
+  // tell the agent how to set status — fail with the backstop note.
+  if (!api) {
+    await failFinalize({ url, apiKey, runId, agentName, sessionId });
+    return { outcome: "failed", sessionId };
   }
-  console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+
+  const { mode } = resolveFinalizeMode(provider, sessionId);
+  let turnSessionId = sessionId;
+
+  for (let attempt = 1; attempt <= FINALIZE_MAX_ATTEMPTS; attempt++) {
+    console.log(
+      `  [${agentName}] Finalize attempt ${attempt}/${FINALIZE_MAX_ATTEMPTS} (${mode}) — asking for a terminal status`,
+    );
+
+    const finalizePrompt = buildFinalizePrompt(api, apiKey, { mode, activityContext });
+    // Resume mode reuses the session (isNewSession=false). Fresh mode runs a new
+    // turn with no session id; the prompt carries the activity log as context.
+    const cmd =
+      mode === "resume"
+        ? provider.buildCommand(finalizePrompt, model, workingDir, turnSessionId, false, thinking)
+        : provider.buildCommand(finalizePrompt, model, workingDir, null, true, thinking);
+
+    try {
+      const turn = await runCliTurn({
+        cmd,
+        provider,
+        url,
+        apiKey,
+        runId,
+        agentName,
+        sessionId: turnSessionId,
+        extraEnv,
+        sessionAlreadyReported: true,
+      });
+      if (turn.sessionId) turnSessionId = turn.sessionId;
+      // A kill during finalize is honored as a kill outcome (user said stop) —
+      // UNLESS the agent set a terminal status during this turn before the kill
+      // landed, in which case forcing `killed` would be an illegal transition
+      // (e.g. done → killed). resolveKillOutcome respects an existing terminal
+      // status and only PUTs `killed` for a genuine running→killed kill.
+      if (turn.killed) {
+        const killOutcome = resolveKillOutcome(turn.statusAtKill);
+        if (killOutcome === "killed") {
+          try {
+            await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+          } catch {
+            /* best effort */
+          }
+        }
+        return { outcome: killOutcome, sessionId: turnSessionId };
+      }
+    } catch (err) {
+      console.error(`  [${agentName}] Finalize turn failed: ${err.message}`);
+      // Treat a finalize CLI failure like a non-compliant attempt and let the
+      // loop's exhaustion backstop decide.
+    }
+
+    let status = "running";
+    try {
+      const run = await apiCall(`${url}/api/runs/${runId}/status`, apiKey);
+      status = run.status;
+    } catch {
+      /* best effort */
+    }
+
+    const step = finalizeStep({ status, attempt });
+    if (step.done) {
+      if (step.forced) {
+        await failFinalize({ url, apiKey, runId, agentName, sessionId: turnSessionId });
+        return { outcome: "failed", sessionId: turnSessionId };
+      }
+      console.log(`  [${agentName}] Finalize: agent set status "${step.outcome}"`);
+      return { outcome: step.outcome, sessionId: turnSessionId };
+    }
+  }
+
+  // Defensive: loop fell through without finalizeStep returning done (shouldn't
+  // happen — the last attempt always forces). Keep the backstop.
+  await failFinalize({ url, apiKey, runId, agentName, sessionId: turnSessionId });
+  return { outcome: "failed", sessionId: turnSessionId };
 }
 
-async function runAgentlessWorkflows(url, apiKey) {
-  console.log(`  [workflows] Polling...`);
+/**
+ * Run the postrun gate (#29) for a finished run, AFTER its status is finalized.
+ * The symmetric twin of the prerun gate. Pure decisions live in shouldRunPostrun
+ * / postrunStatusOverride (unit-tested); this is the thin shell that:
+ *   1. decides whether to fire (no command / pure prerun-skip / wrong outcome → no-op),
+ *   2. runs the command with the same scaffolding prerun uses (runGateCommand:
+ *      ~/.harbour/workflows cwd, payload+activity on stdin, kill-poll/timeout),
+ *   3. captures the gate's output as an activity entry,
+ *   4. in enforcing mode only, applies a done -> failed override on nonzero exit.
+ *
+ * Returns the resolved terminal outcome (== the input outcome unless the
+ * enforcing gate overrode it).
+ *
+ * @param {object} args
+ * @param {object} args.job        - the run's job (reads .postrun / .postrun_gates)
+ * @param {string} args.outcome    - the finalized terminal status
+ * @param {boolean} args.agentRan  - did the agent work turn execute?
+ * @param {string} args.url        - Harbour base URL
+ * @param {string} args.apiKey     - the run's exec token (Bearer for callbacks)
+ * @param {string} args.runId     - the run being finalized
+ * @param {string} args.agentName  - for log prefixes
+ * @param {Record<string, string>} args.env - decrypted run env vars for the gate command
+ * @param {string} args.payloadJson - run payload + activity, piped to stdin
+ * @param {number} [args.killPollIntervalMs] - kill-poll cadence override (tests)
+ */
+export async function runPostrun({
+  job,
+  outcome,
+  agentRan,
+  url,
+  apiKey,
+  runId,
+  agentName,
+  env,
+  payloadJson,
+  killPollIntervalMs,
+}) {
+  const gate = job?.postrun;
+  const gates = !!job?.postrun_gates;
 
-  let payload;
+  if (!shouldRunPostrun({ command: gate, outcome, gates, agentRan })) return outcome;
+
+  const mode = gates ? "enforcing" : "informational";
+  console.log(`  [${agentName}] Postrun (${mode}) — running for run ${runId} [${outcome}]`);
+
+  let wfResult;
   try {
-    payload = await apiCall(`${url}/api/workflows/next`, apiKey);
+    wfResult = await runGateCommand({
+      gate,
+      role: "postrun",
+      scriptsDir: job?.scripts_dir,
+      payloadJson,
+      url,
+      apiKey,
+      runId,
+      agentName,
+      label: "Postrun",
+      extraEnv: env,
+      killPollIntervalMs,
+    });
   } catch (err) {
-    console.error(`  [workflows] Poll failed: ${err.message}`);
-    return;
+    console.error(`  [${agentName}] Postrun command failed: ${err.message}`);
+    // A postrun that can't even run: surface it, and in enforcing mode treat the
+    // unverifiable result as a failure (same as a nonzero exit). Informational
+    // mode swallows it (never changes status).
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun error: ${err.message}`,
+      });
+    } catch {
+      /* best effort */
+    }
+    const { status } = postrunStatusOverride({ gates, code: 1, outcome });
+    if (status) {
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
+      } catch {
+        /* best effort */
+      }
+      return status;
+    }
+    return outcome;
   }
 
-  if (!payload || !payload.run) {
-    console.log(`  [workflows] Nothing to do.`);
-    return;
+  // A kill during postrun: the run is ALREADY terminal (postrun runs after status
+  // finalization), so it cannot be re-finalized to `killed` — done/failed/skipped
+  // -> killed are all illegal transitions, and killed -> killed is a no-op. The
+  // run is finished; only postrun cleanup was still executing. Honor the existing
+  // outcome (postrunKillStatus -> never a status PUT) and note that the kill
+  // landed after completion. Don't apply any gate override on top of it.
+  if (wfResult.killed) {
+    const { status } = postrunKillStatus({ outcome });
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Kill requested during postrun, but the run had already finished (${outcome}) — postrun cleanup was stopped; the run's status is unchanged.`,
+      });
+    } catch {
+      /* best effort */
+    }
+    if (status) {
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
+      } catch {
+        /* best effort */
+      }
+    }
+    console.log(
+      `  [${agentName}] Postrun kill landed after completion — keeping status ${outcome}`,
+    );
+    return status || outcome;
   }
+
+  // Capture the gate's output (informational and enforcing both log it).
+  const gateOutput = wfResult.stdout?.trim() || wfResult.stderr?.trim() || "";
+  const { status: override } = postrunStatusOverride({ gates, code: wfResult.code, outcome });
+
+  if (override) {
+    // Enforcing gate failed verification: surface the stderr as the reason and
+    // override done -> failed (the edge updateRunStatus reserves for the gate).
+    const reason =
+      wfResult.stderr?.trim() ||
+      wfResult.stdout?.trim() ||
+      `Postrun gate exited with code ${wfResult.code}`;
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun gate failed (exit ${wfResult.code}):\n${reason}`,
+      });
+    } catch {
+      /* best effort */
+    }
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: override });
+    } catch {
+      /* best effort */
+    }
+    console.log(`  [${agentName}] Postrun gate override: ${outcome} -> ${override}`);
+    return override;
+  }
+
+  // No override (informational mode, or enforcing gate passed): just log output.
+  if (gateOutput) {
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Postrun output:\n${gateOutput}`,
+      });
+    } catch {
+      /* best effort */
+    }
+  }
+  return outcome;
+}
+
+/** Backstop: force `failed` with a system note when finalize is exhausted. */
+async function failFinalize({ url, apiKey, runId, agentName }) {
+  console.warn(
+    `  [${agentName}] Finalize exhausted — forcing failed (agent never set a valid status)`,
+  );
+  try {
+    await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+      content: "Run marked as failed: agent did not set a final status after the finalize turn.",
+    });
+  } catch {
+    /* best effort */
+  }
+  try {
+    await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Map a finished workflow command to its terminal run status.
+ * Exit 0 = done, 77 = skip, any other non-zero = failed. A kill only wins when
+ * the command did NOT exit cleanly — a clean exit 0 that races a late kill
+ * request still counts as success, so a completed run is never mislabeled
+ * `killed`.
+ *
+ * @param {{ killed: boolean, code: number|null }} result
+ * @returns {'killed'|'skipped'|'done'|'failed'}
+ */
+export function workflowOutcome({ killed, code }) {
+  if (killed && code !== 0) return "killed";
+  if (code === 77) return "skipped";
+  if (code === 0) return "done";
+  return "failed";
+}
+
+// Execute an already-claimed workflow run. `payload` is the claim response,
+// `creds` is { url, execToken }. No agent/LLM — materialize the gate and run it.
+export async function processNextWorkflow(payload, { url, execToken }, opts = {}) {
+  const { killPollIntervalMs = KILL_POLL_INTERVAL_MS } = opts;
+  const apiKey = execToken;
+  const name = payload.job?.name || "workflow";
 
   const runId = payload.run.id;
-  console.log(`  [workflows] Starting run ${runId} (${payload.job?.name || "unnamed"})`);
+  console.log(`  [${name}] Starting workflow run ${runId} (${payload.job?.name || "unnamed"})`);
 
-  if (!payload.job?.workflow) {
-    console.error(`  [workflows] No workflow command — failing`);
+  const gate = payload.job?.command || payload.job?.workflow;
+  if (!gate?.content) {
+    console.error(`  [${name}] No workflow script — failing`);
     try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
-    return;
+    } catch {
+      /* best effort */
+    }
+    return { outcome: "failed" };
   }
-
-  const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
-  mkdirSync(workflowDir, { recursive: true });
 
   const workflowTimeoutMs = (payload.job.timeout_minutes || 30) * 60 * 1000;
 
-  // Kill polling
-  const killController = new AbortController();
-  let killed = false;
-  const killPoll = setInterval(async () => {
-    if (killed) return;
-    try {
-      const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
-      if (res?.kill_requested) {
-        killed = true;
-        killController.abort();
-        console.log(`  [workflows] Kill requested — stopping`);
-      }
-    } catch { /* best effort */ }
-  }, KILL_POLL_INTERVAL_MS);
+  // Run-scoped env handed to the script. HARBOUR_* let a script post live
+  // progress updates to its own Output log while it runs (workflow runs have
+  // no message thread — these breadcrumbs are the only mid-run visibility):
+  //   curl -X POST "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity" \
+  //     -H "Authorization: Bearer $HARBOUR_API_KEY" -d '{"content":"..."}'
+  // Job-linked env vars are layered in first (parity with agent runs, so
+  // scripts can expand `$SECRET`); HARBOUR_* win on any name collision.
+  const extraEnv = {
+    ...(payload.env || {}),
+    HARBOUR_RUN_ID: runId,
+    HARBOUR_API_KEY: apiKey,
+    HARBOUR_URL: url,
+  };
 
+  // Stage + run the workflow gate through the shared gate runner — same
+  // resolveJobDir/materializeGate + kill-poll/timeout dance as prerun/postrun.
+  // A staging throw (malformed/unknown job with no scripts_dir) or a run throw
+  // both reject out of runGateCommand and land in the catch below, failing the
+  // run rather than leaving it dangling 'running'.
   try {
-    const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
+    const wfResult = await runGateCommand({
+      gate,
+      role: "workflow",
+      scriptsDir: payload.job?.scripts_dir,
+      payloadJson: JSON.stringify(payload),
+      url,
+      apiKey,
+      runId,
+      agentName: name,
+      label: "Workflow",
       timeoutMs: workflowTimeoutMs,
-      signal: killController.signal,
+      killPollIntervalMs,
+      extraEnv,
     });
-    clearInterval(killPoll);
+    const { killed } = wfResult;
 
-    if (killed) {
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
-      return;
-    }
+    // A kill only wins if the command didn't already exit cleanly — see
+    // workflowOutcome. This stops a successful run that finished in the kill
+    // poll window from being mislabeled `killed`.
+    const outcome = workflowOutcome({ killed, code: wfResult.code });
 
-    if (wfResult.code === 77) {
-      console.log(`  [workflows] Workflow exited 77 — skipping`);
-      if (wfResult.stderr?.trim()) {
-        try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
+    if (outcome === "killed") {
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+      } catch {
+        /* best effort */
       }
-      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" }); } catch { /* best effort */ }
-      return;
+      return { outcome: "killed" };
     }
 
-    if (wfResult.code !== 0) {
-      console.error(`  [workflows] Workflow exited ${wfResult.code} — failed`);
-      const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
+    if (outcome === "skipped") {
+      console.log(`  [${name}] Workflow exited 77 — skipping`);
+      if (wfResult.stderr?.trim()) {
+        try {
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+            content: wfResult.stderr.trim(),
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+      } catch {
+        /* best effort */
+      }
+      return { outcome: "skipped" };
+    }
+
+    if (outcome === "failed") {
+      console.error(`  [${name}] Workflow exited ${wfResult.code} — failed`);
+      const errOutput =
+        wfResult.stderr?.trim() ||
+        wfResult.stdout?.trim() ||
+        `Workflow exited with code ${wfResult.code}`;
       try {
         await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+      } catch {
+        /* best effort */
+      }
+      try {
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-      } catch { /* best effort */ }
-      return;
+      } catch {
+        /* best effort */
+      }
+      return { outcome: "failed" };
     }
 
     // Exit 0 — success
     const output = wfResult.stdout?.trim();
     if (output) {
-      try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output }); } catch { /* best effort */ }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
+      } catch {
+        /* best effort */
+      }
     }
-    try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" }); } catch { /* best effort */ }
-    console.log(`  [workflows] Run ${runId} completed.`);
-  } catch (err) {
-    clearInterval(killPoll);
-    console.error(`  [workflows] Workflow command failed: ${err.message}`);
     try {
-      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
+    } catch {
+      /* best effort */
+    }
+    console.log(`  [${name}] Workflow run ${runId} completed.`);
+    return { outcome: "done" };
+  } catch (err) {
+    console.error(`  [${name}] Workflow command failed: ${err.message}`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: `Workflow error: ${err.message}`,
+      });
+    } catch {
+      /* best effort */
+    }
+    try {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
+    return { outcome: "failed" };
   }
 }
 
-// Workflow-only jobs (agentless) are meant to run on the server host, not on
-// remote worker machines. If every configured runner points at a remote URL
-// (non-localhost), we skip the /api/workflows/next poll so remote workers
-// don't grab jobs intended for the server box.
-function isLocalUrl(url) {
+// ── The unified pool (`harbour run`) ─────────────────────────────────────────
+//
+// One process, one token. Claims work via POST /api/runner/claim advertising the
+// host's capabilities, runs distinct lock units in parallel (the server's lock
+// serializes the same unit), and branches on job.kind. Each cycle drains all
+// currently-due work, then exits — the scheduler service invokes it on a tick.
+
+const POOL_SIZE = Math.max(1, Number(process.env.HARBOUR_POOL_SIZE) || 4);
+// Backstop so one cycle can't run unboundedly if work keeps arriving.
+const MAX_CLAIMS_PER_CYCLE = Math.max(POOL_SIZE, Number(process.env.HARBOUR_MAX_CLAIMS) || 200);
+
+/**
+ * Claim the next runnable unit. Returns the payload ({ run } present or null),
+ * or `{ error: true }` on a transient failure (network blip, 5xx, restart). The
+ * caller MUST distinguish the error case from genuine no-work — otherwise a
+ * momentary server hiccup looks like "nothing due" and a one-shot `harbour run`
+ * silently leaves queued work unrun.
+ */
+async function claimOne(creds, capabilities) {
   try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
-  } catch {
-    return false;
+    return await apiCall(`${creds.url}/api/runner/claim`, creds.token, "POST", { capabilities });
+  } catch (err) {
+    console.error(`Claim failed: ${err.message}`);
+    return { error: true };
   }
 }
 
-export async function runAgents() {
-  const runners = loadRunnerConfigs();
-  if (runners.length === 0) {
-    console.log("No harbour agents configured. Create one from the dashboard.");
+/** Execute a claimed run with its exec token; never throws (logs + returns). */
+async function dispatch(payload, creds) {
+  const sub = { url: creds.url, execToken: payload.exec_token };
+  try {
+    if (payload.job?.kind === "workflow") return await processNextWorkflow(payload, sub);
+    return await processNextRun(payload, sub);
+  } catch (err) {
+    console.error(`  Run ${payload.run?.id} crashed in the runner: ${err.message}`);
+    return { outcome: "error" };
+  }
+}
+
+/**
+ * Drain all currently-claimable work, running up to POOL_SIZE units concurrently.
+ * The bundled local runner and a remote runner share this exact code path — the
+ * only difference is which token loadRunnerCredentials returns.
+ */
+export async function runPool() {
+  const creds = loadRunnerCredentials();
+  if (!creds) {
+    console.log(
+      "No runner token. Run `harbour setup` (local) or `harbour connect <blob>` (remote) first.",
+    );
     return;
   }
+  const capabilities = detectCapabilities();
+  console.log(
+    `Runner polling ${creds.url} — kinds=[${capabilities.kinds}] clis=[${capabilities.clis || []}] labels=[${capabilities.labels}] pool=${POOL_SIZE}`,
+  );
 
-  console.log(`Polling ${runners.length} harbour agent(s)...`);
+  const inFlight = new Set();
+  let claims = 0;
+  let claimError = false;
 
-  const work = [];
-  for (const runner of runners) {
-    work.push(runSingleAgent(runner));
+  while (true) {
+    // Top up the pool with claimable work.
+    while (inFlight.size < POOL_SIZE && claims < MAX_CLAIMS_PER_CYCLE) {
+      const payload = await claimOne(creds, capabilities);
+      if (payload?.error) {
+        // Transient failure — stop topping up this cycle (a later top-up after a
+        // slot frees will retry). Recorded so we don't report "nothing to do".
+        claimError = true;
+        break;
+      }
+      if (!payload?.run) break; // genuinely nothing claimable right now
+      claims++;
+      const task = dispatch(payload, creds).finally(() => inFlight.delete(task));
+      inFlight.add(task);
+    }
+    if (inFlight.size === 0) break; // pool empty and nothing more to claim → done
+    await Promise.race([...inFlight]); // a slot freed — try to top up again
   }
 
-  // Poll workflow-only jobs only against URLs this host is "local" to.
-  // A runner pointing at localhost means the server is on this machine, so
-  // we own the workflow-only queue for that URL. Remote runners skip it.
-  const localRunner = runners.find(r => isLocalUrl(r.url));
-  if (localRunner) {
-    work.push(runAgentlessWorkflows(localRunner.url, localRunner.apiKey));
+  if (claimError) {
+    console.log(`Claim error this cycle — ${claims} unit(s) ran; will retry on the next poll.`);
+  } else {
+    console.log(claims === 0 ? "Nothing to do." : `Done — ran ${claims} unit(s) this cycle.`);
   }
-
-  await Promise.allSettled(work);
-
-  console.log("Done.");
 }

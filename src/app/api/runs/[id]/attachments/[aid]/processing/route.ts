@@ -1,51 +1,50 @@
 import { NextResponse } from "next/server";
-import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getAttachmentById, getProcessingByAttachment } from "@/lib/db/queries";
+import { withRunExecutorOrUser } from "@/lib/auth";
+import { getAttachmentById, getProcessingByAttachment, getRunById } from "@/lib/db/queries";
 import { deleteProcessingRecord } from "@/lib/db/video-processing";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
-export const GET = withAuth(async (_req, auth, { params }) => {
-  const { id, aid } = await params;
-  const run = getRunById(id);
-  if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+export const GET = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
+    const { id, aid } = await params;
+    const run = getRunById(id);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-  const ownerError = requireAgentOwnership(auth, run.agent_id);
-  if (ownerError) return ownerError;
+    const processing = getProcessingByAttachment(aid);
+    if (!processing) return NextResponse.json({ error: "No processing record" }, { status: 404 });
 
-  const processing = getProcessingByAttachment(aid);
-  if (!processing) return NextResponse.json({ error: "No processing record" }, { status: 404 });
+    return NextResponse.json(processing);
+  },
+  { role: "viewer" },
+);
 
-  return NextResponse.json(processing);
-});
+export const POST = withRunExecutorOrUser(
+  async (_req, _auth, { params }) => {
+    const { id, aid } = await params;
+    const run = getRunById(id);
+    if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-export const POST = withAuth(async (_req, auth, { params }) => {
-  const { id, aid } = await params;
-  const run = getRunById(id);
-  if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
-
-  const ownerError = requireAgentOwnership(auth, run.agent_id);
-  if (ownerError) return ownerError;
-
-  const att = getAttachmentById(aid);
-  if (!att || att.run_id !== id) {
-    return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
-  }
-
-  if (!isVideoFile(att.mime_type, att.filename)) {
-    return NextResponse.json({ error: "Attachment is not a video" }, { status: 400 });
-  }
-
-  const existing = getProcessingByAttachment(aid);
-  if (existing) {
-    if (existing.status === "queued" || existing.status === "processing") {
-      return NextResponse.json({ error: "Already processing" }, { status: 409 });
+    const att = getAttachmentById(aid);
+    if (!att || att.run_id !== id) {
+      return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
     }
-    // Allow retry of failed/done — delete old record and re-process
-    deleteProcessingRecord(existing.id);
-  }
 
-  processVideoAttachment(aid, id);
-  return NextResponse.json({ status: "queued" }, { status: 202 });
-});
+    if (!isVideoFile(att.mime_type, att.filename)) {
+      return NextResponse.json({ error: "Attachment is not a video" }, { status: 400 });
+    }
+
+    const existing = getProcessingByAttachment(aid);
+    if (existing) {
+      if (existing.status === "queued" || existing.status === "processing") {
+        return NextResponse.json({ error: "Already processing" }, { status: 409 });
+      }
+      deleteProcessingRecord(existing.id);
+    }
+
+    processVideoAttachment(aid, id);
+    return NextResponse.json({ status: "queued" }, { status: 202 });
+  },
+  { role: "editor" },
+);

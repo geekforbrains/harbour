@@ -1,7 +1,10 @@
 {
   "name": "harbour",
-  "version": "1.16.0",
+  "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "bin": {
     "harbour": "./bin/harbour.mjs"
   },
@@ -9,13 +12,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "format": "biome format --write",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "harbour": "node bin/harbour.mjs",
     "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
+    "@node-rs/argon2": "^2.0.2",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5.95.2",
     "bcryptjs": "^3.0.3",
@@ -37,6 +45,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.16",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
@@ -48,8 +57,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.2"

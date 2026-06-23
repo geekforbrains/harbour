@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withResourceAuth } from "@/lib/auth";
 import { getJobById, listRunsByJob } from "@/lib/db/queries";
 
-export const GET = withAuth(async (req, _auth, { params }) => {
-  const { id } = await params;
-  const job = getJobById(id);
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+export const GET = withResourceAuth("job", "id", { role: "viewer" })(
+  async (req, _auth, { params }) => {
+    const { id } = await params;
+    const job = getJobById(id);
+    if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  const sp = req.nextUrl.searchParams;
-  const limit = sp.get("limit") ? Math.min(Math.max(1, Number(sp.get("limit"))), 100) : 10;
-  const offset = sp.get("offset") ? Math.max(0, Number(sp.get("offset"))) : 0;
-  const includeSkipped = sp.get("includeSkipped") === "1";
+    const sp = req.nextUrl.searchParams;
+    const limit = sp.get("limit") ? Math.min(Math.max(1, Number(sp.get("limit"))), 100) : 10;
+    const offset = sp.get("offset") ? Math.max(0, Number(sp.get("offset"))) : 0;
+    const includeSkipped = sp.get("includeSkipped") === "1";
 
-  return NextResponse.json(listRunsByJob(id, limit, { includeSkipped, offset }));
-});
+    return NextResponse.json(listRunsByJob(id, limit, { includeSkipped, offset }));
+  },
+);

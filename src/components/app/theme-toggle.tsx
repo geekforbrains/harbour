@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Sun, Moon, Monitor } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
 
 type Theme = "light" | "dark" | "system";
 
 export function applyTheme(theme: Theme) {
-  const isDark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const isDark =
+    theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", isDark);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", isDark ? "#111118" : "#ffffff");
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", isDark ? "#111118" : "#ffffff");
 }
 
 export function ThemeToggle() {
@@ -45,6 +48,7 @@ export function ThemeToggle() {
     <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {options.map((opt) => (
         <button
+          type="button"
           key={opt.value}
           onClick={() => setTheme(opt.value)}
           className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${

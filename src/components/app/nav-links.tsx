@@ -1,19 +1,20 @@
 "use client";
 
+import {
+  Activity,
+  Bot,
+  Briefcase,
+  FileText,
+  KeyRound,
+  MessageSquare,
+  Settings,
+  Table2,
+  Users,
+  Workflow,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useApp } from "./app-context";
-import {
-  Activity,
-  Briefcase,
-  Bot,
-  FileText,
-  Database,
-  KeyRound,
-  Users,
-  Settings,
-  MessageSquare,
-} from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
@@ -24,9 +25,10 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/docs", label: "Docs", icon: FileText },
-    { href: "/databases", label: "Databases", icon: Database },
-    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
+    { href: "/tables", label: "Tables", icon: Table2 },
+    { href: "/env-vars", label: "Secrets", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
@@ -34,24 +36,27 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
   return (
     <nav className="flex flex-col gap-0.5 px-2">
       {links.map((link) => {
-        const isActive = link.href === "/"
-          ? pathname === "/" || pathname.startsWith("/runs")
-          : pathname.startsWith(link.href);
+        const isActive =
+          link.href === "/"
+            ? pathname === "/" || pathname.startsWith("/runs")
+            : pathname.startsWith(link.href);
         return (
           <Link
             key={link.href}
             href={link.href}
             onClick={onClick}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
               isActive
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground font-medium hover:bg-accent hover:text-foreground"
             }`}
           >
-            <link.icon className="h-4 w-4" />
+            <link.icon
+              className={`h-4 w-4 shrink-0 ${isActive ? "" : "text-muted-foreground group-hover:text-foreground"}`}
+            />
             {link.label}
             {"badge" in link && (link.badge ?? 0) > 0 && (
-              <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-medium leading-none text-primary-foreground">
+              <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold leading-none text-white">
                 {link.badge}
               </span>
             )}

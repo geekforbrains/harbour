@@ -1,13 +1,33 @@
-import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { getUserById, getAgentById } from "@/lib/db/queries";
+import { type NextRequest, NextResponse } from "next/server";
+import { getIdentityFromRequest } from "@/lib/auth";
+import { getUserById, listOrgs, listOrgsForUser } from "@/lib/db/queries";
 
-export const GET = withAuth(async (req, auth) => {
-  if (auth.type === "user") {
-    const user = getUserById(auth.userId);
-    return NextResponse.json({ type: "user", user });
+/**
+ * Identity echo. Accepts any authenticated caller (user session, admin key,
+ * runner token, or run exec token) and returns who they are. Users also get
+ * their org memberships so the client can pick an active org.
+ */
+export const GET = async (req: NextRequest) => {
+  const identity = getIdentityFromRequest(req);
+  if (!identity) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const agent = getAgentById(auth.agentId);
-  return NextResponse.json({ type: "agent", agent });
-});
+  if (identity.type === "user") {
+    const user = getUserById(identity.userId);
+    // Instance admins have no memberships by design but can access every org,
+    // so surface all orgs to them; regular users see only their memberships.
+    const orgs = user?.is_instance_admin ? listOrgs() : listOrgsForUser(identity.userId);
+    return NextResponse.json({ type: "user", user, orgs });
+  }
+
+  if (identity.type === "runner") {
+    return NextResponse.json({
+      type: "runner",
+      runner: { id: identity.runnerId, name: identity.runnerName, tier: identity.tier },
+    });
+  }
+
+  // Executor (run exec token).
+  return NextResponse.json({ type: "executor", run_id: identity.runId });
+};

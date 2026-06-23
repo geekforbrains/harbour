@@ -7,9 +7,9 @@
  * so the user can customize them.
  */
 
-import fs from "fs";
-import path from "path";
-import { harbourHome, dbPath } from "../paths";
+import fs from "node:fs";
+import path from "node:path";
+import { dbPath, harbourHome } from "../paths";
 
 const CAPTAIN_MD = `# Captain — Harbour Assistant
 
@@ -29,7 +29,7 @@ Key concepts:
 - **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/data/env vars
 - **Runs** — a single execution of a job, with an activity log
 - **Docs** — shared markdown documents injected into runs
-- **Databases** — SQLite tables agents create and manage
+- **Tables** — SQLite tables agents create and manage
 - **Env Vars** — encrypted key-value pairs injected at runtime
 - **Projects** — optional groupings to organize everything
 
@@ -53,17 +53,17 @@ Harbour uses a single SQLite database:
 
 | Table | Purpose |
 |-------|---------|
-| agents | Agent configs (name, type, cli, model, thinking, api_key_hash) |
-| jobs | Recurring jobs (schedule, instructions, agent_id, workflow_command) |
+| agents | Agent configs (name, type, cli, model, thinking, placement) |
+| jobs | Recurring jobs (schedule, instructions, agent_id, prerun/postrun/workflow runtime+script) |
 | runs | Job executions (status, timestamps, session_id) |
 | run_activity | Message log per run (agent/user/system messages) |
 | run_output | Streaming CLI output events per run |
 | docs / doc_revisions | Shared markdown documents with version history |
-| databases | Agent-managed SQLite tables |
+| tables | Agent-managed SQLite tables |
 | env_vars | Encrypted environment variables |
 | settings | System key-value config |
 | users / sessions | Dashboard authentication |
-| projects / project_* | Optional organizational groupings |
+| orgs / projects | Tenancy: orgs contain projects; resources belong via org_id + nullable project_id (no junction tables) |
 | admin_api_keys | Admin API keys for management access |
 | captain_conversations | Captain chat conversations |
 | captain_messages | Captain chat message history |
@@ -123,10 +123,12 @@ dashboard Settings page.
 | \`${dbPath()}\` | SQLite database |
 | \`${harbourHome()}/uploads\` | Run file attachments |
 | \`${harbourHome()}/encryption.key\` | AES-256-GCM key for env vars |
-| \`${harbourHome()}/runners.json\` | Agent runner configuration |
+| \`${harbourHome()}/runner.token\` | Runner auth token |
 | \`${harbourHome()}/sessions.json\` | CLI session state for resume |
-| \`${harbourHome()}/runner.log\` | Agent runner log |
+| \`${harbourHome()}/runner.log\` | Runner log |
 | \`${harbourHome()}/workflows/\` | Workflow scripts directory |
+
+The DB \`runners\` table is the runner registry — \`runner.token\` is the only runner secret on disk.
 
 ## Guidelines
 

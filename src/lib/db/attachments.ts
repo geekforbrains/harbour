@@ -1,8 +1,8 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { v4 as uuid } from "uuid";
+import { runUploadsDir, uploadsDir } from "../paths";
 import { getDb } from "./schema";
-import { uploadsDir, runUploadsDir } from "../paths";
 
 export type AttachmentKind = "file" | "embed";
 
@@ -108,27 +108,33 @@ export function createEmbedAttachment(params: {
 
 export function getAttachmentById(id: string): RunAttachment | null {
   const db = getDb();
-  const row = db.prepare(`SELECT * FROM run_attachments WHERE id = ?`).get(id) as RunAttachment | undefined;
+  const row = db.prepare(`SELECT * FROM run_attachments WHERE id = ?`).get(id) as
+    | RunAttachment
+    | undefined;
   return row || null;
 }
 
 export function listAttachmentsByRun(runId: string): RunAttachment[] {
   const db = getDb();
-  return db.prepare(
-    `SELECT * FROM run_attachments WHERE run_id = ? ORDER BY created_at ASC`
-  ).all(runId) as RunAttachment[];
+  return db
+    .prepare(`SELECT * FROM run_attachments WHERE run_id = ? ORDER BY created_at ASC`)
+    .all(runId) as RunAttachment[];
 }
 
 /**
  * Link a set of attachments (by id) to a newly-created activity entry.
  * Used when a comment is posted with previously-uploaded attachments.
  */
-export function linkAttachmentsToActivity(attachmentIds: string[], activityId: string, runId: string): void {
+export function linkAttachmentsToActivity(
+  attachmentIds: string[],
+  activityId: string,
+  runId: string,
+): void {
   if (!attachmentIds.length) return;
   const db = getDb();
   const placeholders = attachmentIds.map(() => "?").join(",");
   db.prepare(
-    `UPDATE run_attachments SET activity_id = ? WHERE run_id = ? AND id IN (${placeholders}) AND activity_id IS NULL`
+    `UPDATE run_attachments SET activity_id = ? WHERE run_id = ? AND id IN (${placeholders}) AND activity_id IS NULL`,
   ).run(activityId, runId, ...attachmentIds);
 }
 
@@ -141,7 +147,11 @@ export function deleteAttachment(id: string): boolean {
   if (!att) return false;
   if (att.kind === "file" && att.storage_path) {
     const abs = path.join(uploadsDir(), att.storage_path);
-    try { fs.unlinkSync(abs); } catch { /* file already gone — ignore */ }
+    try {
+      fs.unlinkSync(abs);
+    } catch {
+      /* file already gone — ignore */
+    }
   }
   db.prepare(`DELETE FROM run_attachments WHERE id = ?`).run(id);
   return true;
@@ -153,5 +163,9 @@ export function deleteAttachment(id: string): boolean {
  */
 export function deleteRunAttachmentsDir(runId: string): void {
   const dir = runUploadsDir(runId);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }

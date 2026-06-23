@@ -1,6 +1,8 @@
 # Running a runner on a different machine
 
-The harbour server and the runner that polls for work do not have to live on the same box. This guide walks through pointing a runner on machine B at a harbour server on machine A.
+The harbour server and the runner that claims work do not have to live on the same box. This guide walks through enrolling a runner on machine B against a harbour server on machine A, and routing specific work to it.
+
+A runner is **any process that implements the [Runner Protocol](../runner-guide.md)** — it needn't be written in Node or be Harbour's bundled runner. Remote runners are **self-managed**: run [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) (the standalone reference runner) or your own implementation in any language. Everything below — placement labels, minting a credential, the claim handshake, the run lifecycle — is protocol-level and works the same regardless of what executes it; only step 3's *bundled-runner* path is Node-specific.
 
 ## Why you'd want this
 
@@ -9,9 +11,21 @@ The runner is the thing that actually spawns the CLI tool (Claude Code, Codex, G
 - **iOS / Xcode builds** need a Mac. The harbour server can sit on a Linux box; the runner sits on the Mac.
 - **GPU jobs** need the machine with the GPU. Co-locate the runner there.
 - **On-prem repos / VPN-only services** can't be reached from a public harbour. Put the runner inside the network and let it reach out.
-- **Big working directories.** A runner cloning a 10 GB monorepo into `~/.harbour/agents/<name>` does not need to clone it onto the harbour server.
+- **Big working directories.** A runner cloning a 10 GB monorepo into `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` does not need to clone it onto the harbour server.
 
-The agent record itself (jobs, schedule, prompt, model, docs, env vars) lives on harbour. Only the execution moves.
+The agent record itself (jobs, schedule, prompt, model, docs, env vars) lives on harbour. Only the execution moves. The same runner claims **both** agent runs and workflows — there's no separate workflow runner.
+
+## How the routing works
+
+A runner is the unit of execution, and which work it claims is decided by **placement labels**:
+
+- Every agent and every workflow job has a `placement` label, defaulting to `local`.
+- A runner advertises the labels it serves on every claim. The auto-provisioned pool on the harbour host advertises `local`; a remote runner advertises whatever you give it via `HARBOUR_RUNNER_LABELS` (comma-separated) on the host, defaulting to `local` if unset. (The token's minted labels are the authorization ceiling the server enforces — see the next bullet — not the advertised set.)
+- Work routes to a runner whose advertised label matches the job's `placement` — and, for a remote-tier token, a label it's *authorized* to serve. A job whose placement no connected runner advertises just sits `scheduled`.
+
+So "run this on another machine" is three moves: give the job a placement label, mint a remote runner authorized for that label, and connect it on the other host. The claim filters are detailed in [architecture](../reference/architecture.md).
+
+**One runner, many agents.** A runner isn't tied to an agent — it claims by label. Point several agents at the same label and a single runner serving it runs them all; their schedules and targeting stay on harbour, and because the claim lock is per-`agent_id`, their runs proceed in parallel up to the runner's pool size. You need a second runner only for a *different machine* or hard isolation — never just because you've added another agent. See [Designing an agent team](../concepts/agents.md#designing-an-agent-team).
 
 ## Reachability
 
@@ -19,38 +33,58 @@ The remote machine must be able to reach the harbour URL embedded in the connect
 
 The two patterns that work in practice:
 
-- **Tailscale (or any private mesh).** Run harbour on `harbour.tailnet.example`, list it as the URL when you create the remote agent, and the runner reaches it through the tailnet from anywhere.
+- **Tailscale (or any private mesh).** Run harbour on `harbour.tailnet.example`, and mint the runner against that URL so the connect blob carries it. The runner reaches harbour through the tailnet from anywhere.
 - **Public HTTPS.** Run harbour behind a reverse proxy with TLS (see [Deploying to production](deploy-to-production.md)). The runner curls the public URL like any other client.
 
-> If the runner can't reach the URL in the blob, `harbour agent connect` will fail at the verification step (it tries `GET /api/agents/:id/next?peek=true` before writing config). Fix the network before re-running.
+> If the runner can't reach the URL in the blob, `harbour connect` fails at the verification step — it does a `POST /api/runner/claim?peek=true` with the token before writing any config. Fix the network before re-running.
 
 ## Setup
 
-### 1. Create the agent in harbour
+### 1. Point the work at a placement label
 
-In the dashboard:
+Pick a label for the machine — say `gpu` or `mac-builder`.
 
-1. **Agents → New Agent → Harbour Agent**.
-2. Pick a CLI tool (Claude Code, Codex, or Gemini).
-3. Name it, pick a default model and thinking level if relevant.
-4. Tick **Run on a different machine**.
-5. **Create**.
+- **Workflow job:** set its **Placement** field to that label when you create it (the create dialog has a Placement input; default `local`).
+- **Agent:** set the agent's `placement` to that label. Every run the agent's jobs produce inherits it. (PATCH `/api/agents/:id` with `{ "placement": "gpu" }`; see the [API reference](../reference/api.md).)
 
-The dialog flips to a success state and shows a one-liner like:
+A "remote" agent is simply an agent whose placement points at a label only a remote runner serves — there's no separate API-key poller and no "runs on a different machine" toggle anymore. The agent record still lives on harbour; only where it executes changes.
+
+### 2. Mint a remote runner authorized for that label
+
+An instance admin mints a runner credential. Either:
+
+**In the dashboard:** **Settings → Runners → New Runner**. Give it a name and the labels it should serve (e.g. `gpu`). Harbour shows a ready-to-paste connect command.
+
+**Over the API:**
 
 ```bash
-harbour agent connect <long-base64-blob>
+curl -X POST https://harbour.tailnet.example/api/runners \
+  -H "Authorization: Bearer <admin-session-or-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Mac builder", "labels": ["gpu"]}'
 ```
 
-Copy that — you'll paste it on the remote machine.
+The response includes the runner row plus a `connect` field:
 
-> The blob contains the agent's API key. Treat it like a password. If it leaks, regenerate it from the agent's detail page (see [Rotating the connect blob](#rotating-the-connect-blob) below) — that rotates the key and invalidates the old one.
+```bash
+npm run harbour-agent -- connect <long-base64-blob>
+```
 
-Because you ticked the remote box, harbour skipped writing a local runner config for this agent. Confirmed in [`src/app/api/agents/route.ts`](../../src/app/api/agents/route.ts) — the `if (type === "harbour" && !remote)` branch is the one that writes `~/.harbour/runners.json` on the server, and remote agents take the other branch.
+The minted command targets the standalone [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) runner (the self-managed path in step 3). If you instead run Harbour's bundled runner from a checkout, swap `harbour-agent` → `harbour`: `npm run harbour -- connect <blob>`.
 
-### 2. Clone harbour on the remote machine
+Traced through [`src/app/api/runners/route.ts`](../../src/app/api/runners/route.ts), the blob is `base64(JSON.stringify({ url, token, name }))` — the harbour URL, the runner's bearer token (`hbrn_…`), and a friendly name. The token is the only secret in it; treat the blob like a password. You can also pass an optional `scope` (`{ orgId?, agentId? }`) to restrict the token to one org's or one agent's work.
 
-You don't need to build or run the harbour server on the remote — just the `bin/` runner code and its (zero) dependencies.
+`GET /api/runners` lists every runner; `DELETE /api/runners/:id` revokes one.
+
+> The token is minted once and only its hash is stored. If you lose the blob before pasting it, you can't recover the token — revoke the runner and mint a new one (see [Rotating a runner token](#rotating-a-runner-token)).
+
+### 3. Run a runner on the remote machine
+
+The minted token from step 2 is all a runner needs. Two paths:
+
+**A self-managed runner** — [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) or your own implementation in any language. Point it at the harbour URL with that token, have it advertise the label, and it claims over the [Runner Protocol](../runner-guide.md) like any other runner. Follow that project's own setup; the bundled-runner steps below (4–6) are Harbour's Node CLI and don't apply.
+
+**Harbour's bundled runner** (the rest of this guide) — the Node runner from this repo, run on the remote box. You don't build or run the harbour *server* there, just the `bin/` runner. It needs **Node 24 LTS** (this repo pins it):
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
@@ -58,55 +92,46 @@ cd harbour
 npm install
 ```
 
-`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs` and is invoked through `npm run harbour --`. The runner itself only uses Node stdlib (see [`Dockerfile.runner`](../../Dockerfile.runner) — a minimal image with no `npm install` required).
+`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs`, invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
 
-### 3. Paste the connect command
+### 4. Connect the runner
 
 ```bash
-npm run harbour -- agent connect <blob>
+npm run harbour -- connect <blob>
 ```
 
 What this does, traced through [`bin/lib/connect.mjs`](../../bin/lib/connect.mjs):
 
-1. **Decode.** The blob is `btoa(JSON.stringify({ url, agentId, apiKey, name, cli, model, thinking }))`. The CLI base64-decodes and JSON-parses it. Missing required fields fail fast.
-2. **Verify.** It calls `GET <url>/api/agents/<agentId>/next?peek=true` with the decoded API key. A 401/403 means the key is bad; any other non-200 means the URL is wrong or harbour is down.
-3. **Write.** On success, it appends (or replaces, keyed by `agentId`) an entry in `~/.harbour/runners.json`:
+1. **Decode.** The blob is base64-decoded and JSON-parsed; missing `url`, `token`, or `name` fails fast.
+2. **Verify.** It calls `POST <url>/api/runner/claim?peek=true` with the token, advertising this host's detected capabilities. A 401/403 means the token is bad or revoked; any other non-200 means the URL is wrong or harbour is down.
+3. **Write.** On success it saves the token to `~/.harbour/runner.token` (0600, like the encryption key) and the URL to `~/.harbour/runner.url`. The URL can be overridden at runtime by `HARBOUR_URL`.
 
-   ```json
-   {
-     "runners": [
-       {
-         "agentId": "...",
-         "name": "iOS Builder",
-         "apiKey": "hbr_...",
-         "cli": "claude",
-         "model": "sonnet",
-         "thinking": null,
-         "url": "https://harbour.tailnet.example"
-       }
-     ]
-   }
-   ```
+One runner credential per host — connecting again overwrites the saved token and URL.
 
-If you have multiple remote agents (e.g. one per project), run `harbour agent connect` once per agent — each one appends its own entry.
+### 5. Advertise the right labels and run a cycle by hand
 
-### 4. Run a poll cycle by hand to confirm
+The token was minted authorized for `gpu`, but the runner still has to *advertise* `gpu` on each claim. Set `HARBOUR_RUNNER_LABELS` so it does (otherwise it advertises only `local`):
 
 ```bash
-npm run harbour -- agent run
+export HARBOUR_RUNNER_LABELS=gpu
+npm run harbour -- run
 ```
 
-You should see something like `[<agent-name>] Polling...` followed by `[<agent-name>] Nothing to do.` — that's success. If the runner reports a poll error, fix it before scheduling.
+`harbour run` claims and drains everything currently due that this runner is eligible for, then exits. With nothing due you'll see it claim nothing and stop — that's success. If it reports a claim error, fix it before scheduling.
 
-### 5. Schedule polling
+> Check provisioning any time with `npm run harbour -- status` — it prints whether a token is present and which URL it resolves.
+
+### 6. Schedule polling
 
 ```bash
-npm run harbour -- agent install
+npm run harbour -- install
 ```
 
-This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60`. launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60`. launchd reruns `harbour run` every 60 seconds. Logs go to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit (see the [DigitalOcean cloud-init template](../../terraform/cloud-init.yml.tftpl) — it's the model: a `bash -c 'while true; do node bin/harbour.mjs agent run || true; sleep 60; done'` service unit), or use cron. The harbour server's [DigitalOcean deploy](deploy-to-production.md#path-b-digitalocean-droplet-via-terraform) does this for the server-side runner.
+The plist captures the current environment's `PATH` and `HOME`, but **not** arbitrary exports — so put `HARBOUR_RUNNER_LABELS` (and `HARBOUR_URL` if you use it) somewhere the launchd session inherits, e.g. the host's login environment, or edit the plist's `EnvironmentVariables` block by hand after install.
+
+> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit — the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units) is the model: a `bash -c 'while true; do node bin/harbour.mjs run || true; sleep 60; done'` service with `HARBOUR_RUNNER_LABELS` in its `Environment=` — or use cron.
 
 ## What runs on the remote, what runs on harbour
 
@@ -115,10 +140,10 @@ The split is straightforward but worth being explicit about.
 **On the remote machine:**
 
 - The runner process itself.
-- The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever you picked.
-- Working directories at `~/.harbour/agents/<slugified-name>/` — this is where the CLI's `cwd` lives. Clone repos here.
-- **Workflow gate scripts.** If a job uses a workflow command (a shell command that runs as a gate before the LLM, see [Workflows](../concepts/workflows.md) when that page lands), the script must exist at `~/.harbour/workflows/` on the **remote**, not on the harbour server. The runner cd's into that directory and runs the command there. Recommendation: keep `~/.harbour/workflows/` in a git repo and sync it across machines like any other dotfile.
-- Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the `/next` payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
+- The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever the agent picked.
+- Working directories at `~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
+- **Gate runtimes.** Prerun/postrun gate scripts are `{ runtime, content }` gists stored in Harbour; the runner materializes each body into `~/.harbour/workflows/<scripts_dir>` from the claim payload and runs it there — nothing to hand-place or sync. You only need the gate's **runtime** installed on the remote: `bash`, `python3`, or `node`, depending on which the gate uses.
+- Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the claim payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
 
 **On the harbour server:**
 
@@ -126,57 +151,29 @@ The split is straightforward but worth being explicit about.
 - The encryption key at `<HARBOUR_HOME>/encryption.key`.
 - Database (`harbour.db`) and uploads.
 
-## Agentless workflow jobs and remote runners
+## Rotating a runner token
 
-Workflow-only jobs (no agent — just a shell command on a schedule, see the README's Workflows section) are picked up via `GET /api/workflows/next`. **The remote runner skips this endpoint.** Confirmed in [`bin/lib/runner.mjs`](../../bin/lib/runner.mjs) at `runAgents()`: it only polls `/api/workflows/next` if at least one configured runner has a `localhost`/`127.0.0.1` URL — i.e. the harbour server is on this same machine.
+The runner token is a bearer credential. There's no in-place rotation — you revoke and re-mint:
 
-So:
+1. **Settings → Runners**, find the runner, and **Delete** it (or `DELETE /api/runners/:id`). Deleting the row invalidates its token immediately — the runner's next claim gets a 401.
+2. Mint a fresh runner with the same labels (**New Runner**, or `POST /api/runners`).
+3. On the remote, paste the new connect command. `harbour connect` overwrites the saved token and URL.
 
-- Agentless workflow-only jobs always run on whichever machine has a runner pointed at `localhost`. Usually that's the harbour server box itself.
-- Remote runners pick up only the runs for the specific agents they were connected for.
-
-This is intentional — agentless workflow jobs (cron-style "ping this URL every hour") have no notion of "which machine should this run on", so they stay glued to the harbour server.
-
-## Rotating the connect blob
-
-If the blob leaks, or you forget to copy it before closing the dialog:
-
-1. **Agents → click the agent → Connect Remote Runner**.
-2. Click **Generate Command**.
-3. Confirm. Harbour rotates the API key and shows a fresh `harbour agent connect <blob>` command.
-4. On the remote, paste the new command. `connect` finds the existing entry by `agentId` and replaces it (`bin/lib/connect.mjs`'s `writeRunner` keys on `agentId`).
-5. Any previously-connected runner for this agent is now using a stale key and will start getting 401s — re-run `connect` everywhere or delete the stale entries from `~/.harbour/runners.json`.
-
-> The old API key stops working the moment you click **Generate Command**. There's no grace window.
+> The old token stops working the moment you delete the runner. There's no grace window — connect the replacement before (or right after) revoking if you can't tolerate a gap.
 
 ## Sanity checks
 
 If polls aren't producing runs:
 
-- **Did launchd actually load the plist?** `launchctl list | grep com.harbour.agent-runner`.
+- **Did launchd actually load the plist?** `launchctl list | grep com.harbour.runner`.
 - **What does the log say?** `tail -f ~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
-- **Can the remote actually reach harbour?** `curl -H "Authorization: Bearer <apiKey>" <url>/api/agents/<agentId>/next?peek=true` — if this fails from the remote, no amount of fiddling with the runner will fix it.
-- **Are jobs scheduled?** Check the agent's job list in the dashboard. A configured agent with no jobs polls forever and reports "Nothing to do."
-
-## Trying it locally before pointing at a real remote box
-
-The repo includes a Docker Compose `remote` profile that brings up a second container acting as a separate machine, sharing the harbour server's network namespace:
-
-```bash
-docker compose --profile remote up -d
-```
-
-This brings up `harbour-remote` (defined in [`docker-compose.yml`](../../docker-compose.yml)). The container loops `node bin/harbour.mjs agent run` every 60s and writes its config to `./data-remote/`.
-
-You still have to run `agent connect` inside the container manually after creating the agent in the dashboard:
-
-```bash
-docker compose exec harbour-remote node bin/harbour.mjs agent connect <blob>
-```
-
-> The blob's URL is whatever your browser was using when you clicked Create — most likely `http://localhost:3030`. Inside the `harbour-remote` container, `localhost` is the container itself, not the harbour server. Edit the blob's URL (or paste a new agent created against `http://harbour:3000`, the compose service hostname) before running `connect`. This is a sandbox for kicking the tires on the connect/poll/run loop, not a substitute for a real second machine.
+- **Can the remote actually reach harbour?** `curl -X POST -H "Authorization: Bearer $(cat ~/.harbour/runner.token)" -H "Content-Type: application/json" -d '{"capabilities":{"kinds":["workflow"],"clis":[],"labels":["gpu"]}}' "$(cat ~/.harbour/runner.url)/api/runner/claim?peek=true"` — if this fails from the remote, no amount of fiddling with the runner will fix it.
+- **Do the labels line up?** The job's `placement` must match a label the runner *advertises* (`HARBOUR_RUNNER_LABELS`) **and** a label its token was *authorized* for at mint time. A mismatch leaves the work `scheduled` with nothing to claim it. Confirm the runner's advertised labels and last poll under **Settings → Runners**.
+- **Are jobs scheduled?** Check the agent's job list in the dashboard. A configured agent with no jobs polls forever and claims nothing.
+- **Does the service see the CLI?** A launchd/systemd service runs under a **fixed, minimal PATH — not your interactive shell's**. A CLI installed via a version manager (nvm, asdf, pyenv, volta) or exposed only through a shell alias is invisible to the service even though it works in your terminal. The runner advertises only CLIs it finds on PATH, so a missing one leaves that agent's runs `scheduled` with no runner to claim them (surfaced as an absent capability under **Settings → Runners**). `harbour status` prints the CLIs the *current shell* sees; the registry shows what the service actually advertised. Fix it by adding the CLI's directory to the service's PATH — `EnvironmentVariables` in the launchd plist, or `Environment=PATH=...` in the systemd unit — or install the CLI somewhere already on that PATH.
 
 ## Next
 
 - [Deploying to production](deploy-to-production.md) — putting the harbour server somewhere the remote machine can reach.
-- [Agents](../concepts/agents.md) — the harbour-vs-external split, the polling loop, and how rotation works.
+- [Agents](../concepts/agents.md) — the polling loop, placement, and how a run is claimed.
+- [Workflows](../concepts/workflows.md) — deterministic jobs claimed by the same runner.

@@ -1,87 +1,186 @@
-import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
-import crypto from "crypto";
+import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
+import { getDb, isUniqueViolation } from "./schema";
 
-function generateApiKey(): string {
-  return "hbr_" + crypto.randomBytes(32).toString("hex");
+function agentCollisionError(existingName: string, slug: string) {
+  return new NameCollisionError(
+    `An agent named "${existingName}" already exists in this project (folder name "${slug}") — ` +
+      `names must be unique ignoring case and punctuation.`,
+  );
 }
 
-function hashApiKey(key: string): string {
-  return crypto.createHash("sha256").update(key).digest("hex");
-}
-
-export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean; eager?: boolean }) {
+export function createAgent(
+  projectId: string,
+  name: string,
+  description?: string,
+  opts?: {
+    cli?: string;
+    model?: string;
+    thinking?: string;
+    color?: string;
+    eager?: boolean;
+    placement?: string;
+  },
+) {
   const db = getDb();
+  const slug = slugify(name);
+  if (!slug) {
+    throw new InvalidNameError("Agent name must contain at least one letter or number.");
+  }
+  // Slugs are unique per project (the agent's workspace directory name).
+  const existing = db
+    .prepare(`SELECT name FROM agents WHERE project_id = ? AND slug = ?`)
+    .get(projectId, slug) as { name: string } | undefined;
+  if (existing) throw agentCollisionError(existing.name, slug);
   const id = uuid();
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
-  const type = opts?.type || "external";
   const cli = opts?.cli || null;
   const model = opts?.model || null;
   const thinking = opts?.thinking || null;
-  const remote = opts?.remote ? 1 : 0;
+  const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
-  db.prepare(
-    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote, eager) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote, eager);
-  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote, eager: !!eager };
-}
-
-export function authenticateAgent(apiKey: string) {
-  const db = getDb();
-  const hash = hashApiKey(apiKey);
-  const agent = db.prepare(`SELECT id, name, description FROM agents WHERE api_key_hash = ?`).get(hash) as any;
-  return agent || null;
-}
-
-export function rotateAgentKey(agentId: string) {
-  const db = getDb();
-  const apiKey = generateApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
-  db.prepare(`UPDATE agents SET api_key_hash = ?, updated_at = unixepoch() WHERE id = ?`).run(apiKeyHash, agentId);
-  return apiKey;
+  const placement = opts?.placement?.trim() || "local";
+  try {
+    db.prepare(
+      `INSERT INTO agents (id, project_id, name, slug, description, cli, model, thinking, color, eager, placement)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      projectId,
+      name,
+      slug,
+      description || null,
+      cli,
+      model,
+      thinking,
+      color,
+      eager,
+      placement,
+    );
+  } catch (err) {
+    // Race backstop: a concurrent create can slip past the pre-check; the
+    // unique index catches it.
+    if (isUniqueViolation(err)) {
+      const winner = db
+        .prepare(`SELECT name FROM agents WHERE project_id = ? AND slug = ?`)
+        .get(projectId, slug) as { name: string } | undefined;
+      throw agentCollisionError(winner?.name ?? name, slug);
+    }
+    throw err;
+  }
+  return {
+    id,
+    project_id: projectId,
+    name,
+    slug,
+    description,
+    cli,
+    model,
+    thinking,
+    color,
+    eager: !!eager,
+    placement,
+  };
 }
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, eager, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
+  return (
+    (db
+      .prepare(
+        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, created_at, updated_at
+     FROM agents WHERE id = ?`,
+      )
+      .get(id) as any) || null
+  );
 }
 
-export function listAgents(projectId?: string) {
+/**
+ * Workspace path segments for an agent — the stored org/project/agent slugs,
+ * read live so the workspace always reflects the current hierarchy. Identity
+ * segments only, never absolute paths: the runner owns its filesystem layout
+ * (it may be a different machine).
+ */
+export function getAgentWorkspace(agentId: string) {
   const db = getDb();
-  if (projectId) {
-    return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
-        (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
-        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
-        (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
-        (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
-      FROM agents a
-      WHERE a.id IN (SELECT agent_id FROM project_agents WHERE project_id = ?)
-      ORDER BY a.name
-    `).all(projectId);
-  }
-  return db.prepare(`
-    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.eager, a.last_polled_at, a.created_at,
+  return (
+    (db
+      .prepare(`
+        SELECT o.slug AS org, p.slug AS project, a.slug AS agent
+        FROM agents a
+        JOIN projects p ON a.project_id = p.id
+        JOIN orgs o ON p.org_id = o.id
+        WHERE a.id = ?
+      `)
+      .get(agentId) as { org: string; project: string; agent: string } | undefined) || null
+  );
+}
+
+export function listAgents(projectId: string) {
+  const db = getDb();
+  return db
+    .prepare(`
+    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
       (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
-    FROM agents a ORDER BY a.name
-  `).all();
+    FROM agents a
+    WHERE a.project_id = ?
+    ORDER BY a.name
+  `)
+    .all(projectId);
 }
 
-export function updateAgent(id: string, data: { name?: string; description?: string; cli?: string; model?: string; thinking?: string; eager?: boolean }) {
+export function updateAgent(
+  id: string,
+  data: {
+    name?: string;
+    description?: string;
+    cli?: string;
+    model?: string;
+    thinking?: string;
+    color?: string;
+    eager?: boolean;
+    placement?: string;
+  },
+) {
   const db = getDb();
   const fields: string[] = [];
   const values: any[] = [];
-  if (data.name !== undefined) { fields.push("name = ?"); values.push(data.name); }
-  if (data.description !== undefined) { fields.push("description = ?"); values.push(data.description); }
-  if (data.cli !== undefined) { fields.push("cli = ?"); values.push(data.cli); }
-  if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model); }
-  if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
-  if (data.eager !== undefined) { fields.push("eager = ?"); values.push(data.eager ? 1 : 0); }
+  if (data.name !== undefined) {
+    // Rename never touches the slug — workspace paths stay stable.
+    fields.push("name = ?");
+    values.push(data.name);
+  }
+  if (data.description !== undefined) {
+    fields.push("description = ?");
+    values.push(data.description);
+  }
+  if (data.cli !== undefined) {
+    fields.push("cli = ?");
+    values.push(data.cli);
+  }
+  if (data.model !== undefined) {
+    fields.push("model = ?");
+    values.push(data.model);
+  }
+  if (data.thinking !== undefined) {
+    fields.push("thinking = ?");
+    values.push(data.thinking || null);
+  }
+  if (data.color !== undefined) {
+    fields.push("color = ?");
+    values.push(data.color || null);
+  }
+  if (data.eager !== undefined) {
+    fields.push("eager = ?");
+    values.push(data.eager ? 1 : 0);
+  }
+  if (data.placement !== undefined) {
+    fields.push("placement = ?");
+    values.push(data.placement.trim() || "local");
+  }
   if (fields.length === 0) return getAgentById(id);
   fields.push("updated_at = unixepoch()");
   values.push(id);
@@ -91,13 +190,15 @@ export function updateAgent(id: string, data: { name?: string; description?: str
 
 export function deleteAgent(id: string) {
   const db = getDb();
-  // Capture run ids first so we can clean their on-disk attachment dirs after cascade
-  const runIds = db.prepare(`SELECT id FROM runs WHERE agent_id = ?`).all(id) as { id: string }[];
+  // Capture run ids first so we can clean their on-disk attachment dirs after
+  // cascade. Includes runs reachable via the agent's jobs (jobs.agent_id
+  // CASCADE deletes them too) — not just runs that still point at the agent,
+  // since runs.agent_id may already be SET NULL.
+  const runIds = db
+    .prepare(
+      `SELECT id FROM runs WHERE agent_id = ? OR job_id IN (SELECT id FROM jobs WHERE agent_id = ?)`,
+    )
+    .all(id, id) as { id: string }[];
   db.prepare(`DELETE FROM agents WHERE id = ?`).run(id);
   for (const r of runIds) deleteRunAttachmentsDir(r.id);
-}
-
-export function touchAgentPolled(id: string) {
-  const db = getDb();
-  db.prepare(`UPDATE agents SET last_polled_at = unixepoch() WHERE id = ?`).run(id);
 }

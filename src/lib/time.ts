@@ -17,6 +17,7 @@ export function formatTimestamp(ts: number | null, timezone?: string): string | 
   if (isToday) return `Today at ${time}`;
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  if (d.toLocaleDateString("en-US", opts) === tomorrow.toLocaleDateString("en-US", opts)) return `Tomorrow at ${time}`;
+  if (d.toLocaleDateString("en-US", opts) === tomorrow.toLocaleDateString("en-US", opts))
+    return `Tomorrow at ${time}`;
   return `${d.toLocaleDateString([], { month: "short", day: "numeric", ...opts })} at ${time}`;
 }

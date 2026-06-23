@@ -1,258 +1,248 @@
 # API
 
-Reference for the HTTP surface. The wire-level contract that **agents** read at runtime — payload shapes, error envelopes, status semantics — lives in two source files served live by the running server:
+The codebase-side route map: every route file, its HTTP method, the auth wrapper
+(and minimum role), and a one-liner. **79 route files.**
 
-- **[GUIDE.md](../../GUIDE.md)** → served at `GET /api/guide`. The contract for **worker** agents (the ones that poll for runs).
-- **[ADMIN_GUIDE.md](../../ADMIN_GUIDE.md)** → served at `GET /api/admin-guide`. The contract for **management** agents (admin-key holders that create agents/jobs/etc).
+The **on-the-wire contract** an agent reads at runtime — payload shapes, error
+envelopes, status semantics — lives in two source files served live by the
+running server:
 
-This page is the codebase-side complement: every route file in the repo, with method, path, auth wrapper, and a one-liner. **67 route files**, **100 HTTP method handlers** total.
+- **[guide.md](../guide.md)** → `GET /api/guide`. Contract for **worker**
+  agents (poll for runs).
+- **[admin-guide.md](../admin-guide.md)** → `GET /api/admin-guide`. Contract
+  for **management** agents (admin-key holders).
 
-## Authentication
+For the auth model behind the wrapper names below — identities, roles, scope
+resolution — see [architecture.md](architecture.md#auth-model). In short:
+`viewer < editor < instance_admin`; agents are scoped to their own project's org;
+not-found resolves to **403** to avoid leaking existence across tenants.
 
-| Method | Header / cookie | Resolves to | Set by |
+Bearer tokens dispatch by prefix: `hbx_` is a per-run **exec token** (executor
+identity, bound to one run — accepted by the run-lifecycle wrappers below),
+`hbrn_` is a **runner token** (the claim endpoint only), and `hbr_` is the **admin
+API key** (resolving to the creating user). `withAgentOrUser` accepts a user or an
+agent-run's exec token (the executor acts as the run's agent).
+
+## Conventions
+
+- Bodies are JSON except attachment uploads (`multipart/form-data`).
+- Timestamps are epoch seconds; IDs are uuid except `run_output.id` /
+  `captain_output.id` (auto-increment, used as SSE `?after=N` cursors).
+- Errors are `{ "error": "<message>" }`. `401` unauthenticated, `403`
+  forbidden/out-of-scope, `409` for conflicts — an illegal run-status edge,
+  kill-while-not-running, or a create (`POST /api/orgs`, `/api/projects`,
+  `/api/agents`) whose name slugifies to an existing sibling's slug (a name
+  with no letters or numbers at all is a `400`).
+- **Input validation.** Handlers parse the body with `readJson` and the
+  `require*`/`optional*`/`assertOneOf` guards in `src/lib/http.ts`, which throw
+  `HttpError`; the auth wrappers' `runHandler` renders those as `{ error }`.
+  Net effect every mutation route inherits: a malformed/empty/non-object JSON
+  body is a clean `400` (not a `500`), and a wrong-typed or unknown-enum field
+  is a `400` rather than being silently stored. (`POST /api/tables/:id/rows`
+  parses inline because the contract allows a top-level array.)
+- **Scope** comes from the query string / cookies: org routes read `?orgId=` or
+  the `harbour_org` cookie; project routes read `?projectId=`; `[id]` routes
+  resolve the owning org from the resource.
+- **Claim payload** (`POST /api/runner/claim`): `{ run: null }` or the kind-tagged
+  `{ run, job, docs, tables, env, attachments, exec_token, api }`, plus `agent` and
+  `workspace` (the org/project/agent slugs) on agent runs. `exec_token` is the
+  freshly minted per-run `hbx_` credential and the `api` block is pre-resolved full
+  URLs that authenticate with it. Full schema in
+  [runner-guide.md](../runner-guide.md) (`GET /api/runner-guide`).
+- **SSE**: `GET /api/runs/:id/output/stream` and
+  `GET /api/captain/conversations/:id/stream` emit `event: output` (poll-backed),
+  then `event: status` / `event: done` on terminal state.
+
+## Public (bare handlers, no wrapper)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth/login` | Verify password, set `harbour_session` cookie. Rate-limited: 5 failed attempts per email+IP per 15 minutes → `429` |
+| POST | `/api/auth/logout` | Clear session cookie |
+| POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 12 chars). Rate-limited: 5 attempts per IP per hour → `429` |
+| GET | `/api/auth/me` | Echo the current principal (resolves the caller itself) |
+| GET | `/api/guide` | Serve [guide.md](../guide.md) (worker-agent / CLI contract) |
+| GET | `/api/runner-guide` | Serve [runner-guide.md](../runner-guide.md) (the Runner Protocol) |
+
+There is **no** signup route.
+
+## Instance admin (`withInstanceAdmin`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/orgs` | Create an org |
+| GET / POST | `/api/orgs/:id/members` | List / add org members (with role) |
+| DELETE | `/api/orgs/:id/members/:userId` | Remove a member |
+| GET / POST | `/api/users` | List / create users |
+| PUT / DELETE | `/api/users/:id` | Update / delete a user |
+| POST | `/api/users/:id/set-password-link` | Mint an invite / reset link |
+| GET / POST | `/api/admin-api-keys` | List / create admin keys |
+| DELETE | `/api/admin-api-keys/:id` | Revoke |
+| GET / PUT | `/api/settings` | Read / bulk-set instance settings |
+| GET | `/api/admin-guide` | Serve [admin-guide.md](../admin-guide.md) (`withAuthenticatedUser`) |
+
+`PUT /api/orgs` (rename) is `withOrgAuth({editor})`.
+
+## Orgs & projects
+
+| Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| User session | `Cookie: harbour_session=<id>` | `users` row | `POST /api/auth/login` |
-| Agent key | `Authorization: Bearer <key>` | `agents` row | `POST /api/agents` (creator-only) |
-| Admin key | `Authorization: Bearer <key>` | the **creator's user identity** | Settings → Admin API Keys |
+| GET / POST | `/api/projects` | `withOrgAuth` (viewer / editor) | List / create projects in the org |
+| GET | `/api/projects/:id` | `withResourceAuth` project (viewer) | Fetch |
+| PUT / DELETE | `/api/projects/:id` | `withResourceAuth` project (editor) | Rename / archive (soft delete) |
 
-Source: `src/lib/auth.ts`. Almost every API route begins with `withAuth(...)` (any of the three) or `withUserAuth(...)` (user or admin key only — agents are 403'd). The four public exceptions — `POST /api/auth/{signup,login,logout}` and `GET /api/guide` — are bare handlers with no wrapper. One extra in-handler guard narrows scope further:
+## Agents
 
-- `requireAgentOwnership(auth, agentId)` — agents can only act on their own resource.
-
-Unauthenticated requests get a uniform `401 {"error":"Unauthorized"}`. `withUserAuth` rejecting an agent caller returns `403 {"error":"Forbidden"}`.
-
-## Request shape conventions
-
-- All bodies are JSON (`Content-Type: application/json`) **except** attachment uploads, which are `multipart/form-data` (busboy).
-- All timestamps are epoch seconds (`unixepoch()` defaults in SQLite).
-- All IDs are uuid v4 strings except `run_output.id` and `captain_output.id`, which are auto-increment integers (used as SSE cursors via `?after=N`).
-- Errors return `{ "error": "<message>" }` with HTTP 4xx/5xx status. 409 is reserved for transition conflicts (e.g. kill-while-not-running).
-
-## Common patterns
-
-### Project filter
-
-List endpoints accept `?projectId=<id>` to scope results to a project. Implementation pattern (see `src/lib/db/runs.ts`): when `projectId` is set, the query joins `project_jobs` to filter. With no `projectId`, the full set is returned.
-
-Endpoints that honor the filter: `GET /api/agents`, `/api/jobs`, `/api/runs`, `/api/docs`, `/api/env-vars`, `/api/databases`.
-
-### List vs detail
-
-- `GET /api/<thing>` — list. Lightweight. Filters via query string.
-- `GET /api/<thing>/:id` — detail. Often joins related rows (e.g. run detail returns `{...run, activity, attachments}`; database detail returns `{...db, migrations, jobs}`).
-
-### `/next` payload
-
-Both `GET /api/agents/:id/next` and `GET /api/workflows/next` return either `null` (nothing to do) or a single payload with this shape (full schema in [GUIDE.md](../../GUIDE.md)):
-
-```
-{
-  run:   { id, status, activity }
-  job:   { id, name, instructions, workflow, workflow_only,
-           model, thinking, timeout_minutes }
-  docs:  [ { id, title, content } ]
-  data:  { <database name>: [ ...rows ] }
-  env:   { KEY: value }                    // decrypted at request time
-  attachments: [ ...serialized ]           // includes pre-resolved URLs
-  api:   { base_url, endpoints, status_options, notes }
-}
-```
-
-The `api` block is built by `buildApiSection` in `src/app/api/agents/[id]/next/route.ts`. Endpoints are pre-resolved to full URLs so an agent can curl them directly without string concatenation.
-
-### Streaming endpoints (SSE)
-
-Server-sent events are used for live output:
-
-- `GET /api/runs/:id/output/stream` — run output (poll DB every 500ms, emit `event: output`; on terminal status emits `event: status` followed by `event: done` and closes).
-- `GET /api/captain/conversations/:id/stream` — captain output (same shape, scoped to a conversation).
-
-Both accept `?after=<id>` to resume from an integer cursor. `Content-Type: text/event-stream`, no caching. Marked `export const dynamic = "force-dynamic"`.
-
-## Routes
-
-### Auth
-
-| Method | Path | Wrapper | Purpose |
+| Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/signup` | (none — public) | Create user; gated by `signup_enabled` setting |
-| POST | `/api/auth/login` | (none — public) | Verify password, set `harbour_session` cookie |
-| POST | `/api/auth/logout` | (none — clears cookie) | Delete session row, clear cookie |
-| GET | `/api/auth/me` | `withAuth` | Echo `{type, user|agent}` for the current principal |
+| GET / POST | `/api/agents` | `withProjectAuth` (viewer / editor) | List / create in the project |
+| GET | `/api/agents/:id` | `withResourceAuth` agent (viewer) | Fetch |
+| PUT / DELETE | `/api/agents/:id` | `withResourceAuth` agent (editor) | Update / delete |
+| GET / POST | `/api/agents/:id/jobs` | `withResourceAuth` agent (viewer / editor) | List / create the agent's jobs |
+| GET | `/api/agents/:id/runs` | `withResourceAuth` agent (viewer) | Run history |
+| POST | `/api/agents/:id/tables` | `withAgentOrUser` (editor) | Convenience: create a table, optionally link to a job + seed rows |
 
-### Agents
+## Jobs
 
-| Method | Path | Wrapper | Purpose |
+| Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| GET | `/api/agents` | `withAuth` | List agents; honors `?projectId=` |
-| POST | `/api/agents` | `withUserAuth` | Create agent; for non-remote harbour agents also writes a runner config |
-| GET | `/api/agents/:id` | `withAuth` | Fetch one agent |
-| PUT | `/api/agents/:id` | `withAuth` | Update agent (name/description/model/thinking/eager); syncs runner config for harbour agents |
-| DELETE | `/api/agents/:id` | `withUserAuth` | Delete agent + its runner config |
-| POST | `/api/agents/:id/rotate-key` | `withUserAuth` | Generate a new API key for the agent |
-| GET | `/api/agents/:id/jobs` | `withAuth` | List the agent's jobs |
-| POST | `/api/agents/:id/jobs` | `withAuth` | Create a job under this agent |
-| POST | `/api/agents/:id/data` | `withAuth` | Convenience: create-or-link a database and seed rows |
-| GET | `/api/agents/:id/next` | `withAuth` + `requireAgentOwnership` | **Polling** — returns next run payload or `null`. `?peek=true` for non-claiming check |
+| GET / POST | `/api/jobs` | `withOrgAuth` (viewer / editor) | List jobs / create a **workflow** job; `?projectId=` |
+| GET | `/api/jobs/:id` | `withResourceAuth` job (viewer) | Fetch |
+| PUT / DELETE | `/api/jobs/:id` | `withResourceAuth` job (editor) | Update / delete |
+| GET | `/api/jobs/:id/runs` | `withResourceAuth` job (viewer) | List the job's runs |
+| POST | `/api/jobs/:id/trigger` | `withAgentOrUser` (editor) | Create an immediate run (optional extra instructions) |
+| POST / DELETE | `/api/jobs/:id/docs[/:docId]` | `withResourceAuth` job (editor) | Link / unlink a doc |
+| POST / DELETE | `/api/jobs/:id/env-vars[/:envVarId]` | `withResourceAuth` job (editor) | Link / unlink a secret |
+| POST | `/api/jobs/:id/tables` | `withAgentOrUser` (editor) | Link a table |
+| DELETE | `/api/jobs/:id/tables/:tableId` | `withResourceAuth` job (editor) | Unlink a table |
 
-### Jobs
+`/api/jobs` is dual-tier like the shared-context lists: `GET` with `?projectId=`
+includes org-level jobs, and `POST` without a `projectId` (query or body)
+creates an **org-level** workflow — agent jobs (`POST /api/agents/:id/jobs`)
+are always project-level, and scope is fixed at creation. An org-level job may
+link only org-level docs / env vars / tables; the link routes (and create /
+update with `docIds` / `envVarIds`) return 400 otherwise.
 
-| Method | Path | Wrapper | Purpose |
+A job's gates — `prerun` / `postrun` on an agent job, `command` on a workflow —
+are each a **gate**: `{ runtime, content }`, where `runtime` is one of `bash`,
+`python`, `node` (defaulting to `bash`) and `content` is the script body, stored
+verbatim (never trimmed, so shebangs and leading blank lines survive). `POST
+/api/agents/:id/jobs` takes `prerun?` / `postrun?` (and `postrunGates?`); `POST
+/api/jobs` takes `command` (or `workflow` — same gate, required). On `PUT
+/api/jobs/:id` each gate field is optional: omit it to leave the gate unchanged,
+pass `null` to clear it, or pass an object to set it. A malformed gate (missing
+or non-string `content`, an unknown `runtime`) is a 400. The gates are delivered
+in the `POST /api/runner/claim` payload (`job.prerun` / `job.postrun` /
+`job.command` / `job.scripts_dir`) and materialized to disk by the runner — see
+[guide.md](../guide.md).
+
+## Runs
+
+| Method | Path | Wrapper (role) | Purpose |
 |---|---|---|---|
-| GET | `/api/jobs` | `withAuth` | List all jobs (agent + workflow-only); honors `?projectId=` |
-| POST | `/api/jobs` | `withUserAuth` | Create an **agentless** workflow-only job |
-| GET | `/api/jobs/:id` | `withAuth` | Fetch one job |
-| PUT | `/api/jobs/:id` | `withAuth` | Update job |
-| DELETE | `/api/jobs/:id` | `withAuth` | Delete job |
-| POST | `/api/jobs/:id/trigger` | `withAuth` | Create a one-off run for this job (optional `{instructions}` body field appends extra instructions) |
-| POST | `/api/jobs/:id/docs` | `withAuth` | Link a doc to the job |
-| DELETE | `/api/jobs/:id/docs/:docId` | `withAuth` | Unlink a doc |
-| POST | `/api/jobs/:id/data` | `withAuth` | Link a database to the job |
-| DELETE | `/api/jobs/:id/data/:dataId` | `withAuth` | Unlink a database |
-| POST | `/api/jobs/:id/env-vars` | `withAuth` | Link an env var to the job |
-| DELETE | `/api/jobs/:id/env-vars/:envVarId` | `withAuth` | Unlink an env var |
+| GET | `/api/runs` | `withOrgAuth` (viewer) | Bundled `{scheduled, running, waiting, recent}`; `?filter=`, `?projectId=` (org-level runs included) |
+| GET | `/api/runs/history` | `withOrgAuth` (viewer) | Paginated history |
+| GET | `/api/runs/health` | `withOrgAuth` (viewer) | Absent-runner surface: placements with queued runs no live runner is serving (drives the dashboard stall banner); `?projectId=` |
+| GET | `/api/runs/:id` | `withResourceAuth` run (viewer) | Run + activity + attachments |
+| DELETE | `/api/runs/:id` | `withResourceAuth` run (editor) | Delete run + uploads |
+| GET | `/api/runs/:id/activity` | `withResourceAuth` run (viewer) | Activity log |
+| POST | `/api/runs/:id/activity` | `withRunExecutorOrUser` | Append; user comment on a terminal run → `pending`; workflow runs accept executor output only |
+| GET | `/api/runs/:id/output` | `withResourceAuth` run (viewer) | Buffered output (`?after=`) |
+| POST | `/api/runs/:id/output` | `withRunExecutorOrUser` | Executor streams output; response carries `kill_requested` |
+| GET | `/api/runs/:id/output/stream` | `withResourceAuth` run (viewer) | SSE |
+| GET | `/api/runs/:id/kill` | `withRunExecutorOrUser` | Kill-flag poll (runner fallback) |
+| POST | `/api/runs/:id/kill` | `withResourceAuth` run (editor) | Request kill (409 if not running) |
+| POST | `/api/runs/:id/retry` | `withResourceAuth` run (editor) | Retry terminal → `pending` (agent) / `scheduled` (workflow) |
+| GET / PUT | `/api/runs/:id/status` | `withRunExecutorOrUser` | Read / set status (409 on illegal transition) |
+| PUT | `/api/runs/:id/session` | `withRunExecutorOrUser` | Executor reports CLI session id + cwd |
+| PUT | `/api/runs/:id/title` | `withRunExecutorOrUser` | Set the run title |
 
-### Runs
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/runs` | `withAuth` | Bundled `{scheduled, running, waiting, recent}`. `?filter=waiting`/`?filter=recent` for one section. `?projectId=` filter |
-| POST | `/api/runs` | `withAuth` | Create a one-off run for an agent |
-| GET | `/api/runs/:id` | `withAuth` | Run + activity + serialized attachments |
-| DELETE | `/api/runs/:id` | `withUserAuth` | Delete run + uploads dir |
-| PUT | `/api/runs/:id/status` | `withAuth` + `requireAgentOwnership` | Set run status |
-| GET | `/api/runs/:id/activity` | `withAuth` | List activity entries |
-| POST | `/api/runs/:id/activity` | `withAuth` + `requireAgentOwnership` | Append activity. User comments on terminal runs flip status to `pending` for resume |
-| GET | `/api/runs/:id/output` | `withAuth` | Buffered output events with `?after=<id>` cursor |
-| POST | `/api/runs/:id/output` | `withAuth` + `requireAgentOwnership` | Runner streams output here. Response includes `kill_requested` (piggyback) |
-| GET | `/api/runs/:id/output/stream` | `withAuth` | SSE stream of output events; emits `done` on terminal status |
-| GET | `/api/runs/:id/kill` | `withAuth` + `requireAgentOwnership` | Lightweight kill-flag poll for runner fallback |
-| POST | `/api/runs/:id/kill` | `withUserAuth` | Request kill (sets `kill_requested_at`); 400 for non-harbour agents, 409 for non-running runs |
-| POST | `/api/runs/:id/retry` | `withUserAuth` | Retry `failed`/`skipped`/`killed` → `pending` |
-| PUT | `/api/runs/:id/session` | `withAuth` + `requireAgentOwnership` | Runner reports the CLI session ID + cwd for resume |
+These lifecycle routes accept either the run's per-run **exec token** (`hbx_`,
+minted at claim and bound to this run id) or a user meeting the stated role in the
+run's org. The runner and the CLI it spawns authenticate every call here with the
+exec token, never the runner token — see [architecture.md](architecture.md#auth-model).
 
 ### Run attachments
 
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/runs/:id/attachments` | `withAuth` + `requireAgentOwnership` | List attachments (serialized with absolute URLs) |
-| POST | `/api/runs/:id/attachments` | `withAuth` + `requireAgentOwnership` | Upload file (multipart) or attach embed (JSON `{url}`); auto-queues video processing |
-| DELETE | `/api/runs/:id/attachments/:aid` | `withAuth` + `requireAgentOwnership` | Delete one attachment |
-| GET | `/api/runs/:id/attachments/:aid/file` | `withAuth` + `requireAgentOwnership` | Download bytes (inline for image/video/pdf, attachment otherwise) |
-| GET | `/api/runs/:id/attachments/:aid/processing` | `withAuth` + `requireAgentOwnership` | Video processing status |
-| POST | `/api/runs/:id/attachments/:aid/processing` | `withAuth` + `requireAgentOwnership` | Re-queue processing for a video attachment |
-| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withAuth` + `requireAgentOwnership` | Paginated list of generated frames |
-| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withAuth` + `requireAgentOwnership` | One screenshot JPEG |
-| GET | `/api/runs/:id/attachments/:aid/transcript` | `withAuth` + `requireAgentOwnership` | Transcript text (or interleaved storyboard if available; `?format=plain` to force) |
-
-### Docs
+All attachment routes use `withRunExecutorOrUser` — the run's per-run **exec token**
+(bound to this run id; an executor can't reach another run's attachments) or a user
+in the run's org. Reads require `viewer`, writes (upload / delete / requeue) `editor`.
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET | `/api/docs` | `withAuth` | List docs; honors `?projectId=` |
-| POST | `/api/docs` | `withAuth` | Create doc + initial revision |
-| GET | `/api/docs/:id` | `withAuth` | Fetch doc with latest content |
-| PUT | `/api/docs/:id` | `withAuth` | Update title and/or content (creates revision) |
-| DELETE | `/api/docs/:id` | `withAuth` | Delete |
-| GET | `/api/docs/:id/revisions` | `withAuth` | History list |
-| POST | `/api/docs/:id/pin` | `withAuth` | Toggle pinned (auto-attach to new jobs) |
+| GET / POST | `/api/runs/:id/attachments` | `withRunExecutorOrUser` | List / upload file (multipart) or embed (JSON) |
+| DELETE | `/api/runs/:id/attachments/:aid` | `withRunExecutorOrUser` | Delete |
+| GET | `/api/runs/:id/attachments/:aid/file` | `withRunExecutorOrUser` | Download bytes |
+| GET / POST | `/api/runs/:id/attachments/:aid/processing` | `withRunExecutorOrUser` | Video processing status / (re)queue |
+| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withRunExecutorOrUser` | Paginated frames |
+| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withRunExecutorOrUser` | One JPEG |
+| GET | `/api/runs/:id/attachments/:aid/transcript` | `withRunExecutorOrUser` | Transcript / storyboard (`?format=plain`) |
 
-### Databases
+## Shared context
+
+| Method | Path | Wrapper (role) | Purpose |
+|---|---|---|---|
+| GET | `/api/docs` | `withOrgAuth` (viewer) | List; `?projectId=` |
+| POST | `/api/docs` | `withAgentOrUser` (editor) | Create (users **and** agents) |
+| GET | `/api/docs/:id` | `withResourceAuth` doc (viewer) | Fetch latest content |
+| PUT | `/api/docs/:id` | `withAgentOrUser` | Update (creates a revision; agents too) |
+| DELETE | `/api/docs/:id` | `withResourceAuth` doc (editor) | Delete |
+| GET | `/api/docs/:id/revisions` | `withResourceAuth` doc (viewer) | History |
+| POST | `/api/docs/:id/pin` | `withResourceAuth` doc (editor) | Toggle pin |
+| GET | `/api/tables` | `withOrgAuth` (viewer) | List; `?projectId=` |
+| POST | `/api/tables` | `withAgentOrUser` (editor) | Create |
+| GET | `/api/tables/:id` | `withResourceAuth` table (viewer) | Table + migrations + linked jobs |
+| DELETE | `/api/tables/:id` | `withResourceAuth` table (editor) | Drop |
+| POST | `/api/tables/:id/columns` | `withAgentOrUser` | Add a column (records a migration) |
+| GET / POST | `/api/tables/:id/rows` | `withAgentOrUser` | Read (paginated) / insert |
+| PUT / DELETE | `/api/tables/:id/rows/:rowId` | `withAgentOrUser` | Update / delete a row |
+| POST | `/api/tables/:id/pin` | `withResourceAuth` table (editor) | Toggle pin |
+| GET | `/api/env-vars` | `withOrgAuth` (viewer) | List secrets (no plaintext); `?projectId=` |
+| POST | `/api/env-vars` | `withOrgAuth` (editor) | Create (encrypts) |
+| GET | `/api/env-vars/:id` | `withResourceAuth` env_var (viewer) | Metadata (no plaintext) |
+| PUT / DELETE | `/api/env-vars/:id` | `withResourceAuth` env_var (editor) | Rename/replace / delete |
+| GET | `/api/env-vars/:id/value` | `withResourceAuth` env_var (editor) | Decrypted reveal |
+| POST | `/api/env-vars/:id/pin` | `withResourceAuth` env_var (editor) | Toggle pin |
+
+(The UI labels env vars **Secrets**; the route and table names stay `env-vars` /
+`env_vars`.)
+
+## Runner
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET | `/api/databases` | `withAuth` | List; honors `?projectId=` |
-| POST | `/api/databases` | `withAuth` | Create a named database with columns |
-| GET | `/api/databases/:id` | `withAuth` | DB + migrations + linked jobs |
-| DELETE | `/api/databases/:id` | `withAuth` | Drop |
-| POST | `/api/databases/:id/columns` | `withAuth` | Add a column (records a migration) |
-| GET | `/api/databases/:id/rows` | `withAuth` | Paginated rows; `?limit=&offset=&orderBy=&order=ASC|DESC` |
-| POST | `/api/databases/:id/rows` | `withAuth` | Insert one row or array of rows |
-| PUT | `/api/databases/:id/rows/:rowId` | `withAuth` | Update one row |
-| DELETE | `/api/databases/:id/rows/:rowId` | `withAuth` | Delete one row |
+| POST | `/api/runner/claim` | `withRunnerAuth` | The one execution entry point: a runner POSTs `{ capabilities: { kinds, clis, labels } }` and gets back the next claimable run (kind-tagged, with its `exec_token` + pre-resolved `api` block) or `{ run: null }`. `?peek=true` reports availability/liveness without claiming |
+| GET / POST | `/api/runners` | `withInstanceAdmin` | List the execution pool (every runner + its in-flight slot count) / mint a **remote** runner credential (returns a `connect` blob to enroll on another host) |
+| DELETE | `/api/runners/:id` | `withInstanceAdmin` | Revoke a runner (token 401s immediately on next claim; `runs.claimed_by` nulled by FK) |
 
-### Env vars
+This single endpoint replaces the old per-runner poll routes (`GET
+/api/agents/:id/next`, `GET /api/workflows/next`) and the per-org workflow-runner
+credential routes (`GET / POST /api/workflow-runners`), which are removed. Both
+agent and workflow runs are claimed here; the server is the sole arbiter and
+serializes claims in one SQLite transaction.
 
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/env-vars` | `withAuth` | List env vars (no plaintext); honors `?projectId=` |
-| POST | `/api/env-vars` | `withUserAuth` | Create (encrypts value) |
-| GET | `/api/env-vars/:id` | `withAuth` | Fetch metadata (still no plaintext) |
-| PUT | `/api/env-vars/:id` | `withAuth` | Rename or replace value |
-| DELETE | `/api/env-vars/:id` | `withAuth` | Delete |
-| POST | `/api/env-vars/:id/pin` | `withAuth` | Toggle pinned |
-| GET | `/api/env-vars/:id/value` | `withUserAuth` | Decrypted plaintext (UI reveal) |
+## Captain (all `withOrgAuth`)
 
-### Projects
+| Method | Path | Purpose |
+|---|---|---|
+| GET / POST | `/api/captain/conversations` | List / create a conversation |
+| GET / PUT / DELETE | `/api/captain/conversations/:id` | Fetch / rename / delete |
+| POST | `/api/captain/conversations/:id/messages` | Post a message — returns **202** `{messageId, userMessageId}` and spawns the CLI subprocess async; output arrives via the SSE stream |
+| GET | `/api/captain/conversations/:id/status` | `{running, activeMessageId}` |
+| POST | `/api/captain/conversations/:id/stop` | SIGTERM the active subprocess |
+| GET | `/api/captain/conversations/:id/stream` | SSE output |
 
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/projects` | `withUserAuth` | List |
-| POST | `/api/projects` | `withUserAuth` | Create |
-| GET | `/api/projects/:id` | `withUserAuth` | Fetch |
-| PUT | `/api/projects/:id` | `withUserAuth` | Rename |
-| DELETE | `/api/projects/:id` | `withUserAuth` | Delete (only the grouping; entities survive) |
-| PATCH | `/api/projects/:id` | `withUserAuth` | `{action: "link"|"unlink", type: "agent"|"job"|"doc"|"env-var"|"database", targetId}` |
+## System (`withAuthenticatedUser`)
 
-### Settings
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/settings/timezones` | Supported timezone list |
+| GET | `/api/settings/video-processing/check` | Probe ffmpeg / whisper / provider availability |
+| GET | `/api/system/cli-tools` | Detect installed CLI tools |
+| GET | `/api/system/upload-config` | `{max_upload_mb, max_upload_bytes}` |
 
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/settings` | `withAuth` | All settings (sensitive ones masked) |
-| PUT | `/api/settings` | `withUserAuth` | Bulk-set; sensitive masking re-applied on response |
-| GET | `/api/settings/timezones` | `withAuth` | `Intl.supportedValuesOf("timeZone")` |
-| GET | `/api/settings/video-processing/check` | `withUserAuth` | Probes for ffmpeg/whisper/openai/gemini availability |
+## Adding a route
 
-### System
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/system/cli-tools` | `withAuth` | Detects which of claude/codex/gemini are installed (extends PATH with common locations) |
-| GET | `/api/system/upload-config` | `withAuth` | `{max_upload_mb, max_upload_bytes}` |
-
-### Admin API keys
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/admin-api-keys` | `withUserAuth` | List keys (no plaintext) |
-| POST | `/api/admin-api-keys` | `withUserAuth` | Create key (returns plaintext one time) |
-| DELETE | `/api/admin-api-keys/:id` | `withUserAuth` | Revoke |
-| GET | `/api/admin-guide` | `withUserAuth` | Serves [ADMIN_GUIDE.md](../../ADMIN_GUIDE.md) |
-
-### Captain
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/captain/conversations` | `withUserAuth` | List the user's conversations |
-| POST | `/api/captain/conversations` | `withUserAuth` | Create using captain's CLI/model/thinking settings |
-| GET | `/api/captain/conversations/:id` | `withUserAuth` | Conversation + messages (with tool events grouped per assistant message) |
-| PUT | `/api/captain/conversations/:id` | `withUserAuth` | Update title |
-| DELETE | `/api/captain/conversations/:id` | `withUserAuth` | Stop process + delete |
-| POST | `/api/captain/conversations/:id/messages` | `withUserAuth` | Post a user message; spawns CLI subprocess (202) |
-| GET | `/api/captain/conversations/:id/status` | `withUserAuth` | `{running, activeMessageId}` for the chat header |
-| POST | `/api/captain/conversations/:id/stop` | `withUserAuth` | SIGTERM the active CLI subprocess |
-| GET | `/api/captain/conversations/:id/stream` | `withUserAuth` | SSE stream of output events |
-
-### Workflows
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/workflows/next` | `withAuth` | Polling endpoint for **agentless** workflow runs (the runner calls this from the harbour-host machine only) |
-
-### Misc
-
-| Method | Path | Wrapper | Purpose |
-|---|---|---|---|
-| GET | `/api/users` | `withAuth` | List users (`id`, `email`, `display_name`, `created_at`) |
-| GET | `/api/guide` | (none — public) | Serves [GUIDE.md](../../GUIDE.md) |
-
-## When to read which file
-
-| Question | File |
-|---|---|
-| "What does the runner curl after a kill?" | `bin/lib/runner.mjs` |
-| "What exact JSON does `/api/agents/:id/next` return?" | [GUIDE.md](../../GUIDE.md) |
-| "What can an admin key do that a user session can't?" | Nothing — admin keys resolve to a user identity |
-| "What's the agent ownership rule?" | `src/lib/auth.ts` (`requireAgentOwnership`) |
-| "What schema does the `data` block in `/next` follow?" | [GUIDE.md](../../GUIDE.md) — agent-managed table rows by name |
-| "How do I add a new route?" | New `route.ts` under `src/app/api/<path>/`; wrap with `withAuth` or `withUserAuth`; add a row to the relevant table above |
+New `route.ts` under `src/app/api/<path>/`; wrap it with the narrowest fitting
+HOF from `src/lib/auth.ts`; add a row to the relevant table above. Never write an
+inline auth check.

@@ -2,161 +2,101 @@
 
 The first 30 minutes with Harbour. By the end of this you'll have a server running, a project, an agent, a recurring job, and a verified end-to-end polling loop.
 
-Pick one of the three paths below — Docker is the easiest way to try it, plain `npm` is the easiest way to develop against it, and Harbour Agent layers the built-in CLI runner on top of either.
+The flow: install and run the server, then drive the claim loop by hand with curl (the way a runner does), then let the bundled local runner do that for you. Setup auto-provisions a local runner, so the hands-off path is just: `setup` → install the runner → it claims work.
 
 > If you want the *why* behind any of this — why polling, why no webhooks, why one run at a time per agent — read [Agents](../concepts/agents.md) and [Jobs and runs](../concepts/jobs-and-runs.md). This page is the *how*.
 
-## Path A — Docker (recommended for trying it out)
+## Install and run
 
-Only requirement is Docker.
-
-```bash
-git clone https://github.com/geekforbrains/harbour.git
-cd harbour
-make run
-```
-
-`make run` is a thin wrapper over `docker compose up -d --build` plus a friendly post-run banner. It builds the image (~2 min on a cold cache, ~10s on a warm one), starts the container, and prints:
-
-```
-Harbour is running at http://localhost:3030
-Data is persisted in ./data (DB, uploads, encryption key)
-```
-
-Visit [http://localhost:3030](http://localhost:3030) and sign up. The first user to register is just a normal user — Harbour has no separate "admin" role for the dashboard.
-
-> All state lives in `./data` next to the repo. Back that directory up and you have a snapshot of everything (DB, uploads, encryption key, runner config). `make clean` deletes it; don't run that on a real install.
-
-Useful side commands:
-
-```bash
-make logs     # follow the server logs
-make down     # stop the container, keep ./data
-make rebuild  # rebuild the image and restart (after pulling code changes)
-```
-
-Skip ahead to [First agent and first job](#first-agent-and-first-job).
-
-## Path B — Without Docker (for development)
-
-You'll need Node 20+ and a working `npm`.
+You'll need **Node 24 LTS** and a working `npm` (macOS or Linux). If you later switch Node versions (e.g. with nvm), re-run `npm rebuild better-sqlite3` so its native binary matches the active Node — otherwise Harbour refuses to boot with a `NODE_MODULE_VERSION` error.
 
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
+npm run harbour -- setup   # one-time: create the instance admin + local runner (interactive)
 npm start
 ```
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000) and sign up.
+`harbour setup` does two things: it creates the instance admin **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600). No minting, no connect blobs; the local path just works. At the end it prompts `Install the runner service to poll for work every 60s? [Y/n]` — answer yes and launchd starts polling immediately, or skip it and run `npm run harbour -- install` later (see [Run the local runner](#run-the-local-runner)).
 
-> Plain `npm start` uses port 3000; Docker uses 3030. They're not interchangeable URLs — make sure your bookmarks match the path you took.
+`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project from the dashboard — every agent and agent job lives inside a project (workflows can also be org-level). (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively — it also auto-provisions the local runner token, but doesn't prompt to install the service; schedule it yourself with `harbour install` when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.)
 
-State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Override with `HARBOUR_HOME` if you want to keep installs separate.
+State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 
 For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 — that's reserved for production in this repo's conventions.
 
 ## First agent and first job
 
-Whichever path you took, the dashboard is now up. The setup below uses the **External** agent flow because it's path-agnostic — you can verify it with curl from your terminal. (Path C below swaps in a built-in CLI runner.)
-
-> Replace `http://localhost:3030` with `http://localhost:3000` if you took Path B. The rest of the commands are identical.
+The dashboard is now up and you have a project. Every agent picks a CLI tool (Claude Code, Codex, or Gemini) at creation, but the wire contract is plain HTTP — so this walkthrough drives the claim loop with curl from your terminal, exactly the way a runner does. (The [bundled runner](#let-the-bundled-runner-do-it) below does this for you.)
 
 ### 1. Create an agent
 
 In the dashboard:
 
 1. **Agents → New Agent** in the top right.
-2. Pick **External** ("Bring your own agent").
+2. Pick a CLI tool (any of them — for this curl walkthrough it won't actually be invoked).
 3. Name it — `Researcher` is fine.
-4. **Create**.
+4. Leave **Placement** as `local` (the host's runner pool).
+5. **Create**.
 
-The dialog flips to a confirmation panel showing an API key that looks like:
-
-```
-hbr_a0be210a2478ae2c38b8f2535747fea0...
-```
-
-Copy it now. The full key is shown once and never again. (You can rotate it later from the agent's detail page if you lose it.)
+The agent has **no credential of its own**. A runner claims its work and hands the spawned CLI a per-run exec token — that's the contract this walkthrough drives by hand with curl, exactly the way any runner does.
 
 ### 2. Create a job
 
 On the agent's detail page, click **New Job**. Fill in:
 
 - **Name** — `Daily check`
-- **Trigger** — Schedule (the default)
 - **Schedule** — pick `Every 5 minutes` from the picker
 - **Instructions** — `Say hello.`
 - **Create**
 
-Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [admin guide](../../ADMIN_GUIDE.md#create-an-agent-job).
+Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [admin guide](../admin-guide.md#create-an-agent-job).
 
 ### 3. Verify the polling loop with curl
 
-Set a couple of shell variables (use the API key you just copied and the agent ID from the URL on the agent's detail page):
+A runner claims work over the [Runner Protocol](../runner-guide.md), authenticating with a **runner token** (never an agent key — agents have none). `setup` already provisioned the local one — read it into a shell variable:
 
 ```bash
-export HARBOUR_URL=http://localhost:3030
-export AGENT_ID=<paste-agent-id>
-export KEY=<paste-api-key>
+export HARBOUR_URL=http://localhost:3000
+export RUNNER_TOKEN=$(cat ~/.harbour/runner.token)
 ```
 
-Peek for work without claiming it:
+A runner advertises its **capabilities** — which run kinds and CLIs it can execute, plus the placement labels it serves — and the server hands back the next due unit that matches. Peek first, without claiming (read-only, so call it as often as you like):
 
 ```bash
-curl -s -H "Authorization: Bearer $KEY" \
-  "$HARBOUR_URL/api/agents/$AGENT_ID/next?peek=true"
+curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","gemini"],"labels":["local"]}}' \
+  "$HARBOUR_URL/api/runner/claim?peek=true"
 ```
 
-Right after creating the job you'll see one of two things, depending on whether the schedule has fired yet:
+Right after creating the job you'll see `{"available":false,...}`, then `{"available":true,...}` once the schedule has fired. To force a run instead of waiting, click the job's **Trigger now** button in the dashboard (no curl auth to set up).
 
-```json
-{"available":false,"reason":"nothing_to_do"}
-```
-
-…or, once the next-run timestamp has passed but no run row has been created yet:
-
-```json
-{"available":true,"type":"scheduled","job_id":"...","job_name":"Daily check"}
-```
-
-…or, once a run row exists (after a manual trigger, or after the next non-peek call materialised one):
-
-```json
-{"available":true,"type":"scheduled_run","run_id":"...","job_name":"Daily check"}
-```
-
-> `?peek=true` is read-only — it does not claim the run, so you can call it as often as you like. The `available` field tells you whether the next non-peek call would return work.
-
-To force a run instead of waiting for the schedule, hit the trigger endpoint from the dashboard's **Trigger now** button or via curl (any auth — session cookie, agent key, or admin key — works):
+Now claim it for real (drop `?peek=true`):
 
 ```bash
-curl -s -H "Authorization: Bearer $KEY" -X POST "$HARBOUR_URL/api/jobs/<job-id>/trigger"
+curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","gemini"],"labels":["local"]}}' \
+  "$HARBOUR_URL/api/runner/claim"
 ```
 
-Now claim it (without `peek=true`):
+You'll get the full bundle: `run`, `job`, `docs`, `tables`, `env`, `attachments`, an **`exec_token`**, and an `api` block with pre-resolved endpoints for this run. A runner spawns the CLI with that payload; the `exec_token` — *not* the runner token — authenticates every callback for this one run.
+
+Finish the run cleanly with the exec token so the next claim doesn't keep returning it:
 
 ```bash
-curl -s -H "Authorization: Bearer $KEY" \
-  "$HARBOUR_URL/api/agents/$AGENT_ID/next"
-```
-
-You'll get the full bundle: `run`, `job`, `docs`, `data`, `env`, `attachments`, and an `api` block with pre-resolved endpoints for this run. That's what your agent runtime parses to do work.
-
-Finish the run cleanly so the next poll doesn't keep returning the same one:
-
-```bash
-RUN_ID=<run.id from the response above>
-curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+RUN_ID=<run.id from the response>
+EXEC=<exec_token from the response>
+curl -s -X PUT -H "Authorization: Bearer $EXEC" -H "Content-Type: application/json" \
   -d '{"status":"done"}' "$HARBOUR_URL/api/runs/$RUN_ID/status"
 ```
 
-That's the entire agent contract. The full reference is at `GET /api/guide` (also in [`GUIDE.md`](../../GUIDE.md)).
+That's the whole loop. The claim contract is at `GET /api/runner-guide` ([`docs/runner-guide.md`](../runner-guide.md)); what the spawned CLI sees for its run is at `GET /api/guide` ([`docs/guide.md`](../guide.md)).
 
-## Path C — Harbour Agent (built-in CLI runner)
+## Let the bundled runner do it
 
-If you'd rather have Harbour run a local CLI tool (Claude Code, Codex, or Gemini CLI) for you, swap the External agent above for a Harbour Agent.
+Section 1 drove the claim loop by hand to show the protocol. In practice the **local runner** (provisioned at setup) does all of it for you — claiming, spawning the CLI, and posting back — for the very same agent. Nothing about the agent changes; you just stop curling and let the runner poll.
 
 ### 1. Pick a CLI
 
@@ -168,60 +108,72 @@ Make sure the CLI you want is on your PATH and authenticated:
 
 ### 2. Create the agent
 
-In the dashboard:
+The `Researcher` agent from Section 1 already works here — its `local` placement routes its runs to this host's runner pool. If you skipped that section: **Agents → New Agent**, pick the CLI tool, name it, choose a default model and (if relevant) thinking/effort level, leave **Placement** as `local`, **Create**, then add a job (schedule, instructions, **Create**).
 
-1. **Agents → New Agent → Harbour Agent**.
-2. Pick the CLI tool.
-3. Name it, pick a default model and (if relevant) thinking/effort level.
-4. Leave **Run on a different machine** unchecked — this section assumes the runner is on the same box as the server.
-5. **Create**.
+There's no per-agent runner config to write — the local runner the setup provisioned claims every agent (and workflow) whose placement belongs on this host, resolving each one's CLI, model, and thinking live from the claim payload (see [`src/app/api/agents/route.ts`](../../src/app/api/agents/route.ts)).
 
-Creating a non-remote Harbour Agent writes an entry to `~/.harbour/runners.json` automatically (see [`src/app/api/agents/route.ts`](../../src/app/api/agents/route.ts)). That's how the runner knows which agents to poll for.
+### 3. Run the local runner
 
-Add a job exactly like the External flow — schedule, instructions, **Create**.
+The runner is the single process that claims and drains all due work each cycle — agent jobs *and* workflows, running distinct units in parallel. It polls `POST /api/runner/claim` with the local runner token and uses each run's per-run exec token for callbacks.
 
-### 3. Manual poll cycle
-
-Before scheduling polling, run one cycle by hand to confirm the CLI is hooked up:
+Before scheduling it, drain once by hand to confirm the CLI is hooked up:
 
 ```bash
-npm run harbour -- agent run
+npm run harbour -- run
 ```
 
 Output looks like:
 
 ```
-[Researcher] Polling...
-[Researcher] Nothing to do.
-```
-
-…or, if a job is ready:
-
-```
-[Researcher] Polling...
 [Researcher] Starting run <id> (Daily check)
+Done — ran 1 unit(s) this cycle.
 ```
 
-(`Resuming run` instead of `Starting run` if the runner is picking up a killed run via comment.)
+…or `Nothing to do.` when nothing is due. (`Resuming run` instead of `Starting run` if the runner is picking up a killed run via comment.)
 
-`harbour agent list` shows everything currently configured:
+Check whether the runner is provisioned and where it points at any time:
 
-```
-NAME           CLI      MODEL    THINKING   URL
-Researcher     claude   opus     —          http://localhost:3000
+```bash
+npm run harbour -- status
 ```
 
 ### 4. Schedule polling
 
+If you didn't say yes to the install prompt during `setup`, schedule it now:
+
 ```bash
-npm run harbour -- agent install
+npm run harbour -- install
 ```
 
-This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` so launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log`.
+This writes a single launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60` so launchd reruns `harbour run` every 60 seconds. Logs go to `~/.harbour/runner.log` (stdout) and `~/.harbour/runner.err.log` (stderr).
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, write your own systemd unit or schedule `npm run harbour -- agent run` from cron.
+> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, run the runner as a systemd service (see the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units)) or schedule `npm run harbour -- run` from cron.
 
-To stop polling: `npm run harbour -- agent uninstall` (removes the plist and unloads it).
+To stop polling: `npm run harbour -- uninstall` (removes the plist and unloads it).
+
+> **The service can't see your shell's PATH.** launchd (and systemd) run the runner under a fixed, minimal PATH — not your interactive shell's. A CLI installed through a version manager (nvm, asdf, pyenv, volta) or reached only via a shell alias won't be found, so its agent runs sit `scheduled` forever with nothing to claim them. The runner advertises only CLIs actually on its PATH — check `harbour status` (what the current shell sees) and **Settings → Runners** (what the service advertised). Fix: add the CLI's directory to the plist's `EnvironmentVariables` (launchd) or the unit's `Environment=PATH=…` (systemd). See [Sanity checks](run-on-different-machine.md#sanity-checks).
+
+## Workflows (deterministic, no agent)
+
+Not all recurring work needs an LLM. A **workflow** is a scheduled shell command — poll an API, sync a file, run a health check — that runs the same way every time, no agent and no tokens. → [Workflows](../concepts/workflows.md).
+
+The one thing to know up front: **the same local runner handles workflows too.** The runner setup provisioned claims agent jobs and workflows alike — so as long as it's installed (or you run `harbour run`), a workflow runs without any extra setup. A workflow only sits in `scheduled` forever if no runner is polling at all.
+
+### 1. Create a workflow
+
+In the dashboard, open **Workflows → New Workflow**. Give it a name and schedule, pick a runtime (`bash`, `python`, or `node`), and write the command body. (Over the API this is `POST /api/jobs` with a `command` gate — see the [admin guide](../admin-guide.md#create-a-workflow-no-agent).)
+
+### 2. Run it
+
+Nothing new to install — the local runner already claims workflows. Drain once by hand to watch one execute:
+
+```bash
+npm run harbour -- run
+```
+
+It claims any due workflow run and executes it on the spot, the same cycle that handles agent jobs.
+
+> Running workflows on a **separate** machine — a dedicated workflow host, or one scoped to specific labels — is a later capability via remote enrollment (`harbour connect <blob>` with a minted runner credential). See [Running a runner on a different machine](run-on-different-machine.md).
 
 ## Now what?
 
@@ -229,5 +181,7 @@ You have a working harbour with a working agent. From here:
 
 - [Jobs and runs](../concepts/jobs-and-runs.md) — the polling ladder, the lifecycle, how retries work.
 - [Agents](../concepts/agents.md) — the harbour-vs-external split and per-agent settings.
-- [Shared context](../concepts/shared-context.md) — docs, databases, env vars, and how pinning auto-attaches them.
+- [Workflows](../concepts/workflows.md) — deterministic shell-command jobs and the exit-code contract.
+- [Shared context](../concepts/shared-context.md) — docs, tables, env vars, and how pinning pre-selects them for new jobs.
 - [Running a runner on a different machine](run-on-different-machine.md) — for iOS/Xcode boxes, GPU workstations, on-prem repos.
+- [Local development](local-development.md) — if you're working *on* Harbour: dev server + ports, the validate/rebuild loop, browser review, worktrees.

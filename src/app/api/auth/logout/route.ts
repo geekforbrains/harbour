@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { deleteSession } from "@/lib/db/queries";
 
 export async function POST(req: NextRequest) {
@@ -18,9 +18,6 @@ export async function POST(req: NextRequest) {
 
     return response;
   } catch {
-    return NextResponse.json(
-      { error: "Failed to logout" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to logout" }, { status: 500 });
   }
 }

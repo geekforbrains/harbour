@@ -31,6 +31,12 @@ Two cards waiting on a stuck job, you don't know why. You open Captain.
 
 Total time to fix: under a minute, no terminal opened.
 
+## The security boundary
+
+Be clear-eyed about what Captain is: a server-side shell with a chat UI in front of it. Sending a message requires the **editor** role (`role: "editor"` on the messages endpoint), and that role check is the *only* fence. The CLI it spawns runs on the harbour host as the server's own user, unsandboxed — it can `sqlite3` the entire database (every org on the instance, not just the editor's), read and write the filesystem, and read `~/.harbour/encryption.key`, which decrypts every stored secret.
+
+So: **granting the editor role is granting host-shell-equivalent access.** Only give editor to people you would hand SSH credentials to the box. Org and project boundaries hold everywhere else in Harbour, but Captain deliberately steps outside them — that's what makes it useful as an operator's console, and what makes the role grant the real decision.
+
 ## The workspace
 
 Every conversation runs with a `cwd` (working directory). If you don't override it in Settings, it defaults to `~/.harbour/captain/`. On first use of that directory, Captain auto-provisions three files:
@@ -64,7 +70,9 @@ Three tables:
 
 ```sql
 CREATE TABLE captain_conversations (
-  id, title, cli, model, thinking,
+  id,
+  org_id  REFERENCES orgs(id)  ON DELETE CASCADE,
+  title, cli, model, thinking,
   session_id,        -- captured from CLI output, used to resume
   cwd,               -- override or null
   user_id REFERENCES users(id) ON DELETE CASCADE,
@@ -85,7 +93,7 @@ CREATE TABLE captain_output (
 
 The split between `captain_messages` (one row per turn, holds the final assembled text) and `captain_output` (raw stream events, multiple per turn) lets the chat UI show two views: the "rendered" message and, on hover/expand, the underlying tool calls. When the CLI exits cleanly the spawn finalizer reassembles all `text_delta` events into the assistant message's `content` so a fresh page load doesn't have to replay every event.
 
-Conversations are scoped to the user that created them — `captain_conversations.user_id` references `users(id)` with `ON DELETE CASCADE`. Each user sees only their own.
+Conversations are scoped per (org, user) — `captain_conversations` carries both `org_id` and `user_id` (each references its parent with `ON DELETE CASCADE`). Listing and lookups filter on both (`listConversations(orgId, userId)`), so a user sees only their own conversations within the current org, and switching orgs shows a different set.
 
 ## API
 

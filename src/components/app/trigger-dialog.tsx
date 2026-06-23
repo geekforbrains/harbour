@@ -1,51 +1,55 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useTriggerJob } from "@/lib/hooks/use-jobs";
 
 interface TriggerDialogProps {
   jobId: string;
   jobName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workflowOnly?: boolean;
+  workflow?: boolean;
 }
 
-export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflowOnly }: TriggerDialogProps) {
-  const queryClient = useQueryClient();
+export function TriggerDialog({
+  jobId,
+  jobName,
+  open,
+  onOpenChange,
+  workflow,
+}: TriggerDialogProps) {
+  const trigger = useTriggerJob();
   const [instructions, setInstructions] = useState("");
-  const [triggering, setTriggering] = useState(false);
+  const triggering = trigger.isPending;
 
   async function handleTrigger() {
-    setTriggering(true);
     try {
-      const body: Record<string, string> = {};
-      if (instructions.trim()) body.instructions = instructions.trim();
-
-      const res = await fetch(`/api/jobs/${jobId}/trigger`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        alert("Failed to trigger run");
-        return;
-      }
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+      await trigger.mutateAsync({ jobId, instructions: instructions.trim() || undefined });
       setInstructions("");
       onOpenChange(false);
-    } finally {
-      setTriggering(false);
+    } catch {
+      alert("Failed to trigger run");
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) setInstructions(""); onOpenChange(v); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) setInstructions("");
+        onOpenChange(v);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Trigger &ldquo;{jobName}&rdquo;</DialogTitle>
@@ -54,11 +58,15 @@ export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflowOnly
           This will create a new scheduled run for this job immediately.
         </p>
         <div className="space-y-2">
-          <Label>{workflowOnly ? "Note (optional)" : "Additional instructions (optional)"}</Label>
+          <Label>{workflow ? "Note (optional)" : "Additional instructions (optional)"}</Label>
           <Textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            placeholder={workflowOnly ? "Add a note for why this was triggered..." : "Add context for this specific run..."}
+            placeholder={
+              workflow
+                ? "Add a note for why this was triggered..."
+                : "Add context for this specific run..."
+            }
             rows={3}
           />
         </div>

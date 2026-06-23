@@ -99,8 +99,11 @@ export function SchedulePicker({
 
       {interval ? (
         <div>
-          <label className="text-xs text-muted-foreground">Every (minutes)</label>
+          <label htmlFor="schedule-every-minutes" className="text-xs text-muted-foreground">
+            Every (minutes)
+          </label>
           <input
+            id="schedule-every-minutes"
             type="number"
             min={1}
             value={schedule.every}
@@ -114,13 +117,15 @@ export function SchedulePicker({
       ) : (
         <>
           <div>
-            <label className="text-xs text-muted-foreground">Days</label>
+            <span className="text-xs text-muted-foreground">Days</span>
             <div className="flex gap-1 mt-1">
               {DAYS.map((day) => (
                 <Button
                   key={day.value}
                   type="button"
-                  variant={(schedule as WeeklySchedule).days.includes(day.value) ? "default" : "outline"}
+                  variant={
+                    (schedule as WeeklySchedule).days.includes(day.value) ? "default" : "outline"
+                  }
                   size="sm"
                   className="h-8 w-8 p-0 text-xs"
                   onClick={() => {
@@ -137,8 +142,11 @@ export function SchedulePicker({
             </div>
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">Time</label>
+            <label htmlFor="schedule-weekly-time" className="text-xs text-muted-foreground">
+              Time
+            </label>
             <input
+              id="schedule-weekly-time"
               type="time"
               value={(schedule as WeeklySchedule).time}
               onChange={(e) => onChange({ ...(schedule as WeeklySchedule), time: e.target.value })}

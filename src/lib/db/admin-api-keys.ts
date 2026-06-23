@@ -1,34 +1,33 @@
-import { getDb } from "./schema";
+import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
-import crypto from "crypto";
+import { getDb } from "./schema";
+import { hashToken } from "./tokens";
 
 function generateAdminApiKey(): string {
-  return "hbr_adm_" + crypto.randomBytes(32).toString("hex");
-}
-
-function hashApiKey(key: string): string {
-  return crypto.createHash("sha256").update(key).digest("hex");
+  return `hbr_adm_${crypto.randomBytes(32).toString("hex")}`;
 }
 
 export function createAdminApiKey(name: string, createdByUserId: string) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateAdminApiKey();
-  const apiKeyHash = hashApiKey(apiKey);
+  const apiKeyHash = hashToken(apiKey);
   db.prepare(
-    `INSERT INTO admin_api_keys (id, name, api_key_hash, created_by_user_id) VALUES (?, ?, ?, ?)`
+    `INSERT INTO admin_api_keys (id, name, api_key_hash, created_by_user_id) VALUES (?, ?, ?, ?)`,
   ).run(id, name, apiKeyHash, createdByUserId);
   return { id, name, apiKey };
 }
 
 export function listAdminApiKeys() {
   const db = getDb();
-  return db.prepare(
-    `SELECT k.id, k.name, k.last_used_at, k.created_at, u.display_name as created_by
+  return db
+    .prepare(
+      `SELECT k.id, k.name, k.last_used_at, k.created_at, u.display_name as created_by
      FROM admin_api_keys k
      JOIN users u ON k.created_by_user_id = u.id
-     ORDER BY k.created_at DESC`
-  ).all();
+     ORDER BY k.created_at DESC`,
+    )
+    .all();
 }
 
 export function deleteAdminApiKey(id: string) {
@@ -38,13 +37,15 @@ export function deleteAdminApiKey(id: string) {
 
 export function authenticateAdminApiKey(apiKey: string) {
   const db = getDb();
-  const hash = hashApiKey(apiKey);
-  const row = db.prepare(
-    `SELECT k.id, k.name, k.created_by_user_id, u.email, u.display_name
+  const hash = hashToken(apiKey);
+  const row = db
+    .prepare(
+      `SELECT k.id, k.name, k.created_by_user_id, u.email, u.display_name
      FROM admin_api_keys k
      JOIN users u ON k.created_by_user_id = u.id
-     WHERE k.api_key_hash = ?`
-  ).get(hash) as any;
+     WHERE k.api_key_hash = ?`,
+    )
+    .get(hash) as any;
   if (row) {
     db.prepare(`UPDATE admin_api_keys SET last_used_at = unixepoch() WHERE id = ?`).run(row.id);
   }

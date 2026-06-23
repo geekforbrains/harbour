@@ -1,6 +1,6 @@
-import crypto from "crypto";
-import fs from "fs";
-import { encryptionKeyPath, harbourHome, ensureDir } from "./paths";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { encryptionKeyPath, ensureDir, harbourHome } from "./paths";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -15,7 +15,8 @@ function loadOrCreateKey(): Buffer {
   const envKey = process.env.HARBOUR_ENCRYPTION_KEY;
   if (envKey) {
     _key = Buffer.from(envKey, "hex");
-    if (_key.length !== 32) throw new Error("HARBOUR_ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
+    if (_key.length !== 32)
+      throw new Error("HARBOUR_ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
     return _key;
   }
 

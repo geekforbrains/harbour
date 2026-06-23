@@ -53,6 +53,7 @@ export default function RootLayout({
       <head>
         <meta name="theme-color" content="#ffffff" />
         <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: inline theme-init script is a static string with no user input; must run before paint to avoid theme flash
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem("harbour_theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme:dark)").matches);document.documentElement.classList.toggle("dark",d);document.querySelector('meta[name="theme-color"]').setAttribute("content",d?"#111118":"#ffffff")}catch(e){}})()`,
           }}

@@ -1,22 +1,29 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { FileText, KeyRound, Pin, Plus, Table2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { GateField } from "@/components/app/gate-field";
+import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
+import { parseSchedule, SchedulePicker, serializeSchedule } from "@/components/app/schedule-picker";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
-import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { AlertCircle, Bot, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, Terminal, X } from "lucide-react";
+import { ApiError } from "@/lib/api/client";
+import { useAgents } from "@/lib/hooks/use-agents";
+import { useDocs } from "@/lib/hooks/use-docs";
+import { useEnvVars } from "@/lib/hooks/use-env-vars";
+import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
-import { uploadFileToRun } from "@/lib/upload-client";
-
-type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null };
-type Doc = { id: string; title: string; pinned: number };
-type EnvVar = { id: string; name: string; pinned: number };
+import { useTables } from "@/lib/hooks/use-tables";
+import type { Gate } from "@/lib/runtimes";
 
 // Sub-dialog for picking docs or env vars
 export function PickerDialog({
@@ -41,12 +48,14 @@ export function PickerDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">None available yet.</p>
         ) : (
           <div className="space-y-0.5 max-h-80 overflow-y-auto">
-            {items.map(item => (
+            {items.map((item) => (
               <label
                 key={item.id}
                 className="flex items-center gap-3 rounded-lg p-2.5 cursor-pointer hover:bg-accent/50 transition-colors"
@@ -57,17 +66,21 @@ export function PickerDialog({
                   onChange={() => onToggle(item.id)}
                   className="rounded"
                 />
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <Icon className="h-3.5 w-3.5 text-primary" />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
-                <span className={`text-sm font-medium flex-1 min-w-0 truncate ${nameClass || ""}`}>{item.name}</span>
+                <span className={`text-sm font-medium flex-1 min-w-0 truncate ${nameClass || ""}`}>
+                  {item.name}
+                </span>
                 {item.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground/50 shrink-0" />}
               </label>
             ))}
           </div>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Done</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -94,7 +107,7 @@ export function SelectedItems({
   emptyText?: string;
   nameClass?: string;
 }) {
-  const selected = items.filter(i => selectedIds.includes(i.id));
+  const selected = items.filter((i) => selectedIds.includes(i.id));
 
   return (
     <div className="rounded-lg border bg-muted/40 px-3 py-2.5">
@@ -103,7 +116,11 @@ export function SelectedItems({
           <Icon className="h-3.5 w-3.5" />
           {label}
         </div>
-        <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+        >
           <Plus className="h-3 w-3" /> Add
         </button>
       </div>
@@ -111,11 +128,18 @@ export function SelectedItems({
         <p className="text-xs text-muted-foreground mt-1.5">{emptyText}</p>
       ) : (
         <div className="flex flex-wrap gap-1.5 mt-2">
-          {selected.map(item => (
-            <span key={item.id} className="inline-flex items-center gap-1 rounded-md bg-background border px-2 py-1 text-xs font-medium">
+          {selected.map((item) => (
+            <span
+              key={item.id}
+              className="inline-flex items-center gap-1 rounded-md bg-background border px-2 py-1 text-xs font-medium"
+            >
               <Icon className="h-3 w-3 text-muted-foreground" />
               <span className={nameClass}>{item.name}</span>
-              <button type="button" onClick={() => onRemove(item.id)} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
+              <button
+                type="button"
+                onClick={() => onRemove(item.id)}
+                className="text-muted-foreground hover:text-foreground transition-colors ml-0.5"
+              >
                 <X className="h-3 w-3" />
               </button>
             </span>
@@ -126,23 +150,30 @@ export function SelectedItems({
   );
 }
 
+/**
+ * New Job / New Workflow dialog. v2 removed one-off "New Run" creation —
+ * ad-hoc runs now come from triggering a scheduled job (see TriggerDialog /
+ * RunRow). The `kind` prop fixes what gets created: an agent job
+ * (POST /api/agents/:id/jobs) or a workflow job (POST /api/jobs).
+ */
 export function CreateDialog({
   open,
   onOpenChange,
-  defaultTab = "run",
+  kind = "agent",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  defaultTab?: "run" | "job";
+  kind?: "agent" | "workflow";
 }) {
-  const queryClient = useQueryClient();
+  const createAgentJob = useCreateAgentJob();
+  const createWorkflowJob = useCreateWorkflowJob();
   const activeProjectId = useActiveProjectId();
 
-  const [tab, setTab] = useState<"run" | "job">(defaultTab);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [envVars, setEnvVars] = useState<EnvVar[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  // Scoped lists from the data layer (loaded while the dialog is open).
+  const { data: agents = [] } = useAgents(undefined, { enabled: open });
+  const { data: docs = [] } = useDocs(undefined, { enabled: open });
+  const { data: envVars = [] } = useEnvVars(undefined, { enabled: open });
+  const { data: tables = [] } = useTables(undefined, { enabled: open });
 
   // Shared fields
   const [agentId, setAgentId] = useState("");
@@ -152,64 +183,52 @@ export function CreateDialog({
   const [thinking, setThinking] = useState("");
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [selectedEnvVarIds, setSelectedEnvVarIds] = useState<string[]>([]);
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
+  const [pinnedSeeded, setPinnedSeeded] = useState(false);
 
   // Picker dialogs
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [showEnvVarPicker, setShowEnvVarPicker] = useState(false);
+  const [showTablePicker, setShowTablePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Run-only fields
-  const [whenType, setWhenType] = useState<"now" | "later">("now");
-  const [scheduledTime, setScheduledTime] = useState("");
-  const [stagedFiles, setStagedFiles] = useState<{ file: File; error?: string }[]>([]);
-  const stagedFilesRef = useRef<File[]>([]);
-  const runFileInputRef = useRef<HTMLInputElement>(null);
-
-  const { data: uploadConfig } = useQuery<{ max_upload_mb: number; max_upload_bytes: number }>({
-    queryKey: ["upload-config"],
-    queryFn: async () => (await fetch("/api/system/upload-config")).json(),
-    staleTime: 60_000,
-  });
-
-  // Job-only fields
+  // Job fields. Gates (prerun/postrun for agents, the command for workflows)
+  // are gist-style { runtime, content } scripts, null until set.
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
-  const [workflowCommand, setWorkflowCommand] = useState("");
-  const [agentEnabled, setAgentEnabled] = useState(true);
-  const [workflowEnabled, setWorkflowEnabled] = useState(false);
+  const [workflowGate, setWorkflowGate] = useState<Gate | null>(null);
+  const [prerun, setPrerun] = useState<Gate | null>(null);
+  const [postrun, setPostrun] = useState<Gate | null>(null);
+  const [postrunGates, setPostrunGates] = useState(false);
   const [titleFormat, setTitleFormat] = useState("");
+  // Workflow-only: scope is fixed at creation. Agent jobs are always project-level.
+  const [workflowScope, setWorkflowScope] = useState<"project" | "org">("project");
+  // Workflow-only: which runner pool claims this workflow's runs (default 'local').
+  // Agent jobs inherit their agent's placement, so this isn't shown for them.
+  const [placement, setPlacement] = useState("");
 
-  useEffect(() => {
-    if (open) setTab(defaultTab);
-  }, [open, defaultTab]);
+  // Without an active project, "This project" isn't an option — force org level.
+  const orgScoped = kind === "workflow" && (workflowScope === "org" || !activeProjectId);
+  // An org-level workflow may link only org-level resources (project_id IS NULL);
+  // the server rejects anything wider with a 400.
+  const eligibleDocs = orgScoped ? docs.filter((d) => d.project_id === null) : docs;
+  const eligibleEnvVars = orgScoped ? envVars.filter((ev) => ev.project_id === null) : envVars;
+  const eligibleTables = orgScoped ? tables.filter((t) => t.project_id === null) : tables;
 
-  // Load data + auto-select pinned items when dialog opens
+  // Default the agent select to the first agent once the list loads.
   useEffect(() => {
-    if (!open || loaded) return;
-    (async () => {
-      const [agentsRes, docsRes, envVarsRes] = await Promise.all([
-        fetch("/api/agents"),
-        fetch("/api/docs"),
-        fetch("/api/env-vars"),
-      ]);
-      if (agentsRes.ok) {
-        const data = await agentsRes.json();
-        setAgents(data);
-        if (data.length > 0 && !agentId) setAgentId(data[0].id);
-      }
-      if (docsRes.ok) {
-        const docsData = await docsRes.json();
-        setDocs(docsData);
-        setSelectedDocIds(docsData.filter((d: Doc) => d.pinned).map((d: Doc) => d.id));
-      }
-      if (envVarsRes.ok) {
-        const evData = await envVarsRes.json();
-        setEnvVars(evData);
-        setSelectedEnvVarIds(evData.filter((ev: EnvVar) => ev.pinned).map((ev: EnvVar) => ev.id));
-      }
-      setLoaded(true);
-    })();
-  }, [open, loaded, agentId]);
+    if (open && agents.length > 0 && !agentId) setAgentId(agents[0].id);
+  }, [open, agents, agentId]);
+
+  // Auto-select pinned docs/env vars/tables once when the dialog opens.
+  useEffect(() => {
+    if (!open || pinnedSeeded) return;
+    if (docs.length === 0 && envVars.length === 0 && tables.length === 0) return;
+    setSelectedDocIds(docs.filter((d) => d.pinned).map((d) => d.id));
+    setSelectedEnvVarIds(envVars.filter((ev) => ev.pinned).map((ev) => ev.id));
+    setSelectedTableIds(tables.filter((t) => t.pinned).map((t) => t.id));
+    setPinnedSeeded(true);
+  }, [open, pinnedSeeded, docs, envVars, tables]);
 
   function reset() {
     setName("");
@@ -218,18 +237,18 @@ export function CreateDialog({
     setThinking("");
     setSelectedDocIds([]);
     setSelectedEnvVarIds([]);
-    setWhenType("now");
-    setScheduledTime("");
-    setStagedFiles([]);
-    stagedFilesRef.current = [];
+    setSelectedTableIds([]);
+    setPinnedSeeded(false);
     setSubmitting(false);
     setDescription("");
     setSchedule(parseSchedule(null));
-    setWorkflowCommand("");
-    setAgentEnabled(true);
-    setWorkflowEnabled(false);
+    setWorkflowGate(null);
+    setPrerun(null);
+    setPostrun(null);
+    setPostrunGates(false);
     setTitleFormat("");
-    setLoaded(false);
+    setWorkflowScope("project");
+    setPlacement("");
   }
 
   function handleClose(value: boolean) {
@@ -238,139 +257,89 @@ export function CreateDialog({
   }
 
   function toggleItem(id: string, list: string[], setList: (v: string[]) => void) {
-    setList(list.includes(id) ? list.filter(i => i !== id) : [...list, id]);
-  }
-
-  async function handleCreateRun(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !agentId || submitting) return;
-    setSubmitting(true);
-
-    const body: Record<string, unknown> = {
-      agentId,
-      name,
-      instructions: instructions || undefined,
-    };
-    if (selectedDocIds.length > 0) body.docIds = selectedDocIds;
-    if (selectedEnvVarIds.length > 0) body.envVarIds = selectedEnvVarIds;
-    if (whenType === "later" && scheduledTime) {
-      body.runAt = Math.floor(new Date(scheduledTime).getTime() / 1000);
-    }
-
-    const res = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) { alert("Failed to create run"); setSubmitting(false); return; }
-
-    const data = await res.json();
-
-    // Upload staged files and link to an activity entry
-    const filesToUpload = stagedFilesRef.current;
-    if (filesToUpload.length > 0) {
-      const attachmentIds: string[] = [];
-      const errors: string[] = [];
-      for (const file of filesToUpload) {
-        try {
-          const att = await uploadFileToRun(data.runId, file).promise;
-          attachmentIds.push(att.id);
-        } catch (err: any) {
-          errors.push(`${file.name}: ${err.message || "upload failed"}`);
-        }
-      }
-      if (errors.length > 0) {
-        alert(`Some files failed to upload:\n${errors.join("\n")}`);
-      }
-      if (attachmentIds.length > 0) {
-        await fetch(`/api/runs/${data.runId}/activity`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: "", attachment_ids: attachmentIds }),
-        });
-      }
-    }
-
-    // Auto-link the backing job to the active project
-    if (activeProjectId && data.jobId) {
-      await fetch(`/api/projects/${activeProjectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "link", type: "job", targetId: data.jobId }),
-      });
-    }
-
-    setSubmitting(false);
-    handleClose(false);
-    queryClient.invalidateQueries({ queryKey: ["runs"] });
+    setList(list.includes(id) ? list.filter((i) => i !== id) : [...list, id]);
   }
 
   async function handleCreateJob(e: React.FormEvent) {
     e.preventDefault();
-    const isWorkflowOnly = workflowEnabled && !agentEnabled;
-    if (!name.trim() || (!isWorkflowOnly && !agentId)) return;
+    const isWorkflow = kind === "workflow";
+    if (!name.trim() || (!isWorkflow && !agentId) || (isWorkflow && !workflowGate) || submitting)
+      return;
+    setSubmitting(true);
 
-    const url = isWorkflowOnly ? "/api/jobs" : `/api/agents/${agentId}/jobs`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        description: description || undefined,
-        instructions: agentEnabled ? (instructions || undefined) : undefined,
-        schedule: serializeSchedule(schedule),
-        workflowCommand: workflowEnabled && workflowCommand ? workflowCommand : undefined,
-        workflowOnly: isWorkflowOnly ? true : undefined,
-        model: agentEnabled ? (model || undefined) : undefined,
-        thinking: agentEnabled ? (thinking || undefined) : undefined,
-        titleFormat: agentEnabled ? (titleFormat.trim() || undefined) : undefined,
-        docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
-        envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
-      }),
-    });
-    if (!res.ok) { alert("Failed to create job"); return; }
+    // Drop selections that aren't linkable in the chosen scope (e.g. pinned
+    // project-level docs auto-seeded before the user picked "Entire org").
+    const docIds = selectedDocIds.filter((sid) => eligibleDocs.some((d) => d.id === sid));
+    const envVarIds = selectedEnvVarIds.filter((sid) =>
+      eligibleEnvVars.some((ev) => ev.id === sid),
+    );
+    const tableIds = selectedTableIds.filter((sid) => eligibleTables.some((t) => t.id === sid));
 
-    // Auto-link the job to the active project
-    if (activeProjectId) {
-      const data = await res.json();
-      if (data.id) {
-        await fetch(`/api/projects/${activeProjectId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "link", type: "job", targetId: data.id }),
-        });
+    const body = {
+      name,
+      description: description || undefined,
+      instructions: !isWorkflow ? instructions || undefined : undefined,
+      schedule: serializeSchedule(schedule),
+      command: isWorkflow ? (workflowGate ?? undefined) : undefined,
+      placement:
+        isWorkflow && placement.trim() && placement.trim() !== "local"
+          ? placement.trim()
+          : undefined,
+      prerun: !isWorkflow ? (prerun ?? undefined) : undefined,
+      postrun: !isWorkflow ? (postrun ?? undefined) : undefined,
+      postrunGates: !isWorkflow && postrun ? postrunGates : undefined,
+      model: !isWorkflow ? model || undefined : undefined,
+      thinking: !isWorkflow ? thinking || undefined : undefined,
+      titleFormat: !isWorkflow ? titleFormat.trim() || undefined : undefined,
+      docIds: docIds.length > 0 ? docIds : undefined,
+      envVarIds: envVarIds.length > 0 ? envVarIds : undefined,
+      tableIds: tableIds.length > 0 ? tableIds : undefined,
+    };
+
+    try {
+      // Workflow jobs are created at the chosen scope (active project, or the
+      // whole org); agent jobs inherit their agent's project. v2 has no
+      // separate link step.
+      if (isWorkflow) {
+        await createWorkflowJob.mutateAsync({ body, orgLevel: orgScoped });
+      } else {
+        await createAgentJob.mutateAsync({ agentId, body });
       }
+      handleClose(false);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.errorMessage : "Failed to create job");
+    } finally {
+      setSubmitting(false);
     }
-
-    handleClose(false);
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
   }
 
   function handleAgentChange(id: string) {
     setAgentId(id);
     setModel("");
     setThinking("");
-    setAgentEnabled(true);
-    setWorkflowEnabled(false);
-    setWorkflowCommand("");
+    setPrerun(null);
   }
 
-  const selectedAgent = agents.find(a => a.id === agentId);
-  const isHarbourAgent = selectedAgent?.type === "harbour";
+  const selectedAgent = agents.find((a) => a.id === agentId);
 
-  // Shared form fields rendered in both tabs
   const sharedFields = (
-    <>
-      <div className="space-y-2">
-        <Label>Agent</Label>
-        <select value={agentId} onChange={e => handleAgentChange(e.target.value)} className={SELECT_CLASS}>
-          {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-      </div>
-    </>
+    <div className="space-y-2">
+      <Label>Agent</Label>
+      <select
+        value={agentId}
+        onChange={(e) => handleAgentChange(e.target.value)}
+        className={SELECT_CLASS}
+      >
+        {agents.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 
-  const modelThinkingFields = selectedAgent?.type === "harbour" && selectedAgent.cli ? (
+  const modelThinkingFields = selectedAgent?.cli ? (
     <div className="grid grid-cols-2 gap-3">
       <ModelThinkingSelect
         cli={selectedAgent.cli}
@@ -387,20 +356,29 @@ export function CreateDialog({
   const docsEnvVarsFields = (
     <>
       <SelectedItems
-        items={docs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={selectedDocIds}
-        onRemove={id => setSelectedDocIds(prev => prev.filter(i => i !== id))}
+        onRemove={(id) => setSelectedDocIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowDocPicker(true)}
         icon={FileText}
         label="Docs"
       />
       <SelectedItems
-        items={envVars}
+        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={selectedEnvVarIds}
-        onRemove={id => setSelectedEnvVarIds(prev => prev.filter(i => i !== id))}
+        onRemove={(id) => setSelectedEnvVarIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowEnvVarPicker(true)}
         icon={KeyRound}
-        label="Env Vars"
+        label="Secrets"
+        nameClass="font-mono"
+      />
+      <SelectedItems
+        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        selectedIds={selectedTableIds}
+        onRemove={(id) => setSelectedTableIds((prev) => prev.filter((i) => i !== id))}
+        onAdd={() => setShowTablePicker(true)}
+        icon={Table2}
+        label="Tables"
         nameClass="font-mono"
       />
     </>
@@ -411,201 +389,195 @@ export function CreateDialog({
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>New Job</DialogTitle>
+            <DialogTitle>{kind === "workflow" ? "New Workflow" : "New Job"}</DialogTitle>
           </DialogHeader>
 
-          <Tabs value={tab} onValueChange={v => setTab(v as "run" | "job")}>
-            {/* Run/Job switcher hidden — one-off runs are no longer surfaced in the UI.
-                The Run tab plumbing is retained so it can be re-enabled later. */}
-            <TabsList className="w-full hidden">
-              <TabsTrigger value="run" className="flex-1">Run</TabsTrigger>
-              <TabsTrigger value="job" className="flex-1">Job</TabsTrigger>
-            </TabsList>
+          <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
+            {kind === "agent" && sharedFields}
 
-            {/* --- Run tab --- */}
-            <TabsContent value="run">
-              <form onSubmit={handleCreateRun} className="space-y-4 pt-2">
-                {sharedFields}
+            {kind === "workflow" && (
+              <div className="space-y-2">
+                <Label>Scope</Label>
+                <select
+                  value={orgScoped ? "org" : "project"}
+                  onChange={(e) => setWorkflowScope(e.target.value === "org" ? "org" : "project")}
+                  className={SELECT_CLASS}
+                >
+                  <option value="project" disabled={!activeProjectId}>
+                    This project
+                  </option>
+                  <option value="org">Entire org</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Fixed at creation. Org workflows can link only org-level docs and secrets.
+                </p>
+              </div>
+            )}
 
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Morning Tweet"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Brief description"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Schedule</Label>
+              <SchedulePicker schedule={schedule} onChange={setSchedule} />
+            </div>
+
+            {kind === "workflow" && (
+              <>
+                <GateField
+                  label="Command"
+                  value={workflowGate}
+                  onChange={setWorkflowGate}
+                  required
+                  description="The script this workflow runs. Pick a runtime and write the body."
+                  placeholder={
+                    "#!/usr/bin/env bash\nset -euo pipefail\n# do the work, exit 77 to skip"
+                  }
+                />
                 <div className="space-y-2">
-                  <Label>Title</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Research competitors" required />
+                  <Label>Placement</Label>
+                  <Input
+                    value={placement}
+                    onChange={(e) => setPlacement(e.target.value)}
+                    placeholder="local"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Which runner pool runs this workflow (default: local).
+                  </p>
                 </div>
+              </>
+            )}
 
+            {kind === "agent" && (
+              <>
                 <div className="space-y-2">
                   <Label>Instructions</Label>
-                  <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
+                  <Textarea
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    placeholder="What should the agent do?"
+                    rows={3}
+                    className="max-h-[25vh]"
+                  />
                 </div>
-
-                {modelThinkingFields}
-                {docsEnvVarsFields}
-
-                <div className="rounded-lg border bg-muted/40 px-3 py-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                      <Paperclip className="h-3.5 w-3.5" />
-                      Attachments
-                    </div>
-                    <button type="button" onClick={() => runFileInputRef.current?.click()} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer">
-                      <Plus className="h-3 w-3" /> Add
+                <GateField
+                  label="Prerun"
+                  value={prerun}
+                  onChange={setPrerun}
+                  description="Optional gate before the LLM. Exit 0 continues, 77 skips, other fails."
+                  placeholder={"#!/usr/bin/env bash\n# exit 77 if there's no work for the agent"}
+                />
+                <div className="space-y-2">
+                  <GateField
+                    label="Postrun"
+                    value={postrun}
+                    onChange={(g) => {
+                      setPostrun(g);
+                      if (!g) setPostrunGates(false);
+                    }}
+                    description="Optional hook after the run finishes. Receives the run payload on stdin."
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={postrunGates}
+                      onClick={() => setPostrunGates((v) => !v)}
+                      disabled={!postrun}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50 ${postrunGates ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                    >
+                      {postrunGates ? "Enforcing" : "Informational"}
                     </button>
+                    <span className="text-xs text-muted-foreground">
+                      {postrunGates
+                        ? "Nonzero exit overrides done → failed."
+                        : "Runs on any outcome; never changes status."}
+                    </span>
                   </div>
-                  {stagedFiles.length === 0 ? (
-                    <p className="text-xs text-muted-foreground mt-1.5">No files attached.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {stagedFiles.map((entry, i) => (
-                        <span key={i} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${entry.error ? "bg-destructive/10 border border-destructive/30" : "bg-background border"}`}>
-                          {entry.error ? <AlertCircle className="h-3 w-3 text-destructive" /> : <Paperclip className="h-3 w-3 text-muted-foreground" />}
-                          <span className="truncate max-w-[150px]">{entry.file.name}</span>
-                          {entry.error && <span className="text-destructive text-[10px]">{entry.error}</span>}
-                          <button type="button" onClick={() => setStagedFiles(prev => { const next = prev.filter((_, j) => j !== i); stagedFilesRef.current = next.filter(e => !e.error).map(e => e.file); return next; })} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
-
                 <div className="space-y-2">
-                  <Label>When</Label>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => setWhenType("now")} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "now" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Now</button>
-                    <button type="button" onClick={() => setWhenType("later")} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "later" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Schedule</button>
-                  </div>
-                  {whenType === "later" && (
-                    <Input type="datetime-local" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} required />
-                  )}
+                  <Label>Title Format</Label>
+                  <Input
+                    value={titleFormat}
+                    onChange={(e) => setTitleFormat(e.target.value)}
+                    placeholder={`e.g. "Issue #XXX — short summary"`}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Each run sets its own title — this is the format guide passed to the
+                    agent.
+                  </p>
                 </div>
+                {modelThinkingFields}
+              </>
+            )}
 
-                <DialogFooter>
-                  <Button type="button" variant="ghost" onClick={() => handleClose(false)} disabled={submitting}>Cancel</Button>
-                  <Button type="submit" disabled={submitting}>
-                    {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-                    {submitting && stagedFilesRef.current.length > 0 ? "Uploading..." : "Create Run"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </TabsContent>
+            {docsEnvVarsFields}
 
-            {/* --- Job tab --- */}
-            <TabsContent value="job">
-              <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
-                {agentEnabled && sharedFields}
-
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Morning Tweet" required />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description" />
-                </div>
-
-                {(isHarbourAgent || !agentEnabled) && (
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => { if (!agentEnabled || workflowEnabled) setAgentEnabled(!agentEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${agentEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Bot className="h-3.5 w-3.5" />Agent</button>
-                      <button type="button" onClick={() => { if (!workflowEnabled || agentEnabled) setWorkflowEnabled(!workflowEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${workflowEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Terminal className="h-3.5 w-3.5" />Workflow</button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <Label>Schedule</Label>
-                  <SchedulePicker schedule={schedule} onChange={setSchedule} />
-                </div>
-
-                {workflowEnabled && (
-                  <div className="space-y-2">
-                    <Label>Workflow Command</Label>
-                    <Input value={workflowCommand} onChange={e => setWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" required />
-                    <p className="text-xs text-muted-foreground">
-                      Exit 0 = success, 77 = skip, other = fail.
-                      {selectedAgent?.remote ? (
-                        <> Script must exist at <code className="text-[11px] bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine running this agent.</>
-                      ) : null}
-                    </p>
-                  </div>
-                )}
-
-                {agentEnabled && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Instructions</Label>
-                      <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Title Format</Label>
-                      <Input
-                        value={titleFormat}
-                        onChange={e => setTitleFormat(e.target.value)}
-                        placeholder={`e.g. "Issue #XXX — short summary"`}
-                      />
-                      <p className="text-xs text-muted-foreground">Optional. Each run sets its own title — this is the format guide passed to the agent.</p>
-                    </div>
-                    {modelThinkingFields}
-                  </>
-                )}
-
-                {docsEnvVarsFields}
-
-                <DialogFooter>
-                  <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
-                  <Button type="submit">Create Job</Button>
-                </DialogFooter>
-              </form>
-            </TabsContent>
-          </Tabs>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => handleClose(false)}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting
+                  ? "Creating..."
+                  : kind === "workflow"
+                    ? "Create Workflow"
+                    : "Create Job"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
-      {/* File input rendered outside the dialog portal for Safari compatibility */}
-      <input
-        ref={runFileInputRef}
-        type="file"
-        multiple
-        style={{ position: "fixed", top: -100, left: -100, opacity: 0 }}
-        onChange={e => {
-          const files = e.target.files ? Array.from(e.target.files) : [];
-          if (files.length > 0) {
-            const maxBytes = uploadConfig?.max_upload_bytes;
-            const maxMb = uploadConfig?.max_upload_mb;
-            const entries = files.map(f => ({
-              file: f,
-              error: maxBytes && f.size > maxBytes ? `Exceeds ${maxMb} MB limit` : undefined,
-            }));
-            setStagedFiles(prev => {
-              const next = [...prev, ...entries];
-              stagedFilesRef.current = next.filter(e => !e.error).map(e => e.file);
-              return next;
-            });
-          }
-          e.target.value = "";
-        }}
-      />
-
-      {/* Sub-dialogs for picking docs and env vars */}
+      {/* Sub-dialogs for picking docs, env vars, and tables */}
       <PickerDialog
         open={showDocPicker}
         onOpenChange={setShowDocPicker}
         title="Select Docs"
-        items={docs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={new Set(selectedDocIds)}
-        onToggle={id => toggleItem(id, selectedDocIds, setSelectedDocIds)}
+        onToggle={(id) => toggleItem(id, selectedDocIds, setSelectedDocIds)}
         icon={FileText}
       />
       <PickerDialog
         open={showEnvVarPicker}
         onOpenChange={setShowEnvVarPicker}
-        title="Select Env Vars"
-        items={envVars}
+        title="Select Secrets"
+        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={new Set(selectedEnvVarIds)}
-        onToggle={id => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
+        onToggle={(id) => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
         icon={KeyRound}
+        nameClass="font-mono"
+      />
+      <PickerDialog
+        open={showTablePicker}
+        onOpenChange={setShowTablePicker}
+        title="Select Tables"
+        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        selectedIds={new Set(selectedTableIds)}
+        onToggle={(id) => toggleItem(id, selectedTableIds, setSelectedTableIds)}
+        icon={Table2}
         nameClass="font-mono"
       />
     </>

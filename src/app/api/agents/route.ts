@@ -1,43 +1,62 @@
 import { NextResponse } from "next/server";
-import { withAuth, withUserAuth } from "@/lib/auth";
-import { listAgents, createAgent } from "@/lib/db/queries";
-import { saveRunnerConfig } from "@/lib/runners";
+import { withProjectAuth } from "@/lib/auth";
+import { validateCli, validateThinking } from "@/lib/cli-config";
+import { createAgent, listAgents } from "@/lib/db/queries";
+import { optionalBoolean, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
+import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
-export const GET = withAuth(async (req) => {
-  const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listAgents(projectId));
-});
+export const GET = withProjectAuth(
+  async (req) => {
+    const projectId = req.nextUrl.searchParams.get("projectId")!;
+    return NextResponse.json(listAgents(projectId));
+  },
+  { role: "viewer" },
+);
 
-export const POST = withUserAuth(async (req) => {
-  const body = await req.json();
-  const { name, description, type, cli, model, thinking, remote, eager } = body;
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
-  if (type === "harbour") {
+export const POST = withProjectAuth(
+  async (req) => {
+    const projectId = req.nextUrl.searchParams.get("projectId")!;
+    const body = await readJson(req);
+    const name = requireNonEmptyString(body.name, "name");
+    const description = optionalString(body.description, "description");
+    const model = optionalString(body.model, "model");
+    const color = optionalString(body.color, "color");
+    const eager = optionalBoolean(body.eager, "eager");
+    const placement = optionalString(body.placement, "placement");
+    const thinking = optionalString(body.thinking, "thinking");
+    const cli = body.cli;
     if (!cli) {
-      return NextResponse.json({ error: "cli is required for harbour agents" }, { status: 400 });
+      return NextResponse.json({ error: "cli is required" }, { status: 400 });
     }
-  }
+    const cliError = validateCli(cli);
+    if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
+    const thinkingError = validateThinking(cli, thinking);
+    if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
 
-  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking, remote: !!remote, eager: !!eager } : undefined);
+    let agent: ReturnType<typeof createAgent>;
+    try {
+      agent = createAgent(projectId, name, description, {
+        cli: cli as string,
+        model,
+        thinking,
+        color,
+        eager: !!eager,
+        placement: placement ?? undefined,
+      });
+    } catch (err) {
+      if (err instanceof NameCollisionError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      if (err instanceof InvalidNameError) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+      throw err;
+    }
 
-  // For harbour agents running on the same machine as the server, save runner
-  // config locally so the CLI can poll. Remote agents are expected to be
-  // registered from the remote host via `harbour agent connect`.
-  if (type === "harbour" && !remote) {
-    const baseUrl = req.headers.get("origin") || `http://localhost:${process.env.PORT || 3000}`;
-    saveRunnerConfig({
-      agentId: agent.id,
-      name: agent.name,
-      apiKey: agent.apiKey,
-      cli: cli,
-      model: model || null,
-      thinking: thinking || null,
-      eager: !!eager,
-      url: baseUrl,
-    });
-  }
-
-  return NextResponse.json(agent, { status: 201 });
-});
+    // No per-agent runner config to write: the unified runner claims this
+    // agent's work via POST /api/runner/claim (the DB `runners` table is the
+    // registry), and cli/model/thinking are resolved live from the claim payload.
+    return NextResponse.json(agent, { status: 201 });
+  },
+  { role: "editor" },
+);

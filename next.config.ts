@@ -1,5 +1,5 @@
+import { readFileSync } from "node:fs";
 import type { NextConfig } from "next";
-import { readFileSync } from "fs";
 
 const pkg = JSON.parse(readFileSync("./package.json", "utf-8"));
 

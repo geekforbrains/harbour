@@ -3,15 +3,15 @@
  * Uses dynamic import() to load the ESM module at runtime.
  */
 
-import path from "path";
+import path from "node:path";
 
-let _providers: any = null;
+let _providers: ProvidersModule | null = null;
 
-async function getProviders() {
+async function getProviders(): Promise<ProvidersModule> {
   if (!_providers) {
     // Resolve from project root — works regardless of bundler output location
     const providersPath = path.join(process.cwd(), "bin", "lib", "providers.mjs");
-    _providers = await import(/* webpackIgnore: true */ providersPath);
+    _providers = (await import(/* webpackIgnore: true */ providersPath)) as ProvidersModule;
   }
   return _providers;
 }
@@ -37,7 +37,40 @@ export type RunCliToolOptions = {
   signal?: AbortSignal;
 };
 
-export async function getProvider(cli: string) {
+export type ParsedCliLine = { events?: CliEvent[]; sessionId?: string };
+
+export type CliCommand = { binary: string; args: string[]; cwd: string };
+
+// Shape of a provider object from bin/lib/providers.mjs (untyped ESM).
+export type CliProvider = {
+  // Present only on providers that accept a caller-chosen session ID for new
+  // sessions (claude). Absent means the CLI mints its own ID on first run and
+  // must NOT be given one — it would be treated as a resume target.
+  generateSessionId?: () => string;
+  buildCommand: (
+    prompt: string,
+    model: string | null,
+    cwd: string,
+    sessionId: string | null,
+    isNewSession: boolean,
+    thinking: string | null,
+  ) => CliCommand;
+  createParser?: () => { parseLine: (line: string) => ParsedCliLine };
+  parseLine: (line: string) => ParsedCliLine;
+  canResume?: boolean;
+};
+
+type ProvidersModule = {
+  getProvider: (cli: string) => CliProvider;
+  runCliTool: (
+    binary: string,
+    args: string[],
+    cwd: string,
+    options?: RunCliToolOptions,
+  ) => Promise<RunCliToolResult>;
+};
+
+export async function getProvider(cli: string): Promise<CliProvider> {
   const providers = await getProviders();
   return providers.getProvider(cli);
 }
@@ -46,7 +79,7 @@ export async function runCliTool(
   binary: string,
   args: string[],
   cwd: string,
-  options?: RunCliToolOptions
+  options?: RunCliToolOptions,
 ): Promise<RunCliToolResult> {
   const providers = await getProviders();
   return providers.runCliTool(binary, args, cwd, options);

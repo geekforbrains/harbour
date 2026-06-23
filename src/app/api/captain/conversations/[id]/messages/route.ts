@@ -1,56 +1,53 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
-import { withUserAuth } from "@/lib/auth";
-import { getConversation, createMessage } from "@/lib/db/captain";
+import { withOrgAuth } from "@/lib/auth";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
+import { createMessage, getConversation } from "@/lib/db/captain";
+import { optionalString, readJson } from "@/lib/http";
 
-export const POST = withUserAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const conversation = getConversation(id);
-  if (!conversation || conversation.user_id !== auth.userId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+export const POST = withOrgAuth(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    const conversation = getConversation(id, auth.orgId);
+    if (!conversation || conversation.user_id !== auth.userId) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
 
-  if (isRunning(id)) {
+    if (isRunning(id)) {
+      return NextResponse.json({ error: "A response is already in progress" }, { status: 409 });
+    }
+
+    const body = await readJson(req);
+    const prompt = optionalString(body.message, "message")?.trim();
+    if (!prompt) {
+      return NextResponse.json({ error: "Message is required" }, { status: 400 });
+    }
+
+    const userMessage = createMessage(id, "user", prompt);
+    const assistantMessage = createMessage(id, "assistant", "");
+
+    // Session ID generation is provider-aware and lives in spawn() — codex and
+    // gemini must start with null and capture the CLI-minted ID from output.
+    const isNewSession = !conversation.session_id;
+    const sessionId = conversation.session_id;
+
+    spawn({
+      conversationId: id,
+      messageId: assistantMessage.id,
+      prompt,
+      cli: conversation.cli,
+      model: conversation.model,
+      thinking: conversation.thinking,
+      sessionId,
+      isNewSession,
+      cwd: conversation.cwd,
+    }).catch(() => {
+      // Error handling is done inside spawn's finally block
+    });
+
     return NextResponse.json(
-      { error: "A response is already in progress" },
-      { status: 409 }
+      { messageId: assistantMessage.id, userMessageId: userMessage.id },
+      { status: 202 },
     );
-  }
-
-  const body = await req.json();
-  const prompt = body.message?.trim();
-  if (!prompt) {
-    return NextResponse.json({ error: "Message is required" }, { status: 400 });
-  }
-
-  // Store user message
-  const userMessage = createMessage(id, "user", prompt);
-
-  // Create placeholder assistant message
-  const assistantMessage = createMessage(id, "assistant", "");
-
-  // Determine session state
-  const isNewSession = !conversation.session_id;
-  const sessionId = conversation.session_id || crypto.randomUUID();
-
-  // Fire and forget — spawn the CLI process
-  spawn({
-    conversationId: id,
-    messageId: assistantMessage.id,
-    prompt,
-    cli: conversation.cli,
-    model: conversation.model,
-    thinking: conversation.thinking,
-    sessionId,
-    isNewSession,
-    cwd: conversation.cwd,
-  }).catch(() => {
-    // Error handling is done inside spawn's finally block
-  });
-
-  return NextResponse.json(
-    { messageId: assistantMessage.id, userMessageId: userMessage.id },
-    { status: 202 }
-  );
-});
+  },
+  { role: "editor" },
+);

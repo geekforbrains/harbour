@@ -1,17 +1,30 @@
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
+import { withResourceAuth } from "@/lib/auth";
+import { orgIdForResource } from "@/lib/db/access";
 import { getJobById, linkEnvVarToJob } from "@/lib/db/queries";
+import { readJson, requireNonEmptyString } from "@/lib/http";
 
-export const POST = withAuth(async (req, auth, { params }) => {
-  const { id } = await params;
-  const job = getJobById(id);
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+export const POST = withResourceAuth("job", "id", { role: "editor" })(
+  async (req, auth, { params }) => {
+    const { id } = await params;
+    const job = getJobById(id);
+    if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  const body = await req.json();
-  if (!body.envVarId) {
-    return NextResponse.json({ error: "envVarId is required" }, { status: 400 });
-  }
+    const body = await readJson(req);
+    const envVarId = requireNonEmptyString(body.envVarId, "envVarId");
 
-  linkEnvVarToJob(id, body.envVarId);
-  return NextResponse.json({ ok: true });
-});
+    // The env var must belong to the same org as the job — never link cross-org.
+    if (orgIdForResource("env_var", envVarId) !== auth.orgId) {
+      return NextResponse.json({ error: "Env var not found" }, { status: 404 });
+    }
+
+    try {
+      linkEnvVarToJob(id, envVarId);
+    } catch (error) {
+      // Link guard: an org-level job may only link org-level env vars.
+      const message = error instanceof Error ? error.message : String(error);
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true });
+  },
+);

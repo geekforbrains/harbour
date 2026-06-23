@@ -12,7 +12,11 @@ export type UploadHandle = {
   abort: () => void;
 };
 
-export function uploadFileToRun(runId: string, file: File, onProgress?: UploadProgress): UploadHandle {
+export function uploadFileToRun(
+  runId: string,
+  file: File,
+  onProgress?: UploadProgress,
+): UploadHandle {
   const xhr = new XMLHttpRequest();
   const form = new FormData();
   form.append("file", file);
@@ -20,7 +24,7 @@ export function uploadFileToRun(runId: string, file: File, onProgress?: UploadPr
   const promise = new Promise<SerializedAttachment>((resolve, reject) => {
     xhr.open("POST", `/api/runs/${runId}/attachments`, true);
 
-    xhr.upload.onprogress = e => {
+    xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
         onProgress(Math.round((e.loaded / e.total) * 100));
       }
@@ -36,7 +40,11 @@ export function uploadFileToRun(runId: string, file: File, onProgress?: UploadPr
         }
       } else {
         let message = `Upload failed (${xhr.status})`;
-        try { message = JSON.parse(xhr.responseText).error || message; } catch { /* ignore */ }
+        try {
+          message = JSON.parse(xhr.responseText).error || message;
+        } catch {
+          /* ignore */
+        }
         reject(new Error(message));
       }
     };
@@ -50,7 +58,11 @@ export function uploadFileToRun(runId: string, file: File, onProgress?: UploadPr
   return { promise, abort: () => xhr.abort() };
 }
 
-export async function createEmbedAttachment(runId: string, url: string, title?: string): Promise<SerializedAttachment> {
+export async function createEmbedAttachment(
+  runId: string,
+  url: string,
+  title?: string,
+): Promise<SerializedAttachment> {
   const res = await fetch(`/api/runs/${runId}/attachments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
