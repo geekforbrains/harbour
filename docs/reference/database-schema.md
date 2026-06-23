@@ -330,7 +330,7 @@ Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
   serialize on the single SQLite writer. The guarded claim UPDATEs
   (`AND status = 'scheduled'/'pending'`) plus a lock-unit check — `agent_id`
   for agent runs, `job_id` for workflow runs, nothing in flight
-  (`running`/`waiting`/`pending`) — make a lost race a no-op, never a
+  (`running`/`pending`; `waiting` is idle) — make a lost race a no-op, never a
   double-claim.
 - **Dual-tier resolution.** For `docs`/`env_vars`/`tables`, `project_id IS
   NULL` means org-level; the query layer resolves project-over-org on name

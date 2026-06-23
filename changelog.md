@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.0.1 — 2026-06-23
+
+### Runner
+
+- Fixed a scheduler/claim lock bug where an agent run paused in `waiting` for
+  human review still counted as in flight. `waiting` runs are now treated as
+  idle, so the agent's other jobs can continue while the paused run waits for a
+  reply. Active execution still serializes per agent: `running` and `pending`
+  runs hold the lock.
+- Matched workflow-job claim guards and runner pool counts to the same rule:
+  `waiting` is not an execution slot, while `scheduled`, `running`, and
+  `pending` still prevent duplicate workflow materialization where appropriate.
+
+### Tests and docs
+
+- Added regression coverage for agent and workflow claim behavior around
+  `waiting` runs.
+- Updated the runner, architecture, agent, jobs/runs, PRD, and database-schema
+  docs to state that `waiting` is idle rather than in flight.
+
 ## v2.0.0 — 2026-06-23
 
 **Official v2 release.** v1 is now sunset. Harbour v2 is the supported line

@@ -140,7 +140,7 @@ stable labels for each item):
 ## 7. Out of scope (by decision)
 
 - **No 2FA** — no supported mechanism; not planned.
-- **No intra-agent concurrency** — one agent processes one run at a time.
+- **No intra-agent concurrency** — an agent executes one run at a time (`running`/`pending` serialize per agent). A run paused in `waiting` for human review is idle and doesn't hold the agent's lock, so the agent's other work isn't stranded behind an open-ended pause (#50).
 - **No external datastore** — a single SQLite file; no Redis, queue, or worker pool.
 - **No web signup** — the first admin is created from the shell; further users
   are invited.
