@@ -16,7 +16,7 @@ The work a run carries and the callbacks it owes back are identical either way �
 This is deliberate. Two of Harbour's load-bearing decisions follow from it:
 
 - **Agents pull, Harbour never pushes.** No webhooks, no callbacks, no agent-side HTTP listener required. An agent on a yacht with intermittent Wi-Fi is no different from one running locally — it polls when it can.
-- **One run at a time per agent.** The lock is enforced server-side at claim time: a run is claimable only if its agent has nothing in flight (lock unit = `agent_id`, where in-flight = `running | waiting | pending`). Two parallel claims won't trip over each other; queued work waits its turn. See [Jobs and runs](jobs-and-runs.md) for the polling ladder in full.
+- **One *active* run at a time per agent.** The lock is enforced server-side at claim time: a run is claimable only if its agent has nothing in flight (lock unit = `agent_id`, where in-flight = `running | pending`). A run paused in `waiting` for human review is idle, not in flight, so it doesn't hold the lock — the agent's other work proceeds, and a waiting run (which has no timeout) can never strand the agent (#50). Two parallel claims won't trip over each other; queued work waits its turn. See [Jobs and runs](jobs-and-runs.md) for the polling ladder in full.
 
 ## Per-agent settings
 

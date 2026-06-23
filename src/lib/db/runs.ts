@@ -688,7 +688,14 @@ export type ClaimRunner = {
   scope: RunnerScope;
 };
 
-const IN_FLIGHT = "('running','waiting','pending')";
+// The per-agent / per-workflow lock: a unit with a run in one of these states is
+// actively occupied and must not double up. A `waiting` run (paused for human
+// review) is deliberately EXCLUDED — the agent is idle, not busy, and `waiting`
+// has no timeout (unlike `running`, which `reapStaleRuns` bounds), so counting it
+// would strand the agent's other work indefinitely (#50). `running` and `pending`
+// (a human-answered run about to resume) still serialize, so live execution never
+// doubles up on one agent's single workspace + CLI session.
+const IN_FLIGHT = "('running','pending')";
 
 /**
  * The single rule for which advertised labels a runner may actually claim:
@@ -778,7 +785,9 @@ function pendingResumeQuery(labels: string[], clis: string[], scope: RunnerScope
         AND a.cli IN (${placeholders(clis)})
         ${rScope.sql}
         AND NOT EXISTS (
-          SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ('running','waiting')
+          -- Only an actively-executing ('running') run blocks a resume; a
+          -- concurrent 'waiting' run is idle and must not (#50).
+          SELECT 1 FROM runs rr WHERE rr.agent_id = r.agent_id AND rr.status IN ('running')
         )
       ORDER BY r.updated_at ASC LIMIT 1`,
     params: [...labels, ...clis, ...rScope.params],
@@ -859,7 +868,7 @@ function recurringWorkflowJobQuery(
         AND j.placement IN (${placeholders(labels)})
         ${jScope.sql}
         AND NOT EXISTS (
-          SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status IN ('scheduled','running','waiting','pending')
+          SELECT 1 FROM runs rr WHERE rr.job_id = j.id AND rr.status IN ('scheduled','running','pending')
         )
       ORDER BY j.next_run_at ASC LIMIT 1`,
     params: [now, ...labels, ...jScope.params],
@@ -891,8 +900,8 @@ export function claimNextRun(runner: ClaimRunner, capabilities: RunnerCapabiliti
     const now = Math.floor(Date.now() / 1000);
 
     // 1. Resume an agent run a human nudged back to 'pending'. Lock unit (the
-    //    agent) must have nothing else running/waiting — the pending row itself
-    //    is in flight but it's the one we're claiming.
+    //    agent) must have nothing else running — the pending row itself is in
+    //    flight but it's the one we're claiming, and waiting siblings are idle.
     if (canAgent) {
       const q = pendingResumeQuery(labels, clis, runner.scope);
       const pending = db.prepare(`SELECT r.id ${q.sql}`).get(...q.params) as
@@ -980,14 +989,19 @@ function materializeRun(
 // ~every 60s, so 3 missed polls = disconnected). Drives the absent-runner surface.
 const RUNNER_LIVE_WINDOW_S = 180;
 
-/** In-flight (running|waiting|pending) run counts keyed by claiming runner id. */
+/**
+ * In-flight (running|pending) run counts keyed by claiming runner id — the
+ * dashboard's per-runner execution-slot view. `waiting` is excluded: a run paused
+ * for human review has released its CLI/slot, so it isn't occupying the runner
+ * (mirrors the per-agent lock, #50).
+ */
 export function runningCountsByRunner(): Record<string, number> {
   const db = getDb();
   const rows = db
     .prepare(`
       SELECT claimed_by AS id, COUNT(*) AS n
       FROM runs
-      WHERE claimed_by IS NOT NULL AND status IN ('running','waiting','pending')
+      WHERE claimed_by IS NOT NULL AND status IN ('running','pending')
       GROUP BY claimed_by
     `)
     .all() as { id: string; n: number }[];

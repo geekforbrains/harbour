@@ -72,7 +72,7 @@ Most runs come from a recurring job firing on schedule. For an ad-hoc run, **tri
    (none claimable → { run: null })
 ```
 
-A run is claimable only when its **placement** matches one of the runner's advertised labels, its **kind** (and, for agent runs, the agent's **CLI**) is one the runner advertised, and its **lock unit** has nothing in flight — `agent_id` for agent runs, `job_id` for workflow runs, where in-flight = `running | waiting | pending`. Distinct lock units run in parallel, unbounded by org; the *same* agent or workflow job never doubles up. Order matters within the ladder: pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run.
+A run is claimable only when its **placement** matches one of the runner's advertised labels, its **kind** (and, for agent runs, the agent's **CLI**) is one the runner advertised, and its **lock unit** has nothing in flight — `agent_id` for agent runs, `job_id` for workflow runs, where in-flight = `running | pending`. A `waiting` run (paused for human input) is idle and does *not* hold the lock, so the agent's other work isn't stranded behind an open-ended human pause (#50). Distinct lock units run in parallel, unbounded by org; the *same* agent or workflow job never doubles up on active execution. Order matters within the ladder: pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run.
 
 Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, the lock-unit check would otherwise gate that unit forever. `reapStaleRuns` checks `claimed_at + (timeout_minutes * 60) < now()` — a hard wallclock ceiling measured from when the current running attempt was claimed, deliberately **not** keyed on `updated_at` (streaming output refreshes `updated_at`, which would turn the check into a sliding inactivity window that never fires for a chatty-but-stuck run). Matches are force-failed with a system activity entry: "Run timed out after N minutes without completion."
 
@@ -98,7 +98,7 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 |---|---|
 | `scheduled` | Triggered (or recurring not-yet-claimed), waiting for `scheduled_for <= now`. Recurring schedule-trigger jobs may go straight to `running` on creation. |
 | `running` | Agent is working. Activity is updating. Counts toward the "agent busy" check. |
-| `waiting` | Agent paused for human input. Surfaces on the dashboard. Doesn't block other jobs from firing. |
+| `waiting` | Agent paused for human input. Surfaces on the dashboard. Idle — doesn't hold the agent lock, so the agent's own other jobs (and everyone else's) keep firing (#50). |
 | `pending` | Human responded — flipped automatically when a user posts activity to a `waiting`, `done`, `failed`, or `killed` run. Next poll claims it. |
 | `done` | Completed successfully. Resumable via comment. |
 | `failed` | Agent or workflow returned non-zero, or the run timed out. Resumable via comment or retry. |

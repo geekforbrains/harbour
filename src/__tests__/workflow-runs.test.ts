@@ -16,6 +16,7 @@ import {
   insertRows,
   linkTableToJob,
   listRunActivity,
+  updateRunStatus,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 import { claim, localRunner, peek } from "./support/claim";
@@ -108,6 +109,29 @@ describe("claim: recurring workflow job materialization", () => {
 
     expect(second).toBeNull();
     expect(runsForJob(wf.id).length).toBe(1); // no duplicate run
+  });
+
+  it("does not let a waiting workflow run hold the job lock", () => {
+    const { wf } = workflowJob();
+    const runner = localRunner();
+    makeJobDue(wf.id);
+
+    const first = claim(runner)!;
+    updateRunStatus(first.run.id, "waiting");
+
+    makeJobDue(wf.id);
+    const second = claim(runner)!;
+    expect(second).toBeTruthy();
+    expect(second.run.id).not.toBe(first.run.id);
+    expect(
+      runsForJob(wf.id)
+        .map((r) => r.status)
+        .sort(),
+    ).toEqual(["running", "waiting"]);
+
+    makeJobDue(wf.id);
+    expect(claim(runner)).toBeNull();
+    expect(runsForJob(wf.id).length).toBe(2);
   });
 
   it("does not materialize a run for an inactive workflow job", () => {

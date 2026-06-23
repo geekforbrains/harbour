@@ -212,6 +212,31 @@ describe("claimNextRun: lock unit (serialize per unit)", () => {
     expect(resumed.run.id).toBe(first.run.id);
     expect(resumed.run.status).toBe("running");
   });
+
+  it("a waiting run does not hold the agent lock, but a running one does", () => {
+    const { project, agent, job } = agentJob();
+
+    // First run for the agent pauses for human input (waiting). Unlike running,
+    // a waiting run has no timeout — it must not strand the agent's other work.
+    makeJobDue(job.id);
+    const first = claim()!;
+    updateRunStatus(first.run.id, "waiting");
+
+    // A second run is triggered for the same agent (another job). The agent is
+    // idle (only waiting), so the scheduled run must be claimable.
+    const jobB = createJob(project.id, agent.id, { name: "B", schedule: '{"every":60}' })!;
+    triggerJobRun(jobB.id);
+    const second = claim()!;
+    expect(second).toBeTruthy();
+    expect(second.run.id).not.toBe(first.run.id);
+    expect(second.job.name).toBe("B");
+
+    // Now B is running — a running run DOES still serialize the agent. A third
+    // due run for the same agent must not be claimed (single workspace/session).
+    const jobC = createJob(project.id, agent.id, { name: "C", schedule: '{"every":60}' })!;
+    triggerJobRun(jobC.id);
+    expect(claim()).toBeNull();
+  });
 });
 
 // ── Parallelism across distinct units, unbounded by org ───────────────────────
