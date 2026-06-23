@@ -25,6 +25,8 @@ A runner is the unit of execution, and which work it claims is decided by **plac
 
 So "run this on another machine" is three moves: give the job a placement label, mint a remote runner authorized for that label, and connect it on the other host. The claim filters are detailed in [architecture](../reference/architecture.md).
 
+**One runner, many agents.** A runner isn't tied to an agent — it claims by label. Point several agents at the same label and a single runner serving it runs them all; their schedules and targeting stay on harbour, and because the claim lock is per-`agent_id`, their runs proceed in parallel up to the runner's pool size. You need a second runner only for a *different machine* or hard isolation — never just because you've added another agent. See [Designing an agent team](../concepts/agents.md#designing-an-agent-team).
+
 ## Reachability
 
 The remote machine must be able to reach the harbour URL embedded in the connect blob. The runner makes outbound HTTP requests; harbour never calls the runner. So this is about the runner reaching harbour, nothing more.
