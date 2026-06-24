@@ -56,6 +56,16 @@ export function getRecentRunsLimit(): number {
   return Number.isFinite(n) && n > 0 ? n : 10;
 }
 
+/**
+ * Whether the dashboard's recent-runs list folds a job's repeated *successful*
+ * runs into one summary row. ON by default; only the literal string "false"
+ * disables it. Skipped runs are always collapsed regardless of this setting;
+ * failures and killed runs are never collapsed. See listRecentRuns.
+ */
+export function getRecentCollapseSuccess(): boolean {
+  return getSetting("recent_collapse_success") !== "false";
+}
+
 // Video processing settings
 
 export function isVideoAutoProcessEnabled(): boolean {
