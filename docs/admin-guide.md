@@ -529,7 +529,7 @@ Content-Type: application/json
 { "timezone": "America/New_York", "recent_runs_limit": "20" }
 ```
 
-Values are strings. `timezone` is the default schedule timezone; `recent_runs_limit` caps the dashboard's recent-runs list. Per-org timezone is set via `PUT /api/orgs?orgId=<id>`.
+Values are strings. `timezone` is the default schedule timezone; `recent_runs_limit` caps the dashboard's recent-runs list; `recent_collapse_success` (`"true"`/`"false"`, default on) folds a job's repeated successful runs into one row on that list. Per-org timezone is set via `PUT /api/orgs?orgId=<id>`.
 
 ### List Timezones
 ```
