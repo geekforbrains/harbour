@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.1.0 — 2026-06-24
+
+### Runs
+
+- The dashboard's Recent feed now folds a job's repeated runs into a single
+  summary row, so one frequently-firing job no longer buries other recent
+  activity. Successful (`done`) runs collapse per job when the new "Collapse
+  repeated successes" setting is on (the default); skipped runs always collapse
+  and are now shown in this view (they were previously hidden); failed and
+  killed runs are never collapsed and always appear individually. A collapsed
+  row shows how many runs it stands for, links to the most recent run in the
+  group, and the feed reaches further back the more it folds.
+- Added a "Collapse repeated successes" toggle in Settings (instance-wide, on by
+  default) controlling the `done`-run folding above.
+
 ## v2.0.1 — 2026-06-23
 
 ### Runner
