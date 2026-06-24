@@ -478,6 +478,32 @@ export default function SettingsPage() {
           />
         </div>
 
+        {/* Collapse repeated successes in the Recent feed */}
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label>Collapse repeated successes</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              On the main Runs page, fold a job&apos;s repeated successful runs into one row so a
+              chatty job can&apos;t bury everything else. Skipped runs are always collapsed;
+              failures always show individually.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              updateSetting(
+                "recent_collapse_success",
+                settings?.recent_collapse_success === "false" ? "true" : "false",
+              )
+            }
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${settings?.recent_collapse_success !== "false" ? "bg-primary" : "bg-muted"}`}
+          >
+            <span
+              className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${settings?.recent_collapse_success !== "false" ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`}
+            />
+          </button>
+        </div>
+
         {/* Captain */}
         <div className="rounded-lg border p-4 space-y-4">
           <div>
