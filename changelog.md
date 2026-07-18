@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **Captain, the in-browser CLI console, is removed** — the `/captain` dashboard
+  page and message UI, the `/api/captain` conversation routes, the server-side
+  process manager/providers/workspace libs, the Captain settings panel and nav
+  entry, and the `captain_*` tables. Captain launched an unsandboxed host CLI on
+  behalf of any org editor, which fits poorly with Harbour's least-privilege
+  posture; agent jobs, workflows, and the admin API cover its real uses. On a
+  fresh database the `captain_*` tables are simply never created; existing
+  databases keep the now-unused tables (harmless — nothing reads them).
+
+### Docs
+
+- Documented the one-time `npx playwright install chromium` step the local e2e
+  suite needs (version-pinned bundled Chromium, not system Chrome).
+
 ## v2.1.0 — 2026-06-24
 
 ### Runs

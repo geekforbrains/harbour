@@ -121,7 +121,12 @@ setup rather than inventing one. Route tests call the exported handler
 directly with a mocked `NextRequest`.
 
 **E2E tests (Playwright)** — `e2e/<topic>.spec.ts`, run with
-`npm run test:e2e`. The suite self-hosts: it seeds a throwaway Harbour home in
+`npm run test:e2e`. First run on a machine (and after a Playwright version bump)
+needs the browser once: `npx playwright install chromium`. Deliberately the
+version-pinned bundled Chromium, **not** system Chrome via `channel` — the pin
+keeps every machine on a byte-identical browser
+([Playwright's default and recommendation](https://playwright.dev/docs/browsers)).
+The suite self-hosts: it seeds a throwaway Harbour home in
 `.e2e/` and boots a dev server on port 3030 (`e2e/setup-and-start.mjs`), with
 auth handled once in `e2e/auth.setup.ts`. **Every feature that adds UI or
 routes extends this suite with its happy path** — the suite is small today and
