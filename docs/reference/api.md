@@ -26,8 +26,8 @@ agent-run's exec token (the executor acts as the run's agent).
 ## Conventions
 
 - Bodies are JSON except attachment uploads (`multipart/form-data`).
-- Timestamps are epoch seconds; IDs are uuid except `run_output.id` /
-  `captain_output.id` (auto-increment, used as SSE `?after=N` cursors).
+- Timestamps are epoch seconds; IDs are uuid except `run_output.id`
+  (auto-increment, used as an SSE `?after=N` cursor).
 - Errors are `{ "error": "<message>" }`. `401` unauthenticated, `403`
   forbidden/out-of-scope, `409` for conflicts — an illegal run-status edge,
   kill-while-not-running, or a create (`POST /api/orgs`, `/api/projects`,
@@ -49,8 +49,7 @@ agent-run's exec token (the executor acts as the run's agent).
   freshly minted per-run `hbx_` credential and the `api` block is pre-resolved full
   URLs that authenticate with it. Full schema in
   [runner-guide.md](../runner-guide.md) (`GET /api/runner-guide`).
-- **SSE**: `GET /api/runs/:id/output/stream` and
-  `GET /api/captain/conversations/:id/stream` emit `event: output` (poll-backed),
+- **SSE**: `GET /api/runs/:id/output/stream` emits `event: output` (poll-backed),
   then `event: status` / `event: done` on terminal state.
 
 ## Public (bare handlers, no wrapper)
@@ -220,17 +219,6 @@ This single endpoint replaces the old per-runner poll routes (`GET
 credential routes (`GET / POST /api/workflow-runners`), which are removed. Both
 agent and workflow runs are claimed here; the server is the sole arbiter and
 serializes claims in one SQLite transaction.
-
-## Captain (all `withOrgAuth`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET / POST | `/api/captain/conversations` | List / create a conversation |
-| GET / PUT / DELETE | `/api/captain/conversations/:id` | Fetch / rename / delete |
-| POST | `/api/captain/conversations/:id/messages` | Post a message — returns **202** `{messageId, userMessageId}` and spawns the CLI subprocess async; output arrives via the SSE stream |
-| GET | `/api/captain/conversations/:id/status` | `{running, activeMessageId}` |
-| POST | `/api/captain/conversations/:id/stop` | SIGTERM the active subprocess |
-| GET | `/api/captain/conversations/:id/stream` | SSE output |
 
 ## System (`withAuthenticatedUser`)
 

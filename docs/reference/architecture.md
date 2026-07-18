@@ -30,7 +30,6 @@ default):
 | `runner.url` (optional) | non-secret base URL the runner reaches Harbour at; resolution order is `HARBOUR_URL` env → this file → `http://localhost:3000` |
 | `sessions.json` | CLI session cache for run resume (`run_id → {sessionId, cli, cwd}`) |
 | `workflows/` | working root under which each job's gate scripts (workflow command, agent prerun/postrun) are materialized; the runner writes a gate's body to a per-job subdir (`<scripts_dir>`) from the payload, then runs it via its runtime's interpreter |
-| `captain/` | Captain conversation workspace (default cwd) |
 | `runner.log`, `runner.err.log` | launchd output for the runner |
 
 Override roots via `HARBOUR_HOME`, `HARBOUR_DB_PATH`, `HARBOUR_UPLOADS_DIR`,
@@ -261,7 +260,7 @@ is a [PRD](../prd.md) §6 requirement — H4.)
 Two App Router route groups:
 
 - **`src/app/(auth)/`** — `login/`, `set-password/`. Public; no shell.
-- **`src/app/(app)/`** — the dashboard, wrapped in `AppShell`: `captain/`,
+- **`src/app/(app)/`** — the dashboard, wrapped in `AppShell`:
   `runs/` (root dashboard), `jobs/`, `agents/`, `docs/`, `tables/`,
   `env-vars/` (labeled **Secrets**), `users/`, `settings/`.
 
@@ -272,8 +271,8 @@ Two App Router route groups:
 the waiting-runs badge. Switching org/project invalidates all React Query keys.
 
 React Query defaults: `staleTime: 2000`, `refetchOnWindowFocus: true`; most lists
-`refetchInterval` ~5s, the sidebar projects ~10s. SSE (`/api/runs/:id/output/stream`,
-captain stream) replaces polling once a CLI is actively streaming. Theming is
+`refetchInterval` ~5s, the sidebar projects ~10s. SSE (`/api/runs/:id/output/stream`)
+replaces polling once a CLI is actively streaming. Theming is
 oklch CSS variables with Light/Dark/System, persisted to
 `localStorage["harbour_theme"]`. Mobile uses the `md:` breakpoint (fixed sidebar
 → top header + bottom tab bar). Available as a PWA (`display: standalone`, no

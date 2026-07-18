@@ -380,40 +380,6 @@ export function initializeSchema(db: Database.Database) {
       value TEXT NOT NULL
     );
 
-    -- ── Captain (per-org) ────────────────────────────────────────────────
-
-    CREATE TABLE IF NOT EXISTS captain_conversations (
-      id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      cli TEXT NOT NULL,
-      model TEXT,
-      thinking TEXT,
-      session_id TEXT,
-      cwd TEXT,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS captain_messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES captain_conversations(id) ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
-      content TEXT NOT NULL DEFAULT '',
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS captain_output (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      conversation_id TEXT NOT NULL REFERENCES captain_conversations(id) ON DELETE CASCADE,
-      message_id TEXT REFERENCES captain_messages(id) ON DELETE CASCADE,
-      event_type TEXT NOT NULL,
-      content TEXT,
-      tool_name TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
     -- ── Indexes ──────────────────────────────────────────────────────────
 
     CREATE INDEX IF NOT EXISTS idx_memberships_org ON memberships(org_id);
@@ -453,11 +419,6 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_env_vars_org_project ON env_vars(org_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_tables_org_project ON tables(org_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_table_migrations_tbl ON table_migrations(table_id);
-
-    CREATE INDEX IF NOT EXISTS idx_captain_conversations_org ON captain_conversations(org_id);
-    CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
-    CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
   `);
 
   ensureRunActivityAuthorTypes(db);

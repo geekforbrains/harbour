@@ -5,7 +5,6 @@ import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useApp } from "@/components/app/app-context";
-import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
-import { CLI_CONFIG } from "@/lib/cli-config";
 import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useUpdateOrg } from "@/lib/hooks/use-orgs";
 import {
@@ -502,65 +500,6 @@ export default function SettingsPage() {
               className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${settings?.recent_collapse_success !== "false" ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`}
             />
           </button>
-        </div>
-
-        {/* Captain */}
-        <div className="rounded-lg border p-4 space-y-4">
-          <div>
-            <Label className="text-base font-medium">Captain</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Chat with a CLI tool directly from the dashboard.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label>CLI Tool</Label>
-            <select
-              value={settings?.captain_cli || "claude"}
-              onChange={(e) => updateSetting("captain_cli", e.target.value)}
-              className={SELECT_CLASS}
-            >
-              {Object.keys(CLI_CONFIG).map((cli) => (
-                <option key={cli} value={cli}>
-                  {cli.charAt(0).toUpperCase() + cli.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <ModelThinkingSelect
-            cli={settings?.captain_cli || "claude"}
-            model={settings?.captain_model || ""}
-            thinking={settings?.captain_thinking || ""}
-            onModelChange={(v) => updateSetting("captain_model", v)}
-            onThinkingChange={(v) => updateSetting("captain_thinking", v)}
-            defaultModelLabel="Default"
-            defaultThinkingLabel="Default"
-          />
-          <div className="space-y-2">
-            <Label>Working Directory</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Where the CLI tool runs. Point this at a project repo for file access.
-            </p>
-            <Input
-              placeholder="~/.harbour/captain"
-              className="font-mono text-sm"
-              value={settings?.captain_cwd || ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v.trim()) {
-                  updateSetting("captain_cwd", "");
-                }
-              }}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                updateSetting("captain_cwd", v);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  updateSetting("captain_cwd", (e.target as HTMLInputElement).value.trim());
-                }
-              }}
-            />
-          </div>
         </div>
 
         {/* Video Processing */}

@@ -2,7 +2,6 @@ export * from "./access";
 export * from "./admin-api-keys";
 export * from "./agents";
 export * from "./attachments";
-export * from "./captain";
 export * from "./docs";
 export * from "./env-vars";
 export * from "./jobs";

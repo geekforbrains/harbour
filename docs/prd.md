@@ -97,7 +97,6 @@ detail, see [docs/reference](reference/).
   the work within an org.
 
 **Operator surface**
-- Captain: an in-browser CLI console for operating the harbour itself.
 - Per-run attachments (files + embeds) with optional video transcription and
   storyboard generation.
 - Dashboard for runs, jobs, agents, docs, tables, secrets, users, and settings.

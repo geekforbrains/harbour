@@ -123,7 +123,7 @@ export function unarchiveOrg(id: string) {
 
 /**
  * Hard delete: admin escape hatch. ON DELETE CASCADE wipes everything beneath
- * the org (projects, agents, jobs, runs, resources, memberships, captain).
+ * the org (projects, agents, jobs, runs, resources, memberships).
  */
 export function deleteOrg(id: string) {
   const db = getDb();

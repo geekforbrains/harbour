@@ -3,7 +3,7 @@
 
 Project harbour {
   database_type: 'SQLite'
-  Note: 'Harbour v2 control plane schema. IDs are uuid TEXT except run_output.id and captain_output.id.'
+  Note: 'Harbour v2 control plane schema. IDs are uuid TEXT except run_output.id.'
 }
 
 // Identity + access
@@ -389,53 +389,6 @@ Table settings {
   value TEXT [not null]
 }
 
-// Captain
-
-Table captain_conversations {
-  id TEXT [pk]
-  org_id TEXT [not null]
-  title TEXT [not null]
-  cli TEXT [not null]
-  model TEXT
-  thinking TEXT
-  session_id TEXT
-  cwd TEXT
-  user_id TEXT [not null]
-  created_at INTEGER [not null, default: `unixepoch()`]
-  updated_at INTEGER [not null, default: `unixepoch()`]
-
-  indexes {
-    org_id [name: 'idx_captain_conversations_org']
-    user_id [name: 'idx_captain_conversations_user']
-  }
-}
-
-Table captain_messages {
-  id TEXT [pk]
-  conversation_id TEXT [not null]
-  role TEXT [not null, check: `role IN ('user','assistant')`]
-  content TEXT [not null, default: '']
-  created_at INTEGER [not null, default: `unixepoch()`]
-
-  indexes {
-    conversation_id [name: 'idx_captain_messages_conversation']
-  }
-}
-
-Table captain_output {
-  id INTEGER [pk, increment]
-  conversation_id TEXT [not null]
-  message_id TEXT
-  event_type TEXT [not null]
-  content TEXT
-  tool_name TEXT
-  created_at INTEGER [not null, default: `unixepoch()`]
-
-  indexes {
-    conversation_id [name: 'idx_captain_output_conversation']
-  }
-}
-
 // Foreign keys
 
 Ref: memberships.user_id > users.id [delete: cascade]
@@ -479,9 +432,3 @@ Ref: job_env_vars.job_id > jobs.id [delete: cascade]
 Ref: job_env_vars.env_var_id > env_vars.id [delete: cascade]
 Ref: job_tables.job_id > jobs.id [delete: cascade]
 Ref: job_tables.table_id > tables.id [delete: cascade]
-
-Ref: captain_conversations.org_id > orgs.id [delete: cascade]
-Ref: captain_conversations.user_id > users.id [delete: cascade]
-Ref: captain_messages.conversation_id > captain_conversations.id [delete: cascade]
-Ref: captain_output.conversation_id > captain_conversations.id [delete: cascade]
-Ref: captain_output.message_id > captain_messages.id [delete: cascade]

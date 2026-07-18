@@ -5,10 +5,10 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
 v1 → v2 migration; a fresh database is the only supported path.
 
-- **27 tables**, **35 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **24 tables**, **31 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
-  INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id` and
-  `captain_output.id`, which are AUTOINCREMENT integers used as SSE cursors.
+  INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id`, which is an
+  AUTOINCREMENT integer used as an SSE cursor.
 
 Notation: **PK** / **FK**(cascade) / **NN** / **U** / **CHECK**. Defaults shown
 only when non-trivial.
@@ -31,8 +31,8 @@ in the schema, not bolted on:
   only org-level resources (linking a project-scoped doc/env var/table into
   an org-scoped job would widen its blast radius; the query layer rejects it
   and routes return 400).
-- **Org-scoped** infrastructure: `captain_conversations`. The `runners`
-  registry is **instance-level** (org-agnostic — execution doesn't see tenancy).
+- The `runners` registry is **instance-level** (org-agnostic — execution
+  doesn't see tenancy).
 - `runs.org_id` and `runs.project_id` are denormalized (copied from the job) so
   org-scoped run queries need no join and org-level runs (`project_id` NULL)
   stay reachable.
@@ -301,26 +301,10 @@ project-level tiers).
 ## Settings
 
 ### `settings`
-`key` (PK), `value` (NN). **True instance-global KV only** — e.g. Captain config
-and video-processing settings. Org-scoped config (like `timezone`) lives in
+`key` (PK), `value` (NN). **True instance-global KV only** — e.g.
+video-processing settings. Org-scoped config (like `timezone`) lives in
 `orgs.settings` JSON, not here. There is **no** `signup_enabled` key (no web
 signup).
-
-## Captain (per-org)
-
-In-browser CLI chat; a server-side process manager spawns a CLI tool and streams
-output over SSE.
-
-- **`captain_conversations`** — `org_id`, `user_id`, `title`, `cli` (NN),
-  `model`, `thinking`, `session_id`, `cwd` (overrides default `~/.harbour/captain/`).
-- **`captain_messages`** — `conversation_id`, `role` (CHECK `user`/`assistant`),
-  `content` (accumulates as the response streams).
-- **`captain_output`** — `id` AUTOINCREMENT (SSE cursor), `conversation_id`,
-  `message_id` (FK → captain_messages, nullable, ON DELETE CASCADE),
-  `event_type`, `content`, `tool_name`.
-
-Indexes: `idx_captain_conversations_org`, `idx_captain_conversations_user`,
-`idx_captain_messages_conversation`, `idx_captain_output_conversation`.
 
 ## Notable invariants
 

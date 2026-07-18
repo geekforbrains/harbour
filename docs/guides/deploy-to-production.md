@@ -197,7 +197,7 @@ macOS is the developer-machine path: `npm run build && npm start` from the repo,
 
 Wherever it runs, harbour's state lives in one directory — `HARBOUR_HOME`, default `~/.harbour/` (so `/home/harbour/.harbour/` in the Linux setup above).
 
-What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runner.token` (the runner credential, 0600), `sessions.json` (CLI session IDs for resume), `captain/` (Captain's per-conversation workspaces), `workflows/` (workflow and prerun scripts).
+What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runner.token` (the runner credential, 0600), `sessions.json` (CLI session IDs for resume), `workflows/` (workflow and prerun scripts).
 
 Backup strategy: snapshot the directory. Restoring is "put it back, restart the service".
 

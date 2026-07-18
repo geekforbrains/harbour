@@ -72,17 +72,11 @@ Workflows are claimed by the **same** local runner that drives agent jobs — on
 
 An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, tables, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).
 
-## Captain
-
-![Captain](public/screenshot-captain.png)
-
-**Captain** is an in-browser chat with a server-side CLI tool — your operator's console for the harbour itself. Ask it to summarize today's runs, query the database, debug a stuck job, or set up a new agent without leaving the dashboard. → [more](docs/concepts/captain.md).
-
 ## Documentation
 
 Start with the **[docs map](docs/README.md)**, which routes you to the right page. The **[PRD](docs/prd.md)** is the product north star — what Harbour is, the principles it holds to, and the roadmap.
 
-- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [attachments](docs/concepts/attachments.md)
 - **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
 - **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API](docs/reference/api.md), [design language](docs/reference/design-language.md)
 

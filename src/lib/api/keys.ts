@@ -95,12 +95,6 @@ export const qk = {
     list: () => ["users", "list"] as const,
   },
 
-  captain: {
-    all: ["captain"] as const,
-    conversations: (scope?: Scope) => ["captain", "conversations", scopeKey(scope)] as const,
-    conversation: (id: string) => ["captain", "conversation", id] as const,
-  },
-
   settings: {
     all: ["settings"] as const,
     detail: () => ["settings", "detail"] as const,
@@ -131,5 +125,4 @@ export const SCOPED_DOMAINS = [
   qk.docs.all,
   qk.envVars.all,
   qk.tables.all,
-  qk.captain.all,
 ] as const;

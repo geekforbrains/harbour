@@ -17,7 +17,7 @@ Route by task and read the doc first:
 - **Touching API routes** → [docs/reference/api.md](docs/reference/api.md) — route map, the auth wrapper each route uses, `?orgId=`/`?projectId=` scoping rules
 - **Touching the DB** → [docs/reference/database-schema.md](docs/reference/database-schema.md); the schema *is* `src/lib/db/schema.ts`
 - **Building or restyling UI** → [docs/reference/design-language.md](docs/reference/design-language.md) — required reading, the color rules are strict
-- **How a feature is meant to behave** → [docs/concepts/](docs/README.md#concepts--how-the-pieces-fit) — agents, jobs & runs, workflows, orgs & projects, shared context, Captain, attachments
+- **How a feature is meant to behave** → [docs/concepts/](docs/README.md#concepts--how-the-pieces-fit) — agents, jobs & runs, workflows, orgs & projects, shared context, attachments
 - **On-the-wire payloads** → [docs/guide.md](docs/guide.md) / [docs/admin-guide.md](docs/admin-guide.md) — served live at `/api/guide` / `/api/admin-guide`, source of truth for wire behavior
 - **Cutting a release** → [docs/guides/releasing.md](docs/guides/releasing.md) — changelog, version bump, tag
 

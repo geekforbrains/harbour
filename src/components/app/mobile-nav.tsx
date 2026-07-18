@@ -6,7 +6,6 @@ import {
   Briefcase,
   FileText,
   KeyRound,
-  MessageSquare,
   MoreHorizontal,
   Settings,
   Table2,
@@ -27,12 +26,6 @@ export function MobileBottomNav() {
   const router = useRouter();
 
   const tabs = [
-    {
-      href: "/captain",
-      label: "Captain",
-      icon: MessageSquare,
-      match: (p: string) => p.startsWith("/captain"),
-    },
     {
       href: "/",
       label: "Runs",
