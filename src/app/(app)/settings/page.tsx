@@ -476,30 +476,23 @@ export default function SettingsPage() {
           />
         </div>
 
-        {/* Collapse repeated successes in the Recent feed */}
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <Label>Collapse repeated successes</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              On the main Runs page, fold a job&apos;s repeated successful runs into one row so a
-              chatty job can&apos;t bury everything else. Skipped runs are always collapsed;
-              failures always show individually.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() =>
-              updateSetting(
-                "recent_collapse_success",
-                settings?.recent_collapse_success === "false" ? "true" : "false",
-              )
-            }
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${settings?.recent_collapse_success !== "false" ? "bg-primary" : "bg-muted"}`}
-          >
-            <span
-              className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform mt-0.5 ${settings?.recent_collapse_success !== "false" ? "translate-x-5.5 ml-0.5" : "translate-x-0.5"}`}
-            />
-          </button>
+        {/* Per-job cap on successes in the Recent feed */}
+        <div className="space-y-2">
+          <Label>Successes Per Job</Label>
+          <p className="text-xs text-muted-foreground">
+            Max successful runs each job shows in the Recent feed, so a chatty job can&apos;t bury
+            everything else. Failures always show individually; skipped runs are hidden.
+          </p>
+          <Input
+            type="number"
+            min={1}
+            className="font-mono text-sm w-32"
+            value={settings?.recent_runs_per_job || "3"}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (v > 0) updateSetting("recent_runs_per_job", String(v));
+            }}
+          />
         </div>
 
         {/* Video Processing */}

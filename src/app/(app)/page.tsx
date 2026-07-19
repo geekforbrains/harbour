@@ -24,7 +24,6 @@ export default function RunsPage() {
   const waiting = allWaiting.filter((r: Run) => r.status === "waiting");
   const pending = allWaiting.filter((r: Run) => r.status === "pending");
   const recent = runsData?.recent || [];
-  const collapsedActive = recent.some((r: Run) => (r.collapsed_count ?? 0) > 1);
 
   if (loading) return <PageLoading />;
 
@@ -98,18 +97,7 @@ export default function RunsPage() {
             ))}
           </div>
           {recent.length > 0 && (
-            <div className="mt-3 flex flex-col items-center gap-1.5">
-              {collapsedActive && (
-                <p className="text-xs text-muted-foreground">
-                  Repeated runs are folded into single rows.{" "}
-                  <Link
-                    href="/settings"
-                    className="underline underline-offset-2 hover:text-foreground transition-colors"
-                  >
-                    Settings
-                  </Link>
-                </p>
-              )}
+            <div className="mt-3 flex justify-center">
               <Link
                 href={historyHref}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"

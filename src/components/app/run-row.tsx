@@ -29,12 +29,6 @@ export type RunRowData = {
   created_at: number;
   updated_at: number;
   completed_at: number | null;
-  /**
-   * On the dashboard's Recent feed, repeated runs of the same job+status are
-   * folded into one summary row. When >1, this row stands in for that many runs
-   * (and links to the most recent of them). Absent on full/raw run lists.
-   */
-  collapsed_count?: number | null;
 };
 
 type Props = {
@@ -84,11 +78,6 @@ export function RunRow({ run, showActions = true }: Props) {
                 />
                 <span className="font-mono">{run.agent_name}</span>
               </>
-            )}
-            {(run.collapsed_count ?? 0) > 1 && (
-              <span title="Repeated runs folded into one row">
-                &middot; {run.collapsed_count}&times;
-              </span>
             )}
           </div>
         </div>

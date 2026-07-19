@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Runs
+
+- The dashboard's Recent feed shows individual runs again — the v2.1.0
+  collapsed summary rows are gone. Skipped runs no longer appear in the feed
+  (they remain reachable via the All Runs "Skipped" filter); a job shows at
+  most a few of its latest successes (the new "Successes Per Job" setting,
+  `recent_runs_per_job`, default 3) so a frequently-firing job can't bury
+  other activity; failed and killed runs always appear individually. The
+  "Collapse repeated successes" setting (`recent_collapse_success`) is
+  removed.
+
 ### Removed
 
 - **Captain, the in-browser CLI console, is removed** — the `/captain` dashboard

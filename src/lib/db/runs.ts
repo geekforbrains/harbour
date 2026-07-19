@@ -421,68 +421,52 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
 }
 
 /**
- * The dashboard's "Recent" feed: completed runs (done/failed/killed/skipped),
- * newest first, capped at `limit` *rows*.
+ * The dashboard's "Recent" feed: completed runs (done/failed/killed), newest
+ * first, capped at `limit` rows. `skipped` runs are excluded outright — a
+ * prerun gate that skips every few minutes is a heartbeat, not activity, and
+ * a wall of always-fresh skips buries everything real. (They stay reachable
+ * via the All Runs "Skipped" filter.)
  *
- * To keep one chatty job from drowning the feed, repeated runs of the same job
- * are folded into a single summary row carrying a `collapsed_count`:
- *   - `skipped` is ALWAYS collapsed per job — a prerun gate that skips every
- *     minute would otherwise bury everything (and skipped runs are hidden
- *     outright in the un-collapsed history view, which the operator dislikes).
- *   - `done` is collapsed per job only when `collapseDone` is set (the instance
- *     "collapse repeated successes" setting, ON by default).
- *   - `failed` / `killed` are never collapsed — each shows as its own row and
- *     ages off the board normally.
+ * To keep one chatty job from burying the feed, each job contributes at most
+ * `perJobLimit` successful (`done`) rows — the newest ones, since candidates
+ * arrive newest-first (the `recent_runs_per_job` instance setting, default 3).
+ * `failed` / `killed` are never capped: every failure surfaces individually.
  *
- * Because collapsing frees slots, we scan a bounded window larger than `limit`
- * and fold it down, so the feed reaches further back the more it collapses.
- * Counts are scoped to that scan window. A collapsed row carries its newest
- * run's id/title/timestamp, so it sorts into the stream and links to the most
- * recent occurrence.
+ * Because capping frees slots, we scan a bounded window larger than `limit`
+ * and filter it down, so the feed reaches further back the more it drops.
  */
 export function listRecentRuns(
   orgId: string,
   limit = 10,
   projectId?: string,
-  opts: { collapseDone?: boolean } = {},
+  opts: { perJobLimit?: number } = {},
 ) {
   const db = getDb();
-  const collapseDone = opts.collapseDone ?? true;
+  const perJobLimit = Math.max(1, opts.perJobLimit ?? 3);
   const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
-  // Look back far enough to refill `limit` rows after folding, but bound the
+  // Look back far enough to refill `limit` rows after capping, but bound the
   // scan so a hot job can't make this query unboundedly expensive.
   const scanCap = Math.min(2000, Math.max(500, limit * 20));
   const candidates = db
     .prepare(`
     ${RUN_LIST_SELECT}
-    WHERE r.status IN ('done', 'failed', 'killed', 'skipped') AND r.org_id = ? ${projectFilter}
+    WHERE r.status IN ('done', 'failed', 'killed') AND r.org_id = ? ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `)
     .all(...(projectId ? [orgId, projectId, scanCap] : [orgId, scanCap])) as any[];
 
   const rows: any[] = [];
-  const groups = new Map<string, any>();
+  const doneCounts = new Map<string, number>();
   for (const row of candidates) {
-    const collapsible = row.status === "skipped" || (collapseDone && row.status === "done");
-    if (!collapsible) {
-      rows.push(row);
-      continue;
+    if (row.status === "done") {
+      const seen = doneCounts.get(row.job_id) ?? 0;
+      if (seen >= perJobLimit) continue; // older successes drop; failures never do
+      doneCounts.set(row.job_id, seen + 1);
     }
-    const key = `${row.job_id}:${row.status}`;
-    const existing = groups.get(key);
-    if (existing) {
-      existing.collapsed_count += 1;
-    } else {
-      // Candidates are newest-first, so the first row of a group is its latest.
-      row.collapsed_count = 1;
-      groups.set(key, row);
-      rows.push(row);
-    }
+    rows.push(row);
+    if (rows.length >= limit) break;
   }
-  // `rows` is already newest-first (each group keeps its latest in place), but a
-  // later count bump doesn't move its row, so sort explicitly to stay honest.
-  rows.sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0));
-  return rows.slice(0, limit);
+  return rows;
 }
 
 const ALL_STATUSES = [

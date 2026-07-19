@@ -57,13 +57,14 @@ export function getRecentRunsLimit(): number {
 }
 
 /**
- * Whether the dashboard's recent-runs list folds a job's repeated *successful*
- * runs into one summary row. ON by default; only the literal string "false"
- * disables it. Skipped runs are always collapsed regardless of this setting;
- * failures and killed runs are never collapsed. See listRecentRuns.
+ * Max successful (`done`) runs one job may occupy in the dashboard's
+ * recent-runs list, so a chatty job can't bury everything else. Failed and
+ * killed runs are never capped. See listRecentRuns.
  */
-export function getRecentCollapseSuccess(): boolean {
-  return getSetting("recent_collapse_success") !== "false";
+export function getRecentRunsPerJob(): number {
+  const val = getSetting("recent_runs_per_job");
+  const n = val ? parseInt(val, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 3;
 }
 
 // Video processing settings
