@@ -5,10 +5,7 @@ import { hashToken } from "./tokens";
 
 /**
  * The instance-level runner registry. One row per runner — the local pool runner
- * (auto-provisioned at setup) and any remote runners an operator mints. This
- * table is org-agnostic on purpose: execution is org-agnostic, tenancy only
- * shapes what users see. It replaces the file-based agent runner config
- * (runners.json) and the per-org workflow_runners table.
+ * (auto-provisioned at setup) and any remote runners an operator mints.
  */
 
 /** A runner is either the trusted local pool or a scoped remote process. */
@@ -25,8 +22,8 @@ export type RunnerCapabilities = {
   labels: string[]; // placement labels this runner serves
 };
 
-/** Optional restriction on a remote token: claim only this org / agent's work. */
-export type RunnerScope = { orgId?: string; agentId?: string } | null;
+/** Optional restriction on a remote token: claim only this agent's work. */
+export type RunnerScope = { agentId?: string } | null;
 
 export type RunnerRow = {
   id: string;
@@ -79,7 +76,7 @@ function hydrate(row: Record<string, unknown> | undefined): RunnerRow | null {
 /**
  * Register a runner and return its plaintext token exactly once (only the hash
  * is persisted). The local runner is created with `tier: 'local'` and no scope;
- * remote runners carry their authorized labels and an optional org/agent scope.
+ * remote runners carry their authorized labels and an optional agent scope.
  */
 export function createRunner(opts: {
   name: string;

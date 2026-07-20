@@ -21,8 +21,7 @@ export type ColumnInfo = {
 
 export type TableMeta = {
   id: string;
-  org_id: string;
-  project_id: string | null;
+  project_id: string;
   name: string;
   table_name: string;
   pinned: number;
@@ -208,8 +207,7 @@ function safeColumnName(name: string): string {
 // --- Table CRUD ---
 
 export function createTable(
-  orgId: string,
-  projectId: string | null,
+  projectId: string,
   name: string,
   columns: ColumnDef[],
 ): TableMeta & { columns: ColumnInfo[] } {
@@ -217,7 +215,7 @@ export function createTable(
   const id = uuid();
   const safeName = sanitizeName(name);
   // Suffix the physical table name with a short slice of the id so the same
-  // logical name can exist in different orgs/projects without colliding on the
+  // logical name can exist in different projects without colliding on the
   // globally-unique table_name.
   const tableName = `${toTableName(name)}_${id.replace(/-/g, "").slice(0, 8)}`;
 
@@ -237,9 +235,12 @@ export function createTable(
 
   // Register metadata + create table in a transaction
   db.transaction(() => {
-    db.prepare(
-      `INSERT INTO tables (id, org_id, project_id, name, table_name) VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, orgId, projectId, safeName, tableName);
+    db.prepare(`INSERT INTO tables (id, project_id, name, table_name) VALUES (?, ?, ?, ?)`).run(
+      id,
+      projectId,
+      safeName,
+      tableName,
+    );
 
     db.exec(createSql);
 
@@ -260,48 +261,36 @@ export function getTableById(id: string): (TableMeta & { columns: ColumnInfo[] }
   return { ...meta, columns: columns.filter((c) => c.name !== "_id") };
 }
 
-/**
- * Resolve a table by logical name within an org scope. Project-level matches
- * win over org-level ones of the same name (project-over-org override).
- */
+/** Resolve a table by logical name within a project. */
 export function getTableByName(
-  orgId: string,
-  projectId: string | null,
+  projectId: string,
   name: string,
 ): (TableMeta & { columns: ColumnInfo[] }) | null {
   const db = getDb();
   const safeName = sanitizeName(name);
   const meta = db
-    .prepare(`
-    SELECT * FROM tables
-    WHERE org_id = ? AND name = ? AND (project_id = ? OR project_id IS NULL)
-    ORDER BY (project_id IS NULL) ASC
-    LIMIT 1
-  `)
-    .get(orgId, safeName, projectId) as TableMeta | undefined;
+    .prepare(`SELECT * FROM tables WHERE project_id = ? AND name = ?`)
+    .get(projectId, safeName) as TableMeta | undefined;
   if (!meta) return null;
   const columns = db.pragma(`table_info("${meta.table_name}")`) as ColumnInfo[];
   return { ...meta, columns: columns.filter((c) => c.name !== "_id") };
 }
 
 /**
- * Two-tier list: org-level tables (project_id IS NULL) plus the given
- * project's tables. Pass projectId=null to list only org-level tables.
+ * List tables — one project's when projectId is given, all projects' otherwise.
  * Pinned tables sort first (parity with docs/secrets).
  */
-export function listTables(orgId: string, projectId: string | null = null) {
+export function listTables(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId
-    ? "AND (project_id = ? OR project_id IS NULL)"
-    : "AND project_id IS NULL";
-  const params = projectId ? [orgId, projectId] : [orgId];
   const metas = db
     .prepare(`
-    SELECT * FROM tables
-    WHERE org_id = ? ${projectFilter}
-    ORDER BY pinned DESC, name ASC
+    SELECT t.*, p.name as project_name
+    FROM tables t
+    JOIN projects p ON t.project_id = p.id
+    ${projectId ? "WHERE t.project_id = ?" : ""}
+    ORDER BY t.pinned DESC, t.name ASC
   `)
-    .all(...params) as TableMeta[];
+    .all(...(projectId ? [projectId] : [])) as (TableMeta & { project_name: string })[];
 
   return metas.map((meta) => {
     const count = db.prepare(`SELECT COUNT(*) as count FROM "${meta.table_name}"`).get() as {
@@ -506,39 +495,36 @@ export function deleteRow(tableId: string, rowId: number) {
 }
 
 /**
- * Tables injected into a job's run payload (used by buildRunPayload / the runner claim payload).
- *
- * Injection is attachment-driven: only tables explicitly linked to the job via
- * `job_tables` are returned — never the org/project tiers at large. Links are
- * created explicitly at job create/update (the dashboard pre-selects pinned
- * tables as a creation-time default). The payload exposes only `name` + `id`
- * (no columns, no rows) — the agent reads/writes contents on demand via the
- * table API using the id.
- *
- * Project-over-org override: if a project-level and an org-level table share a
- * logical name and both are linked, the project-level table wins (deduped by
- * name below). Same-tier names are unique, so at most one table per name per
- * tier can be linked. Returns `{ id, name }` per surviving table, sorted by name.
+ * Tables injected into a job's run payload (used by buildRunPayload / the
+ * runner claim payload): pinned tables from the job's own project first, then
+ * tables explicitly linked via `job_tables` (any project) in link-creation
+ * order — on a logical-name collision the later assignment wins. The payload
+ * exposes only `name` + `id` (no columns, no rows) — the agent reads/writes
+ * contents on demand via the table API using the id.
  */
 export function getComposedTablesForJob(jobId: string): { id: string; name: string }[] {
   const db = getDb();
+  type Row = { id: string; name: string };
 
-  // Within each logical name, project-level rows (project_id IS NULL = 0) sort
-  // before org-level ones; keeping the first per name applies the override.
-  const rows = db
+  const pinned = db
     .prepare(`
-    SELECT t.id, t.name, t.project_id
+    SELECT id, name FROM tables
+    WHERE pinned = 1 AND project_id = (SELECT project_id FROM jobs WHERE id = ?)
+    ORDER BY name ASC
+  `)
+    .all(jobId) as Row[];
+  const linked = db
+    .prepare(`
+    SELECT t.id, t.name
     FROM job_tables jt
     JOIN tables t ON t.id = jt.table_id
     WHERE jt.job_id = ?
-    ORDER BY t.name ASC, (t.project_id IS NULL) ASC
+    ORDER BY jt.rowid ASC
   `)
-    .all(jobId) as { id: string; name: string; project_id: string | null }[];
+    .all(jobId) as Row[];
 
-  const byName = new Map<string, { id: string; name: string }>();
-  for (const r of rows) {
-    if (!byName.has(r.name)) byName.set(r.name, { id: r.id, name: r.name });
-  }
+  const byName = new Map<string, Row>();
+  for (const table of [...pinned, ...linked]) byName.set(table.name, table);
   return [...byName.values()];
 }
 
@@ -546,20 +532,6 @@ export function getComposedTablesForJob(jobId: string): { id: string; name: stri
 
 export function linkTableToJob(jobId: string, tableId: string) {
   const db = getDb();
-  // An org-level job (project_id NULL) may only link org-level tables of its
-  // own org — a project-scoped table on an org-scoped job would widen its
-  // blast radius to the whole org. Routes map this error to 400.
-  const job = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { org_id: string; project_id: string | null }
-    | undefined;
-  if (job && job.project_id === null) {
-    const table = db.prepare(`SELECT org_id, project_id FROM tables WHERE id = ?`).get(tableId) as
-      | { org_id: string; project_id: string | null }
-      | undefined;
-    if (!table || table.project_id !== null || table.org_id !== job.org_id) {
-      throw new Error("Org-level jobs can only link org-level tables");
-    }
-  }
   db.prepare(`INSERT OR IGNORE INTO job_tables (job_id, table_id) VALUES (?, ?)`).run(
     jobId,
     tableId,

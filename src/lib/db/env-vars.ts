@@ -3,44 +3,31 @@ import { decrypt, encrypt } from "../encryption";
 import { getDb } from "./schema";
 
 /**
- * Enforce env-var name uniqueness in the query layer (the schema deliberately
- * has no UNIQUE constraint — an org-level and a project-level var may share a
- * name, with project-over-org override). Within a single tier the name must be
- * unique. Throws on collision within the same tier.
+ * Enforce env-var name uniqueness per project in the query layer (the schema
+ * deliberately has no UNIQUE constraint). Throws on collision.
  */
-function assertNameAvailable(
-  orgId: string,
-  projectId: string | null,
-  name: string,
-  excludeId?: string,
-) {
+function assertNameAvailable(projectId: string, name: string, excludeId?: string) {
   const db = getDb();
-  const tierFilter = projectId === null ? "project_id IS NULL" : "project_id = ?";
-  const params: any[] = projectId === null ? [orgId, name] : [orgId, projectId, name];
-  let sql = `SELECT id FROM env_vars WHERE org_id = ? AND ${tierFilter} AND name = ?`;
+  const params: any[] = [projectId, name];
+  let sql = `SELECT id FROM env_vars WHERE project_id = ? AND name = ?`;
   if (excludeId) {
     sql += ` AND id != ?`;
     params.push(excludeId);
   }
   const existing = db.prepare(sql).get(...params) as { id: string } | undefined;
   if (existing) {
-    const scope = projectId === null ? "org" : "project";
-    throw new Error(`An env var named "${name}" already exists at the ${scope} level`);
+    throw new Error(`An env var named "${name}" already exists in this project`);
   }
 }
 
-/**
- * Create an env var. Dual-tier: pass projectId for a project-level var, or null
- * for an org-level var shared across the org.
- */
-export function createEnvVar(orgId: string, projectId: string | null, name: string, value: string) {
+export function createEnvVar(projectId: string, name: string, value: string) {
   const db = getDb();
-  assertNameAvailable(orgId, projectId, name);
+  assertNameAvailable(projectId, name);
   const id = uuid();
   const encrypted = encrypt(value);
   db.prepare(
-    `INSERT INTO env_vars (id, org_id, project_id, name, encrypted_value) VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, orgId, projectId, name, encrypted);
+    `INSERT INTO env_vars (id, project_id, name, encrypted_value) VALUES (?, ?, ?, ?)`,
+  ).run(id, projectId, name, encrypted);
   return getEnvVarById(id);
 }
 
@@ -49,38 +36,33 @@ export function getEnvVarById(id: string) {
   return (
     (db
       .prepare(
-        `SELECT id, org_id, project_id, name, pinned, created_at, updated_at FROM env_vars WHERE id = ?`,
+        `SELECT id, project_id, name, pinned, created_at, updated_at FROM env_vars WHERE id = ?`,
       )
       .get(id) as any) || null
   );
 }
 
-/**
- * Two-tier list: org-level vars (project_id IS NULL) plus the given project's
- * vars. Pass projectId=null to list only org-level vars.
- */
-export function listEnvVars(orgId: string, projectId: string | null = null) {
+/** List env vars — one project's when projectId is given, all projects' otherwise. */
+export function listEnvVars(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId
-    ? "AND (project_id = ? OR project_id IS NULL)"
-    : "AND project_id IS NULL";
-  const params = projectId ? [orgId, projectId] : [orgId];
   return db
-    .prepare(
-      `SELECT id, org_id, project_id, name, pinned, created_at, updated_at FROM env_vars
-     WHERE org_id = ? ${projectFilter}
-     ORDER BY pinned DESC, name ASC`,
-    )
-    .all(...params);
+    .prepare(`
+    SELECT ev.id, ev.project_id, p.name as project_name, ev.name, ev.pinned, ev.created_at, ev.updated_at
+    FROM env_vars ev
+    JOIN projects p ON ev.project_id = p.id
+    ${projectId ? "WHERE ev.project_id = ?" : ""}
+    ORDER BY ev.pinned DESC, ev.name ASC
+  `)
+    .all(...(projectId ? [projectId] : []));
 }
 
 export function updateEnvVar(id: string, data: { name?: string; value?: string }) {
   const db = getDb();
   if (data.name !== undefined) {
-    const current = db.prepare(`SELECT org_id, project_id FROM env_vars WHERE id = ?`).get(id) as
-      | { org_id: string; project_id: string | null }
+    const current = db.prepare(`SELECT project_id FROM env_vars WHERE id = ?`).get(id) as
+      | { project_id: string }
       | undefined;
-    if (current) assertNameAvailable(current.org_id, current.project_id, data.name, id);
+    if (current) assertNameAvailable(current.project_id, data.name, id);
   }
   const fields: string[] = [];
   const values: any[] = [];
@@ -122,20 +104,6 @@ export function getEnvVarDecryptedValue(id: string): string | null {
 // Link/unlink env vars to jobs
 export function linkEnvVarToJob(jobId: string, envVarId: string) {
   const db = getDb();
-  // An org-level job (project_id NULL) may only link org-level vars of its own
-  // org — a project-scoped secret on an org-scoped job would widen its blast
-  // radius to the whole org. Routes map this error to 400.
-  const job = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { org_id: string; project_id: string | null }
-    | undefined;
-  if (job && job.project_id === null) {
-    const envVar = db
-      .prepare(`SELECT org_id, project_id FROM env_vars WHERE id = ?`)
-      .get(envVarId) as { org_id: string; project_id: string | null } | undefined;
-    if (!envVar || envVar.project_id !== null || envVar.org_id !== job.org_id) {
-      throw new Error("Org-level jobs can only link org-level env vars");
-    }
-  }
   db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`).run(
     jobId,
     envVarId,
@@ -148,40 +116,35 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
 }
 
 /**
- * Decrypt the env vars injected into a job's run payload (used by buildRunPayload / the runner claim payload).
- *
- * Injection is attachment-driven: only vars explicitly linked to the job via
- * `job_env_vars` are returned — never the org/project tiers at large. Links are
- * created explicitly at job create/update (the dashboard pre-selects pinned
- * vars as a creation-time default).
- *
- * Project-over-org override: when a project-level and an org-level var with the
- * same name are both linked to one job, the project value wins. Same-tier names
- * are unique (see `assertNameAvailable`), so at most one var per name per tier
- * can be linked; ordering org-level rows first lets the project row overwrite it
- * deterministically in the map below.
+ * Decrypt the env vars injected into a job's run payload (used by
+ * buildRunPayload / the runner claim payload): pinned vars from the job's own
+ * project first, then vars explicitly linked via `job_env_vars` (any project)
+ * in link-creation order — on a name collision the later assignment wins.
  *
  * Returns the decrypted name→value map. (Values stay in the payload; the runner
  * delivers them as real process env vars and lists names-only in the prompt.)
  */
 export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string> {
   const db = getDb();
-
   type Row = { name: string; encrypted_value: string };
-  const env: Record<string, string> = {};
 
-  const linkedRows = db
+  const pinned = db
+    .prepare(`
+    SELECT name, encrypted_value FROM env_vars
+    WHERE pinned = 1 AND project_id = (SELECT project_id FROM jobs WHERE id = ?)
+  `)
+    .all(jobId) as Row[];
+  const linked = db
     .prepare(`
     SELECT ev.name, ev.encrypted_value
     FROM job_env_vars jev
     JOIN env_vars ev ON jev.env_var_id = ev.id
     WHERE jev.job_id = ?
-    ORDER BY ev.project_id IS NULL DESC
+    ORDER BY jev.rowid ASC
   `)
     .all(jobId) as Row[];
-  // Org-level rows (project_id IS NULL) sort first, so a same-named project-level
-  // row is applied last and wins — the project-over-org override.
-  for (const r of linkedRows) env[r.name] = decrypt(r.encrypted_value);
 
+  const env: Record<string, string> = {};
+  for (const r of [...pinned, ...linked]) env[r.name] = decrypt(r.encrypted_value);
   return env;
 }

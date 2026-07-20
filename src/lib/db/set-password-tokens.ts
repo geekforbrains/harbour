@@ -6,8 +6,8 @@ import { setUserPassword } from "./users";
 
 // ─── Set-password / reset tokens ──────────────────────────────────────────────
 //
-// New-user setup and password reset are the same mechanism: an instance admin
-// mints a single-use token for a user, hands the raw token to them out of band,
+// New-user setup and password reset are the same mechanism: a user mints a
+// single-use token for another user, hands the raw token to them out of band,
 // and the user redeems it to set their own password. Only the SHA-256 hash of
 // the token is stored; the raw value never touches the database.
 

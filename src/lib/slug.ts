@@ -2,7 +2,7 @@
  * Canonical slug algorithm — the single implementation. Slugs are assigned at
  * creation time from the entity name, are immutable on rename, and serve as
  * filesystem-safe workspace path segments on runner machines
- * (workspaces/<org-slug>/<project-slug>/<agent-slug>).
+ * (workspaces/<project-slug>/<agent-slug>).
  *
  * Lowercase the name; replace every run of characters outside [a-z0-9] with a
  * single "-"; trim leading/trailing "-". May produce "" (e.g. emoji-only

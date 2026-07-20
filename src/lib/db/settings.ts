@@ -24,30 +24,12 @@ export function getAllSettings(): Record<string, string> {
   return result;
 }
 
+/**
+ * The instance timezone — the single source for scheduling and run titles.
+ * Falls back to the host timezone when unset.
+ */
 export function getTimezone(): string {
   return getSetting("timezone") || Intl.DateTimeFormat().resolvedOptions().timeZone;
-}
-
-/**
- * Timezone for scheduling an org's jobs: the org's own setting if present, else
- * the instance-global timezone (which itself falls back to the host tz). The
- * scheduler resolves each job's timezone from its org so orgs in different
- * regions get correct wall-clock firing times.
- */
-export function getOrgTimezone(orgId: string): string {
-  const db = getDb();
-  const row = db.prepare(`SELECT settings FROM orgs WHERE id = ?`).get(orgId) as
-    | { settings: string }
-    | undefined;
-  if (row?.settings) {
-    try {
-      const parsed = JSON.parse(row.settings) as { timezone?: string };
-      if (parsed.timezone?.trim()) return parsed.timezone.trim();
-    } catch {
-      // Malformed settings JSON — fall through to the instance default.
-    }
-  }
-  return getTimezone();
 }
 
 export function getRecentRunsLimit(): number {

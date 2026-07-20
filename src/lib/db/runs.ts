@@ -10,7 +10,6 @@ import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listRunners, type RunnerCapabilities, type RunnerScope, type RunnerTier } from "./runners";
 import { getDb } from "./schema";
-import { getOrgTimezone } from "./settings";
 import { getComposedTablesForJob } from "./tables";
 import { hashToken } from "./tokens";
 
@@ -31,26 +30,20 @@ function gatePayload(runtime: string | null, content: string | null): Gate | nul
 export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
-  // Resolve org_id/project_id (denormalized; project_id is NULL for org-level
-  // workflow jobs), the run's placement, and a placeholder title from the job.
-  const job = db
-    .prepare(`SELECT name, org_id, project_id, placement FROM jobs WHERE id = ?`)
-    .get(jobId) as
-    | { name: string; org_id: string; project_id: string | null; placement: string }
+  // Resolve the denormalized project_id, the run's placement, and a
+  // placeholder title from the job.
+  const job = db.prepare(`SELECT name, project_id, placement FROM jobs WHERE id = ?`).get(jobId) as
+    | { name: string; project_id: string; placement: string }
     | undefined;
   if (!job) return null;
   // Placement is denormalized onto the run so the hot claim query stays flat:
   // agent runs inherit the agent's placement, workflow runs the job's.
   const placement = resolveRunPlacement(agentId, job.placement);
-  const title = defaultRunTitle(
-    job.name,
-    Math.floor(Date.now() / 1000),
-    getOrgTimezone(job.org_id),
-  );
+  const title = defaultRunTitle(job.name, Math.floor(Date.now() / 1000));
   db.prepare(`
-    INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, placement, claimed_at, title)
-    VALUES (?, ?, ?, ?, ?, 'running', ?, unixepoch(), ?)
-  `).run(id, job.org_id, job.project_id, jobId, agentId || null, placement, title);
+    INSERT INTO runs (id, project_id, job_id, agent_id, status, placement, claimed_at, title)
+    VALUES (?, ?, ?, ?, 'running', ?, unixepoch(), ?)
+  `).run(id, job.project_id, jobId, agentId || null, placement, title);
   return getRunById(id);
 }
 
@@ -95,14 +88,14 @@ export function mintExecToken(runId: string): string {
 
 /**
  * Resolve a run from an executor token. Returns the run joined with the bits the
- * auth layer needs to build an executor identity (job kind, agent, org/project).
+ * auth layer needs to build an executor identity (job kind, agent, project).
  * Dedicated query so the token hash never travels through getRunById.
  */
 export function getRunByExecToken(token: string) {
   const db = getDb();
   const row = db
     .prepare(`
-      SELECT r.id, r.org_id, r.project_id, r.agent_id, r.status, r.job_id,
+      SELECT r.id, r.project_id, r.agent_id, r.status, r.job_id,
              j.kind AS job_kind, a.name AS agent_name
       FROM runs r
       JOIN jobs j ON r.job_id = j.id
@@ -112,8 +105,7 @@ export function getRunByExecToken(token: string) {
     .get(hashToken(token)) as
     | {
         id: string;
-        org_id: string;
-        project_id: string | null;
+        project_id: string;
         agent_id: string | null;
         status: string;
         job_id: string;
@@ -130,9 +122,10 @@ export function getRunById(id: string) {
     .prepare(`
     SELECT r.*, j.name as job_name, j.kind as job_kind, j.agent_id, j.prerun_script as job_prerun_script,
            j.workflow_script as job_workflow_script, a.name as agent_name, a.color as agent_color, a.cli as agent_cli,
-           cr.name as claimed_by_name, cr.tier as claimed_by_tier
+           p.name as project_name, cr.name as claimed_by_name, cr.tier as claimed_by_tier
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
+    JOIN projects p ON r.project_id = p.id
     LEFT JOIN agents a ON r.agent_id = a.id
     LEFT JOIN runners cr ON r.claimed_by = cr.id
     WHERE r.id = ?
@@ -141,8 +134,8 @@ export function getRunById(id: string) {
   if (!run) return null;
   // exec_token_hash is the per-run executor credential's hash — never surface it
   // through the generic run reader (it rides along in SELECT r.*, and getRunById
-  // feeds many viewer-role API responses). The claim path mints/returns the
-  // plaintext token directly; auth resolution uses the dedicated lookup below.
+  // feeds many API responses). The claim path mints/returns the plaintext token
+  // directly; auth resolution uses the dedicated lookup above.
   run.exec_token_hash = undefined;
   return run;
 }
@@ -332,17 +325,30 @@ export function deleteRun(id: string) {
   deleteRunAttachmentsDir(id);
 }
 
-// The shared projection for every run-list query: the run row plus the job and
-// agent columns the run-list UIs read. One definition so the column set can't
-// drift between lists (it previously did — half omitted agent_cli). Each list
-// appends only its own WHERE / ORDER BY / LIMIT.
+// The shared projection for every run-list query: the run row plus the job,
+// agent, and project columns the run-list UIs read (project_name badges rows in
+// the union view). One definition so the column set can't drift between lists
+// (it previously did — half omitted agent_cli). Each list appends only its own
+// WHERE / ORDER BY / LIMIT.
 const RUN_LIST_SELECT = `
   SELECT r.*, j.name as job_name, j.kind as job_kind, j.active as job_active,
          j.prerun_script as job_prerun_script, j.workflow_script as job_workflow_script,
-         a.name as agent_name, a.color as agent_color, a.cli as agent_cli
+         a.name as agent_name, a.color as agent_color, a.cli as agent_cli,
+         p.name as project_name
   FROM runs r
   JOIN jobs j ON r.job_id = j.id
+  JOIN projects p ON r.project_id = p.id
   LEFT JOIN agents a ON r.agent_id = a.id`;
+
+// exec_token_hash (the per-run executor credential's hash) rides along in
+// RUN_LIST_SELECT's `r.*` — strip it before rows leave the query layer,
+// mirroring getRunById. The list routes serialize these rows verbatim.
+function stripExecTokenHash<T>(rows: T[]): T[] {
+  for (const row of rows) {
+    (row as { exec_token_hash?: unknown }).exec_token_hash = undefined;
+  }
+  return rows;
+}
 
 export function listRunsByJob(
   jobId: string,
@@ -352,14 +358,16 @@ export function listRunsByJob(
   const db = getDb();
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
-  return db
-    .prepare(`
+  return stripExecTokenHash(
+    db
+      .prepare(`
     ${RUN_LIST_SELECT}
     WHERE r.job_id = ? ${skipFilter}
     ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
     LIMIT ? OFFSET ?
   `)
-    .all(jobId, limit, offset);
+      .all(jobId, limit, offset),
+  );
 }
 
 export function listRunsByAgent(
@@ -370,54 +378,60 @@ export function listRunsByAgent(
   const db = getDb();
   const skipFilter = opts.includeSkipped ? "" : "AND r.status != 'skipped'";
   const offset = Math.max(0, opts.offset ?? 0);
-  return db
-    .prepare(`
+  return stripExecTokenHash(
+    db
+      .prepare(`
     ${RUN_LIST_SELECT}
     WHERE r.agent_id = ? ${skipFilter}
     ORDER BY COALESCE(r.completed_at, r.created_at) DESC, r.created_at DESC
     LIMIT ? OFFSET ?
   `)
-    .all(agentId, limit, offset);
+      .all(agentId, limit, offset),
+  );
 }
 
-// Run list queries are MANDATORILY scoped to an org via the run's denormalized
-// org_id. The optional projectId narrows further within the org but still
-// includes org-level runs (project_id NULL) — dual-tier display, same
-// semantics as listDocs.
-export function listScheduledRuns(orgId: string, projectId?: string) {
+// Run list queries take an optional projectId: omitted → runs across every
+// project (the union view), present → that project's runs only.
+export function listScheduledRuns(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
-  return db
-    .prepare(`
+  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  return stripExecTokenHash(
+    db
+      .prepare(`
     ${RUN_LIST_SELECT}
-    WHERE r.status = 'scheduled' AND r.org_id = ? ${projectFilter}
+    WHERE r.status = 'scheduled' ${projectFilter}
     ORDER BY r.scheduled_for ASC
   `)
-    .all(...(projectId ? [orgId, projectId] : [orgId]));
+      .all(...(projectId ? [projectId] : [])),
+  );
 }
 
-export function listRunningRuns(orgId: string, projectId?: string) {
+export function listRunningRuns(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
-  return db
-    .prepare(`
+  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  return stripExecTokenHash(
+    db
+      .prepare(`
     ${RUN_LIST_SELECT}
-    WHERE r.status = 'running' AND r.org_id = ? ${projectFilter}
+    WHERE r.status = 'running' ${projectFilter}
     ORDER BY r.updated_at DESC
   `)
-    .all(...(projectId ? [orgId, projectId] : [orgId]));
+      .all(...(projectId ? [projectId] : [])),
+  );
 }
 
-export function listWaitingRuns(orgId: string, projectId?: string) {
+export function listWaitingRuns(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
-  return db
-    .prepare(`
+  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  return stripExecTokenHash(
+    db
+      .prepare(`
     ${RUN_LIST_SELECT}
-    WHERE r.status IN ('waiting', 'pending') AND r.org_id = ? ${projectFilter}
+    WHERE r.status IN ('waiting', 'pending') ${projectFilter}
     ORDER BY r.updated_at ASC
   `)
-    .all(...(projectId ? [orgId, projectId] : [orgId]));
+      .all(...(projectId ? [projectId] : [])),
+  );
 }
 
 /**
@@ -436,24 +450,23 @@ export function listWaitingRuns(orgId: string, projectId?: string) {
  * and filter it down, so the feed reaches further back the more it drops.
  */
 export function listRecentRuns(
-  orgId: string,
-  limit = 10,
   projectId?: string,
+  limit = 10,
   opts: { perJobLimit?: number } = {},
 ) {
   const db = getDb();
   const perJobLimit = Math.max(1, opts.perJobLimit ?? 3);
-  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
+  const projectFilter = projectId ? `AND r.project_id = ?` : "";
   // Look back far enough to refill `limit` rows after capping, but bound the
   // scan so a hot job can't make this query unboundedly expensive.
   const scanCap = Math.min(2000, Math.max(500, limit * 20));
   const candidates = db
     .prepare(`
     ${RUN_LIST_SELECT}
-    WHERE r.status IN ('done', 'failed', 'killed') AND r.org_id = ? ${projectFilter}
+    WHERE r.status IN ('done', 'failed', 'killed') ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `)
-    .all(...(projectId ? [orgId, projectId, scanCap] : [orgId, scanCap])) as any[];
+    .all(...(projectId ? [projectId, scanCap] : [scanCap])) as any[];
 
   const rows: any[] = [];
   const doneCounts = new Map<string, number>();
@@ -466,7 +479,7 @@ export function listRecentRuns(
     rows.push(row);
     if (rows.length >= limit) break;
   }
-  return rows;
+  return stripExecTokenHash(rows);
 }
 
 const ALL_STATUSES = [
@@ -492,19 +505,10 @@ export type RunsHistoryFilters = {
   sort?: "newest" | "oldest";
 };
 
-export function listRunsHistory(
-  orgId: string,
-  filters: RunsHistoryFilters = {},
-  limit = 25,
-  offset = 0,
-) {
+export function listRunsHistory(filters: RunsHistoryFilters = {}, limit = 25, offset = 0) {
   const db = getDb();
   const where: string[] = [];
   const params: (string | number)[] = [];
-
-  // MANDATORY org scope via the run's denormalized org_id.
-  where.push(`r.org_id = ?`);
-  params.push(orgId);
 
   // Status filter: validate against allowed set; default excludes 'skipped'
   let statuses =
@@ -526,8 +530,7 @@ export function listRunsHistory(
     params.push(filters.jobId);
   }
   if (filters.projectId) {
-    // Project filter still includes org-level runs (dual-tier display).
-    where.push(`(r.project_id = ? OR r.project_id IS NULL)`);
+    where.push(`r.project_id = ?`);
     params.push(filters.projectId);
   }
   // Time window matches the column we sort on so the filter feels predictable.
@@ -554,7 +557,7 @@ export function listRunsHistory(
     .all(...params, safeLimit + 1, safeOffset) as any[];
 
   const hasMore = rows.length > safeLimit;
-  return { runs: hasMore ? rows.slice(0, safeLimit) : rows, hasMore };
+  return { runs: stripExecTokenHash(hasMore ? rows.slice(0, safeLimit) : rows), hasMore };
 }
 
 function redactSensitiveContent(content: string): string {
@@ -706,11 +709,11 @@ function reapStaleRuns() {
 
 // ── The unified claim (Runner Protocol) ──────────────────────────────────────
 //
-// One org-agnostic claim path replacing the per-agent /next ladder and the
-// per-org workflow poll. A runner advertises its capabilities on every claim;
-// the server hands back only work that (1) is due, (2) matches the runner's
-// placement labels, (3) is a kind/CLI it can run, and (4) whose lock unit
-// (agent_id for agent runs, job_id for workflow runs) has nothing in flight.
+// One claim path for all work. A runner advertises its capabilities on every
+// claim; the server hands back only work that (1) is due, (2) matches the
+// runner's placement labels, (3) is a kind/CLI it can run, and (4) whose lock
+// unit (agent_id for agent runs, job_id for workflow runs) has nothing in
+// flight.
 //
 // Atomicity: the whole select-and-claim runs in one IMMEDIATE transaction, so
 // concurrent claims serialize on the single SQLite writer — the lock-unit check
@@ -737,9 +740,10 @@ const IN_FLIGHT = "('running','pending')";
 /**
  * The single rule for which advertised labels a runner may actually claim:
  * a remote runner is held to advertised ∩ its authorized labels; a local
- * runner is trusted to serve anything it advertises. Both the claim path
- * (via {@link claimableLabels}) and the stalled-placement surface (via
- * {@link stalledPlacements}) route through here so the three stay in lockstep.
+ * runner is trusted to serve anything it advertises. Both the claim path and
+ * the stalled-placement surface ({@link stalledPlacements}) route through here
+ * via {@link claimableLabels} / {@link claimEligibility}, so they stay in
+ * lockstep.
  */
 function filterClaimableLabels(
   tier: RunnerTier,
@@ -782,19 +786,10 @@ function placeholders(arr: unknown[]): string {
   return arr.map(() => "?").join(", ");
 }
 
-/** Extra `AND <alias>.org_id/agent_id = ?` clauses for a scoped (remote) token. */
+/** Extra `AND <alias>.agent_id = ?` clause for an agent-scoped (remote) token. */
 function scopeClause(scope: RunnerScope, alias: "r" | "j"): { sql: string; params: string[] } {
-  const sql: string[] = [];
-  const params: string[] = [];
-  if (scope?.orgId) {
-    sql.push(`AND ${alias}.org_id = ?`);
-    params.push(scope.orgId);
-  }
-  if (scope?.agentId) {
-    sql.push(`AND ${alias}.agent_id = ?`);
-    params.push(scope.agentId);
-  }
-  return { sql: sql.join(" "), params };
+  if (!scope?.agentId) return { sql: "", params: [] };
+  return { sql: `AND ${alias}.agent_id = ?`, params: [scope.agentId] };
 }
 
 // ── Candidate query builders ──────────────────────────────────────────────────
@@ -1049,45 +1044,75 @@ export function runningCountsByRunner(): Record<string, number> {
 
 /**
  * The anti-silent-stall surface: placements with queued work (scheduled/pending
- * runs in scope) that NO live runner is serving. Mandatory per the PLAN — without
- * it, a run pinned to an absent label/capability sits forever with no signal.
- * A runner "serves" a placement when it polled recently AND last advertised that
- * label (capabilities.labels). Returns [{ placement, count }] needing a runner.
+ * runs) that NO live runner could claim. Mandatory per the PLAN — without it, a
+ * run pinned to an absent label/capability sits forever with no signal. A runner
+ * "serves" a run only when it polled recently AND could actually claim it under
+ * the claim path's eligibility rules (via {@link claimEligibility}): the label,
+ * the run's kind, the agent's CLI, and any agent scope all have to line up. A
+ * lone agent-scoped runner therefore never suppresses the banner for workflow
+ * runs or other agents' runs on its placement. Returns [{ placement, count }]
+ * of the queued runs no live runner can take.
  */
-export function stalledPlacements(
-  orgId: string,
-  projectId?: string,
-): { placement: string; count: number }[] {
+export function stalledPlacements(projectId?: string): { placement: string; count: number }[] {
   const db = getDb();
-  const projectFilter = projectId ? `AND (r.project_id = ? OR r.project_id IS NULL)` : "";
-  const params = projectId ? [orgId, projectId] : [orgId];
+  const projectFilter = projectId ? `AND r.project_id = ?` : "";
+  // One row per (placement, kind, agent) group — each group has identical
+  // serviceability, so this stays a single grouped query, not a per-run scan.
   const pending = db
     .prepare(`
-      SELECT r.placement AS placement, COUNT(*) AS count
+      SELECT r.placement AS placement, j.kind AS kind, r.agent_id AS agentId,
+             a.cli AS cli, COUNT(*) AS count
       FROM runs r
-      WHERE r.status IN ('scheduled','pending') AND r.org_id = ? ${projectFilter}
-      GROUP BY r.placement
+      JOIN jobs j ON r.job_id = j.id
+      LEFT JOIN agents a ON r.agent_id = a.id
+      WHERE r.status IN ('scheduled','pending') ${projectFilter}
+      GROUP BY r.placement, j.kind, r.agent_id
     `)
-    .all(...params) as { placement: string; count: number }[];
+    .all(...(projectId ? [projectId] : [])) as {
+    placement: string;
+    kind: string;
+    agentId: string | null;
+    cli: string | null;
+    count: number;
+  }[];
   if (pending.length === 0) return [];
 
-  // Labels a live runner could ACTUALLY claim for this org — mirror the claim
-  // path's eligibility, not just raw advertised labels, or we'd hide real stalls:
-  //   - a remote runner only serves advertised ∩ its authorized labels;
-  //   - a runner scoped to another org can't serve this org's work at all.
-  // (Using raw advertised labels would let an over-advertising or cross-org
-  // runner suppress the banner while the claim endpoint refuses the work.)
+  // Eligibility of each live runner — the same computation the claim path runs,
+  // so the banner and the claim endpoint can never disagree. (Using raw
+  // advertised labels would let an over-advertising runner suppress the banner
+  // while the claim endpoint refuses the work; ignoring scope/kind would let an
+  // agent-scoped runner suppress it for work it can never claim.)
   const nowS = Math.floor(Date.now() / 1000);
-  const served = new Set<string>();
+  const live: { eligibility: ClaimEligibility; scope: RunnerScope }[] = [];
   for (const runner of listRunners()) {
     if (!runner.last_polled_at || nowS - runner.last_polled_at > RUNNER_LIVE_WINDOW_S) continue;
-    if (runner.scope?.orgId && runner.scope.orgId !== orgId) continue;
-    const advertised = runner.capabilities?.labels ?? [];
-    for (const label of filterClaimableLabels(runner.tier, runner.labels, advertised)) {
-      served.add(label);
-    }
+    if (!runner.capabilities) continue;
+    live.push({
+      eligibility: claimEligibility(
+        { id: runner.id, tier: runner.tier, labels: runner.labels, scope: runner.scope },
+        runner.capabilities,
+      ),
+      scope: runner.scope,
+    });
   }
-  return pending.filter((p) => !served.has(p.placement));
+
+  const stalled = new Map<string, number>();
+  for (const p of pending) {
+    const served = live.some(({ eligibility: e, scope }) => {
+      if (!e.labels.includes(p.placement)) return false;
+      if (p.kind === "workflow") return e.canWorkflow;
+      // Agent run: the runner must take agent work, have the agent's CLI, and
+      // (when agent-scoped) be scoped to THIS agent — mirrors scheduledRunQuery.
+      return (
+        e.canAgent &&
+        p.cli !== null &&
+        e.clis.includes(p.cli) &&
+        (!scope?.agentId || scope.agentId === p.agentId)
+      );
+    });
+    if (!served) stalled.set(p.placement, (stalled.get(p.placement) ?? 0) + p.count);
+  }
+  return [...stalled].map(([placement, count]) => ({ placement, count }));
 }
 
 export function peekClaim(runner: ClaimRunner, capabilities: RunnerCapabilities) {
@@ -1155,9 +1180,8 @@ const SAFE_SLUG_RE = /^[a-z0-9-]+$/;
  * server-side so the runner — which may be a different machine — never derives
  * paths from untrusted data. Mirrors getAgentWorkspace's slug guards.
  *
- *   agent job:        <org-slug>/<project-slug>/<agent-slug>/<job-leaf>
- *   project workflow: <org-slug>/<project-slug>/<job-leaf>
- *   org-level workflow: <org-slug>/<job-leaf>
+ *   agent job:    <project-slug>/<agent-slug>/<job-leaf>
+ *   workflow job: <project-slug>/<job-leaf>
  *
  * job-leaf = slug(job.name) + "-" + first 8 chars of job.id — stable across
  * renames (the id never changes) and collision-free (the id suffix).
@@ -1167,11 +1191,9 @@ export function getJobScriptsDir(jobId: string): string | null {
   const db = getDb();
   const job = db
     .prepare(`
-      SELECT j.id, j.name, j.agent_id,
-        o.slug AS org_slug, p.slug AS project_slug, a.slug AS agent_slug
+      SELECT j.id, j.name, j.agent_id, p.slug AS project_slug, a.slug AS agent_slug
       FROM jobs j
-      JOIN orgs o ON j.org_id = o.id
-      LEFT JOIN projects p ON j.project_id = p.id
+      JOIN projects p ON j.project_id = p.id
       LEFT JOIN agents a ON j.agent_id = a.id
       WHERE j.id = ?
     `)
@@ -1180,8 +1202,7 @@ export function getJobScriptsDir(jobId: string): string | null {
         id: string;
         name: string;
         agent_id: string | null;
-        org_slug: string;
-        project_slug: string | null;
+        project_slug: string;
         agent_slug: string | null;
       }
     | undefined;
@@ -1189,18 +1210,15 @@ export function getJobScriptsDir(jobId: string): string | null {
 
   const leaf = `${slugify(job.name)}-${job.id.slice(0, 8)}`;
 
-  // Build the segment list per tier. An agent job nests under its agent; a
-  // project workflow under its project; an org-level workflow (project_id NULL)
-  // sits directly under the org. Anything else is a malformed job and yields
-  // null rather than a guessed path.
+  // An agent job nests under its agent; a workflow job sits directly under its
+  // project. An agent job whose agent row is gone is malformed and yields null
+  // rather than a guessed path.
   let segments: string[];
   if (job.agent_id) {
-    if (!job.project_slug || !job.agent_slug) return null;
-    segments = [job.org_slug, job.project_slug, job.agent_slug, leaf];
-  } else if (job.project_slug) {
-    segments = [job.org_slug, job.project_slug, leaf];
+    if (!job.agent_slug) return null;
+    segments = [job.project_slug, job.agent_slug, leaf];
   } else {
-    segments = [job.org_slug, leaf];
+    segments = [job.project_slug, leaf];
   }
 
   // Every segment must already be a safe filesystem slug — refuse to hand the
@@ -1276,7 +1294,7 @@ export function buildRunPayload(runId: string) {
   const isWorkflow = job.kind === "workflow";
 
   // Workspace slugs for agent runs (workflow runs get no workspace key). The
-  // runner nests its workspace dir as <org>/<project>/<agent> from these.
+  // runner nests its workspace dir as <project>/<agent> from these.
   const workspace = run.agent_id ? getAgentWorkspace(run.agent_id) : null;
 
   return {

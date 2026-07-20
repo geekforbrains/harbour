@@ -31,11 +31,11 @@ export function getDb(): Database.Database {
     }
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    // Two runners polling one org can race to claim the same run. With a busy
-    // timeout the loser waits for the winner's claim write instead of failing
-    // immediately with SQLITE_BUSY; the guarded claim UPDATEs in runs.ts (which
-    // only flip a run to 'running' while it is still scheduled/pending) then make
-    // the lost claim a no-op rather than a double-claim.
+    // Two runners can race to claim the same run. With a busy timeout the
+    // loser waits for the winner's claim write instead of failing immediately
+    // with SQLITE_BUSY; the guarded claim UPDATEs in runs.ts (which only flip
+    // a run to 'running' while it is still scheduled/pending) then make the
+    // lost claim a no-op rather than a double-claim.
     db.pragma("busy_timeout = 5000");
     try {
       initializeSchema(db);
@@ -62,7 +62,7 @@ export function resetDb() {
 
 /**
  * True when err is better-sqlite3's unique-index violation. Used as the race
- * backstop behind the slug pre-checks in createOrg/createProject/createAgent.
+ * backstop behind the slug pre-checks in createProject/createAgent.
  */
 export function isUniqueViolation(err: unknown): boolean {
   return (
@@ -73,44 +73,22 @@ export function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * v2 schema — clean break, no migrations. Every table is created directly in
- * its final v2 shape. Org → Project (mandatory) → Agent / Job → Run; resources
- * (docs / env_vars / tables) are dual-tier (org-level or project-level).
- * Workflow jobs are dual-tier too (project_id NULL = org-level); agent jobs
- * are always project-level, enforced by the CHECK on jobs.
- *
- * There is no v1 → v2 migration: a fresh DB is the only supported path.
+ * The schema — clean break, no migrations. Every table is created directly in
+ * its final shape. The hierarchy is flat: Instance → Project → Agent / Job →
+ * Run, and every resource (docs / env_vars / tables) belongs to exactly one
+ * project. A fresh DB is the only supported path.
  */
 export function initializeSchema(db: Database.Database) {
   db.exec(`
-    -- ── Identity + access ────────────────────────────────────────────────
+    -- ── Identity ─────────────────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
-      password_hash TEXT,                 -- NULLABLE: admin-created, set-password link not yet consumed
+      password_hash TEXT,                 -- NULLABLE: created without one, set-password link not yet consumed
       display_name TEXT NOT NULL,
-      is_instance_admin INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS orgs (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL,                    -- creation-time, immutable, filesystem-safe workspace path segment
-      settings TEXT NOT NULL DEFAULT '{}',   -- JSON: { timezone, ... } (org-scoped)
-      archived_at INTEGER,                   -- soft-delete
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS memberships (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      org_id  TEXT NOT NULL REFERENCES orgs(id)  ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('editor','viewer')),
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      PRIMARY KEY (user_id, org_id)
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -130,7 +108,7 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    CREATE TABLE IF NOT EXISTS admin_api_keys (
+    CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       api_key_hash TEXT NOT NULL UNIQUE,
@@ -141,11 +119,9 @@ export function initializeSchema(db: Database.Database) {
     );
 
     -- Instance-level runner registry. One row per runner (local or remote);
-    -- replaces the file-based agent runner config and the per-org
-    -- workflow_runners table. The local runner is one auto-provisioned row.
-    -- Tenancy never reaches here — runners are org-agnostic; a 'local' runner
-    -- claims any placement='local' work across all orgs. 'remote' runners are
-    -- scoped by their authorized labels (+ optional org/agent scope).
+    -- the local runner is one auto-provisioned row. A 'local' runner claims
+    -- any placement='local' work; 'remote' runners are scoped by their
+    -- authorized labels (+ optional agent scope).
     CREATE TABLE IF NOT EXISTS runners (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -153,7 +129,7 @@ export function initializeSchema(db: Database.Database) {
       tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
       labels TEXT NOT NULL DEFAULT '[]',     -- JSON: placement labels this token is authorized to serve
       capabilities TEXT,                     -- JSON {kinds,clis,labels}: last-advertised host capabilities (health/display)
-      scope TEXT,                            -- JSON {orgId?,agentId?} or NULL (unscoped — local tier)
+      scope TEXT,                            -- JSON {agentId?} or NULL (no agent restriction; local runners are always NULL)
       last_polled_at INTEGER,                -- updated on every claim/peek; drives the health surface
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -163,15 +139,11 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
-      archived_at INTEGER,                -- soft-delete (normal path); hard delete = admin escape hatch
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
-
-    -- ── Operational entities — direct project_id, no linking tables ──────
 
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
@@ -191,8 +163,7 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level (workflow jobs only)
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       kind TEXT NOT NULL DEFAULT 'agent' CHECK(kind IN ('agent','workflow')),
       agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,   -- set for agent jobs, NULL for workflow jobs
       name TEXT NOT NULL,
@@ -218,14 +189,12 @@ export function initializeSchema(db: Database.Database) {
       last_run_at INTEGER,
       next_run_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      CHECK(kind != 'agent' OR project_id IS NOT NULL)
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,          -- denormalized
-      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,           -- denormalized; NULL = org-level job's run
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,  -- denormalized from the job
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'running'
@@ -298,12 +267,11 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    -- ── Resources — dual-tier owner (org-level OR project-level) ─────────
+    -- ── Resources — project-owned ────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS docs (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       pinned INTEGER NOT NULL DEFAULT 0,
       created_by_type TEXT CHECK(created_by_type IN ('user','agent')),
@@ -323,20 +291,18 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS env_vars (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       encrypted_value TEXT NOT NULL,
       pinned INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      -- name uniqueness enforced in the query layer (project-over-org override)
+      -- name uniqueness per project enforced in the query layer
     );
 
     CREATE TABLE IF NOT EXISTS tables (
       id TEXT PRIMARY KEY,
-      org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = org-level
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       table_name TEXT NOT NULL UNIQUE,    -- physical SQLite table name, globally unique
       pinned INTEGER NOT NULL DEFAULT 0,
@@ -353,7 +319,7 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    -- ── Job-linked resources (explicit attachments, tier 3) ──────────────
+    -- ── Job-linked resources (explicit attachments, any project) ─────────
 
     CREATE TABLE IF NOT EXISTS job_docs (
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -373,7 +339,7 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, table_id)
     );
 
-    -- ── Instance settings (true instance-global KV only) ─────────────────
+    -- ── Instance settings (global KV) ────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -382,46 +348,40 @@ export function initializeSchema(db: Database.Database) {
 
     -- ── Indexes ──────────────────────────────────────────────────────────
 
-    CREATE INDEX IF NOT EXISTS idx_memberships_org ON memberships(org_id);
-    CREATE INDEX IF NOT EXISTS idx_set_password_tokens_hash ON set_password_tokens(token_hash);
+    -- (Single-column UNIQUE constraints — users.email, set_password_tokens /
+    -- runners token_hash, api_keys.api_key_hash, tables.table_name,
+    -- attachment_processing.attachment_id — already get implicit indexes; no
+    -- explicit twins needed.)
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_orgs_slug ON orgs(slug);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
 
-    CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_slug ON projects(org_id, slug);
-
-    CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_slug ON agents(project_id, slug);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_runners_token ON runners(token_hash);
-    CREATE INDEX IF NOT EXISTS idx_jobs_org ON jobs(org_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(kind, agent_id, active, next_run_at);
 
-    CREATE INDEX IF NOT EXISTS idx_runs_org ON runs(org_id);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
     CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_claimed_by ON runs(claimed_by);
+    -- Exec-token auth resolves a run by hash on every executor request (the
+    -- hottest agent-callback path) — partial: only claimed runs carry a token.
+    CREATE INDEX IF NOT EXISTS idx_runs_exec_token ON runs(exec_token_hash) WHERE exec_token_hash IS NOT NULL;
 
-    CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
-    CREATE INDEX IF NOT EXISTS idx_attachment_processing_attachment ON attachment_processing(attachment_id);
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
 
-    CREATE INDEX IF NOT EXISTS idx_docs_org_project ON docs(org_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_docs_project ON docs(project_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
-    CREATE INDEX IF NOT EXISTS idx_env_vars_org_project ON env_vars(org_id, project_id);
-    CREATE INDEX IF NOT EXISTS idx_tables_org_project ON tables(org_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_env_vars_project ON env_vars(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tables_project ON tables(project_id);
     CREATE INDEX IF NOT EXISTS idx_table_migrations_tbl ON table_migrations(table_id);
   `);
-
-  ensureRunActivityAuthorTypes(db);
 
   // Ensure encryption key exists (generates on first run)
   try {
@@ -530,9 +490,10 @@ export function diffSchema(live: Database.Database): string[] {
 }
 
 /**
- * Refuse to run against an out-of-sync database. v2 has no schema migrations,
- * so a drifted DB is an unsupported state — failing at startup with a precise
- * diff beats booting "fine" and 500ing at runtime with cryptic SQLite errors.
+ * Refuse to run against an out-of-sync database. Harbour has no schema
+ * migrations, so a drifted DB is an unsupported state — failing at startup
+ * with a precise diff beats booting "fine" and 500ing at runtime with cryptic
+ * SQLite errors.
  */
 export function verifySchema(db: Database.Database) {
   const drift = diffSchema(db);
@@ -542,48 +503,9 @@ export function verifySchema(db: Database.Database) {
       `Database schema at ${dbPath()} is out of sync with this version of Harbour:`,
       ...drift.map((d) => `  - ${d}`),
       ``,
-      `Harbour v2 has no schema migrations — a fresh database is the only supported path.`,
+      `Harbour has no schema migrations — a fresh database is the only supported path.`,
       `Move or delete the database file and restart to recreate it, or apply the`,
       `changes above manually if you need to keep existing data.`,
     ].join("\n"),
   );
-}
-
-/**
- * In-place fix-up for databases created before 'workflow' was a valid
- * run_activity.author_type. CREATE TABLE IF NOT EXISTS leaves the original
- * CHECK in place and SQLite can't ALTER one, so rebuild the table once.
- * Runs on every startup; no-op when the DDL already allows 'workflow'.
- */
-function ensureRunActivityAuthorTypes(db: Database.Database) {
-  const row = db
-    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_activity'`)
-    .get() as { sql: string } | undefined;
-  if (!row || row.sql.includes("'workflow'")) return;
-
-  // FKs off so DROP TABLE doesn't fire run_attachments' ON DELETE SET NULL
-  // (pragma changes are illegal inside a transaction, so toggle outside it).
-  db.pragma("foreign_keys = OFF");
-  try {
-    db.exec(`
-      BEGIN;
-      CREATE TABLE run_activity_v2 (
-        id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-        author_type TEXT NOT NULL CHECK(author_type IN ('agent','user','system','workflow')),
-        author_id TEXT,
-        author_name TEXT,
-        content TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      INSERT INTO run_activity_v2 SELECT id, run_id, author_type, author_id, author_name, content, created_at FROM run_activity;
-      DROP TABLE run_activity;
-      ALTER TABLE run_activity_v2 RENAME TO run_activity;
-      CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
-      CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
-      COMMIT;
-    `);
-  } finally {
-    db.pragma("foreign_keys = ON");
-  }
 }

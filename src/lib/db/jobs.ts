@@ -2,12 +2,11 @@ import { v4 as uuid } from "uuid";
 import { defaultRunTitle } from "../run-title";
 import type { Gate } from "../runtimes";
 import { getNextRunTime } from "../schedule";
-import { orgIdForProject } from "./access";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { linkEnvVarToJob } from "./env-vars";
 import { resolveRunPlacement } from "./runs";
 import { getDb } from "./schema";
-import { getOrgTimezone } from "./settings";
+import { getTimezone } from "./settings";
 import { linkTableToJob } from "./tables";
 
 export function createJob(
@@ -32,19 +31,15 @@ export function createJob(
 ) {
   const db = getDb();
   const id = uuid();
-  // Agent jobs are always project-level; the org is derived, never passed.
-  const orgId = orgIdForProject(projectId);
-  if (!orgId) throw new Error("Project not found");
   const nextRunAt =
-    data.active !== false ? getNextRunTime(data.schedule, undefined, getOrgTimezone(orgId)) : null;
+    data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
-      orgId,
       projectId,
       agentId,
       data.name,
@@ -63,10 +58,9 @@ export function createJob(
       nextRunAt,
     );
 
-    // Link exactly the resources passed in — the submitted set is authoritative.
-    // The dashboard pre-selects pinned resources as a creation-time default, but
-    // pinning has no server-side effect (this matches updateJob, also explicit).
-    // The guard-bearing link functions enforce the org-level tier rules.
+    // Link exactly the resources passed in — the submitted set is authoritative
+    // (this matches updateJob, also explicit). Pinned resources in the job's
+    // project need no link: they inject at run composition automatically.
     for (const docId of new Set(data.docIds ?? [])) linkDocToJob(id, docId);
     for (const envId of new Set(data.envVarIds ?? [])) linkEnvVarToJob(id, envId);
     for (const tableId of new Set(data.tableIds ?? [])) linkTableToJob(id, tableId);
@@ -76,15 +70,8 @@ export function createJob(
   return getJobById(id);
 }
 
-/**
- * Create a workflow job. Dual-tier like docs/env_vars/tables: pass projectId
- * for a project-level workflow, or null for an org-level one shared across the
- * org. Scope is fixed at creation — updateJob cannot move a job between tiers.
- * Agent jobs are always project-level (see createJob).
- */
 export function createWorkflow(
-  orgId: string,
-  projectId: string | null,
+  projectId: string,
   data: {
     name: string;
     description?: string;
@@ -101,16 +88,15 @@ export function createWorkflow(
   const db = getDb();
   const id = uuid();
   const nextRunAt =
-    data.active !== false ? getNextRunTime(data.schedule, undefined, getOrgTimezone(orgId)) : null;
+    data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
   const placement = data.placement?.trim() || "local";
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, org_id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, placement, timeout_minutes, active, next_run_at)
-      VALUES (?, ?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, placement, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
-      orgId,
       projectId,
       data.name,
       data.description || null,
@@ -124,10 +110,8 @@ export function createWorkflow(
     );
 
     // Link exactly the resources passed in — the submitted set is authoritative
-    // (pinning is a dashboard creation-time default with no server-side effect).
-    // The guard-bearing link functions enforce the tier rules: an org-level
-    // workflow linking a project-scoped doc/env var/table throws here and rolls
-    // the creation back.
+    // (this matches updateJob, also explicit). Pinned resources in the job's
+    // project need no link: they inject at run composition automatically.
     for (const docId of new Set(data.docIds ?? [])) linkDocToJob(id, docId);
     for (const envId of new Set(data.envVarIds ?? [])) linkEnvVarToJob(id, envId);
     for (const tableId of new Set(data.tableIds ?? [])) linkTableToJob(id, tableId);
@@ -181,7 +165,7 @@ export function listJobsByAgent(agentId: string) {
   return db
     .prepare(`
     SELECT j.*,
-      (SELECT COUNT(*) FROM runs WHERE job_id = j.id) as total_runs,
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs
@@ -190,33 +174,27 @@ export function listJobsByAgent(agentId: string) {
     .all(agentId);
 }
 
-/**
- * Two-tier list: org-level jobs (project_id IS NULL — workflows only) plus the
- * given project's jobs. Pass projectId=null to list only org-level jobs.
- */
-export function listAllJobs(orgId: string, projectId: string | null = null) {
+/** List jobs — one project's when projectId is given, all projects' otherwise. */
+export function listAllJobs(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId
-    ? "AND (j.project_id = ? OR j.project_id IS NULL)"
-    : "AND j.project_id IS NULL";
-  const params = projectId ? [orgId, projectId] : [orgId];
   return db
     .prepare(`
-    SELECT j.*, a.name as agent_name, a.color as agent_color,
+    SELECT j.*, p.name as project_name, a.name as agent_name, a.color as agent_color,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
     FROM jobs j
+    JOIN projects p ON j.project_id = p.id
     LEFT JOIN agents a ON j.agent_id = a.id
-    WHERE j.org_id = ? ${projectFilter}
+    ${projectId ? "WHERE j.project_id = ?" : ""}
     ORDER BY j.name
   `)
-    .all(...params);
+    .all(...(projectId ? [projectId] : []));
 }
 
-// Scope (org_id/project_id) is fixed at creation — deliberately absent from
-// the field whitelist so a job can never move between tiers.
+// project_id is fixed at creation — deliberately absent from the field
+// whitelist so a job can never move between projects.
 export function updateJob(
   id: string,
   data: {
@@ -303,12 +281,10 @@ export function updateJob(
     values.push(data.active ? 1 : 0);
     // When activating a job that has no next_run_at, compute it from the schedule
     if (data.active && data.nextRunAt === undefined) {
-      const job = db
-        .prepare(`SELECT schedule, next_run_at, org_id FROM jobs WHERE id = ?`)
-        .get(id) as any;
+      const job = db.prepare(`SELECT schedule, next_run_at FROM jobs WHERE id = ?`).get(id) as any;
       if (job && !job.next_run_at && job.schedule) {
         const schedule = data.schedule || job.schedule;
-        const nextRunAt = getNextRunTime(schedule, undefined, getOrgTimezone(job.org_id));
+        const nextRunAt = getNextRunTime(schedule, undefined, getTimezone());
         if (nextRunAt !== null) {
           fields.push("next_run_at = ?");
           values.push(nextRunAt);
@@ -326,9 +302,7 @@ export function updateJob(
       fields.push("updated_at = unixepoch()");
       db.prepare(`UPDATE jobs SET ${fields.join(", ")} WHERE id = ?`).run(...values, id);
     }
-    // Replacement links go through the guard-bearing link functions: an
-    // org-level job replacing its links with a project-scoped resource throws
-    // and rolls the whole update back (routes map it to 400).
+    // Replacement semantics: the submitted set of links is authoritative.
     if (data.docIds !== undefined) {
       db.prepare(`DELETE FROM job_docs WHERE job_id = ?`).run(id);
       for (const docId of data.docIds) linkDocToJob(id, docId);
@@ -355,20 +329,19 @@ export function deleteJob(id: string) {
 
 /**
  * Manually fire a scheduled run for a job (dashboard "Run now" / debug). One-off
- * runs no longer exist in v2 — this is the only ad-hoc trigger path. The run
- * inherits the job's org and project (denormalized onto the run; project may be
- * NULL for org-level workflows).
+ * runs no longer exist — this is the only ad-hoc trigger path. The run inherits
+ * the job's project (denormalized onto the run).
  */
 export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
   const job = db
-    .prepare(`SELECT id, org_id, project_id, agent_id, name, placement FROM jobs WHERE id = ?`)
+    .prepare(`SELECT id, project_id, agent_id, name, placement FROM jobs WHERE id = ?`)
     .get(jobId) as any;
   if (!job) return null;
 
   const runId = uuid();
   const now = Math.floor(Date.now() / 1000);
-  const title = defaultRunTitle(job.name, now, getOrgTimezone(job.org_id));
+  const title = defaultRunTitle(job.name, now);
   // Denormalize placement onto the run: agent runs route by their agent's
   // placement, workflow runs by the job's. Shared resolver keeps this in lockstep
   // with createRun's recurring-materialization path.
@@ -379,11 +352,10 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
   // scheduled run with silently-dropped instructions.
   db.transaction(() => {
     db.prepare(`
-      INSERT INTO runs (id, org_id, project_id, job_id, agent_id, status, placement, scheduled_for, extra_instructions, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, project_id, job_id, agent_id, status, placement, scheduled_for, extra_instructions, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
     `).run(
       runId,
-      job.org_id,
       job.project_id,
       jobId,
       job.agent_id || null,
@@ -408,20 +380,6 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
 
 export function linkDocToJob(jobId: string, docId: string) {
   const db = getDb();
-  // An org-level job (project_id NULL) may only link org-level resources of its
-  // own org — a project-scoped doc on an org-scoped job would widen the doc's
-  // blast radius to the whole org. Routes map this error to 400.
-  const job = db.prepare(`SELECT org_id, project_id FROM jobs WHERE id = ?`).get(jobId) as
-    | { org_id: string; project_id: string | null }
-    | undefined;
-  if (job && job.project_id === null) {
-    const doc = db.prepare(`SELECT org_id, project_id FROM docs WHERE id = ?`).get(docId) as
-      | { org_id: string; project_id: string | null }
-      | undefined;
-    if (!doc || doc.project_id !== null || doc.org_id !== job.org_id) {
-      throw new Error("Org-level jobs can only link org-level docs");
-    }
-  }
   db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`).run(jobId, docId);
 }
 
@@ -432,21 +390,14 @@ export function unlinkDocFromJob(jobId: string, docId: string) {
 
 // linkTableToJob and unlinkTableFromJob are in tables.ts
 
-export function touchJobRan(id: string) {
-  const db = getDb();
-  db.prepare(
-    `UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`,
-  ).run(id);
-}
-
 // Advance a job's next_run_at based on its schedule.
 // Called after a run completes (done/failed/skipped).
 export function advanceJobSchedule(jobId: string) {
   const db = getDb();
-  const job = db.prepare(`SELECT schedule, org_id FROM jobs WHERE id = ?`).get(jobId) as any;
+  const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job?.schedule) return;
 
-  const nextRunAt = getNextRunTime(job.schedule, undefined, getOrgTimezone(job.org_id));
+  const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());
   if (nextRunAt !== null) {
     db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(
       nextRunAt,

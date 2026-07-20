@@ -96,8 +96,8 @@ export function getAgentById(id: string) {
 }
 
 /**
- * Workspace path segments for an agent — the stored org/project/agent slugs,
- * read live so the workspace always reflects the current hierarchy. Identity
+ * Workspace path segments for an agent — the stored project/agent slugs, read
+ * live so the workspace always reflects the current hierarchy. Identity
  * segments only, never absolute paths: the runner owns its filesystem layout
  * (it may be a different machine).
  */
@@ -106,30 +106,31 @@ export function getAgentWorkspace(agentId: string) {
   return (
     (db
       .prepare(`
-        SELECT o.slug AS org, p.slug AS project, a.slug AS agent
+        SELECT p.slug AS project, a.slug AS agent
         FROM agents a
         JOIN projects p ON a.project_id = p.id
-        JOIN orgs o ON p.org_id = o.id
         WHERE a.id = ?
       `)
-      .get(agentId) as { org: string; project: string; agent: string } | undefined) || null
+      .get(agentId) as { project: string; agent: string } | undefined) || null
   );
 }
 
-export function listAgents(projectId: string) {
+/** List agents — one project's when projectId is given, all projects' otherwise. */
+export function listAgents(projectId?: string) {
   const db = getDb();
   return db
     .prepare(`
-    SELECT a.id, a.project_id, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
+    SELECT a.id, a.project_id, p.name as project_name, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
       (SELECT MAX(created_at) FROM runs WHERE agent_id = a.id) as last_activity
     FROM agents a
-    WHERE a.project_id = ?
+    JOIN projects p ON a.project_id = p.id
+    ${projectId ? "WHERE a.project_id = ?" : ""}
     ORDER BY a.name
   `)
-    .all(projectId);
+    .all(...(projectId ? [projectId] : []));
 }
 
 export function updateAgent(

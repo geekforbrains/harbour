@@ -42,22 +42,6 @@ export function getProcessingByAttachment(attachmentId: string): AttachmentProce
   );
 }
 
-export function getProcessingById(id: string): AttachmentProcessing | null {
-  const db = getDb();
-  return (
-    (db.prepare(`SELECT * FROM attachment_processing WHERE id = ?`).get(id) as
-      | AttachmentProcessing
-      | undefined) || null
-  );
-}
-
-export function listProcessingByRun(runId: string): AttachmentProcessing[] {
-  const db = getDb();
-  return db
-    .prepare(`SELECT * FROM attachment_processing WHERE run_id = ? ORDER BY created_at ASC`)
-    .all(runId) as AttachmentProcessing[];
-}
-
 export function updateProcessingStatus(
   id: string,
   status: ProcessingStatus,

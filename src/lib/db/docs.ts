@@ -1,13 +1,8 @@
 import { v4 as uuid } from "uuid";
 import { getDb } from "./schema";
 
-/**
- * Create a doc. Dual-tier: pass projectId for a project-level doc, or omit it
- * (null) for an org-level doc shared across the org's projects.
- */
 export function createDoc(
-  orgId: string,
-  projectId: string | null,
+  projectId: string,
   title: string,
   content?: string,
   authorType?: string,
@@ -16,8 +11,8 @@ export function createDoc(
   const db = getDb();
   const id = uuid();
   db.prepare(
-    `INSERT INTO docs (id, org_id, project_id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, orgId, projectId, title, authorType || null, authorId || null);
+    `INSERT INTO docs (id, project_id, title, created_by_type, created_by_id) VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, projectId, title, authorType || null, authorId || null);
 
   if (content) {
     const revId = uuid();
@@ -67,25 +62,19 @@ export function deleteDoc(id: string) {
   db.prepare(`DELETE FROM docs WHERE id = ?`).run(id);
 }
 
-/**
- * Two-tier list: org-level docs (project_id IS NULL) plus the given project's
- * docs. Pass projectId=null to list only org-level docs.
- */
-export function listDocs(orgId: string, projectId: string | null = null) {
+/** List docs — one project's when projectId is given, all projects' otherwise. */
+export function listDocs(projectId?: string) {
   const db = getDb();
-  const projectFilter = projectId
-    ? "AND (d.project_id = ? OR d.project_id IS NULL)"
-    : "AND d.project_id IS NULL";
-  const params = projectId ? [orgId, projectId] : [orgId];
   return db
     .prepare(`
-    SELECT d.id, d.title, d.org_id, d.project_id, d.pinned, d.created_at, d.updated_at,
+    SELECT d.id, d.title, d.project_id, p.name as project_name, d.pinned, d.created_at, d.updated_at,
       (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
     FROM docs d
-    WHERE d.org_id = ? ${projectFilter}
+    JOIN projects p ON d.project_id = p.id
+    ${projectId ? "WHERE d.project_id = ?" : ""}
     ORDER BY d.pinned DESC, d.title ASC
   `)
-    .all(...params);
+    .all(...(projectId ? [projectId] : []));
 }
 
 export function toggleDocPinned(id: string) {
@@ -97,36 +86,49 @@ export function toggleDocPinned(id: string) {
 }
 
 /**
- * Docs injected into a job's run payload (used by buildRunPayload / the runner claim payload).
- *
- * Injection is attachment-driven: only docs explicitly linked to the job via
- * `job_docs` are returned — never the org/project tiers at large. Links are
- * created explicitly at job create/update (the dashboard pre-selects pinned
- * docs as a creation-time default). Each doc carries the content of its latest
- * revision. Returned shape matches the agent contract: `{ id, title, content }`.
+ * Docs injected into a job's run payload (used by buildRunPayload / the runner
+ * claim payload): pinned docs from the job's own project first, then docs
+ * explicitly linked via `job_docs` (any project) in link-creation order. A doc
+ * that is both pinned and linked appears once. Each doc carries the content of
+ * its latest revision. Returned shape matches the agent contract:
+ * `{ id, title, content }`.
  */
 export function getComposedDocsForJob(
   jobId: string,
 ): { id: string; title: string; content: string }[] {
   const db = getDb();
+  type Row = { id: string; title: string; content: string };
 
-  return db
-    .prepare(`
-    SELECT d.id, d.title, dr.content
-    FROM job_docs jd
-    JOIN docs d ON d.id = jd.doc_id
+  const latestRevision = `
     LEFT JOIN doc_revisions dr ON dr.rowid = (
       SELECT rowid FROM doc_revisions WHERE doc_id = d.id
       ORDER BY created_at DESC, rowid DESC LIMIT 1
-    )
-    WHERE jd.job_id = ?
+    )`;
+  // COALESCE: a doc created without content has zero revisions; match
+  // getDocById's empty-string fallback so content is always a string on the wire.
+  const pinned = db
+    .prepare(`
+    SELECT d.id, d.title, COALESCE(dr.content, '') as content
+    FROM docs d
+    ${latestRevision}
+    WHERE d.pinned = 1 AND d.project_id = (SELECT project_id FROM jobs WHERE id = ?)
     ORDER BY d.title ASC
   `)
-    .all(jobId) as {
-    id: string;
-    title: string;
-    content: string;
-  }[];
+    .all(jobId) as Row[];
+  const linked = db
+    .prepare(`
+    SELECT d.id, d.title, COALESCE(dr.content, '') as content
+    FROM job_docs jd
+    JOIN docs d ON d.id = jd.doc_id
+    ${latestRevision}
+    WHERE jd.job_id = ?
+    ORDER BY jd.rowid ASC
+  `)
+    .all(jobId) as Row[];
+
+  const byId = new Map<string, Row>();
+  for (const doc of [...pinned, ...linked]) byId.set(doc.id, doc);
+  return [...byId.values()];
 }
 
 export function getDocRevisions(docId: string) {

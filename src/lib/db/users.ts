@@ -14,7 +14,7 @@ const ARGON2ID: Algorithm = 2 as Algorithm;
  * @node-rs/argon2 (m=19456 KiB, t=2, p=1) — a sensible interactive-login cost.
  * We use the synchronous, self-describing PHC-string API so a stored hash
  * carries its own parameters and the CLI bootstrap (which hashes the first
- * instance admin) stays byte-compatible with this verifier.
+ * user) stays byte-compatible with this verifier.
  */
 const ARGON2_OPTS = { algorithm: ARGON2ID } as const;
 
@@ -35,22 +35,20 @@ export function verifyPassword(hash: string, password: string): boolean {
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 /**
- * Create a user. In v2, an admin may create a user with no password yet
- * (password_hash stays NULL until a set-password link is consumed). Passing a
- * password hashes it immediately with argon2id.
+ * Create a user. A user may be created with no password yet (password_hash
+ * stays NULL until a set-password link is consumed). Passing a password hashes
+ * it immediately with argon2id.
  */
-export function createUser(
-  email: string,
-  password: string | null,
-  displayName: string,
-  opts: { isInstanceAdmin?: boolean } = {},
-) {
+export function createUser(email: string, password: string | null, displayName: string) {
   const db = getDb();
   const id = uuid();
   const passwordHash = password === null ? null : hashPassword(password);
-  db.prepare(
-    `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin) VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, email, passwordHash, displayName, opts.isInstanceAdmin ? 1 : 0);
+  db.prepare(`INSERT INTO users (id, email, password_hash, display_name) VALUES (?, ?, ?, ?)`).run(
+    id,
+    email,
+    passwordHash,
+    displayName,
+  );
   return getUserById(id);
 }
 
@@ -66,7 +64,6 @@ export function authenticateUser(email: string, password: string) {
     id: user.id,
     email: user.email,
     display_name: user.display_name,
-    is_instance_admin: !!user.is_instance_admin,
   };
 }
 
@@ -83,48 +80,29 @@ export function setUserPassword(id: string, password: string) {
 export function getUserById(id: string) {
   const db = getDb();
   const user = db
-    .prepare(
-      `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE id = ?`,
-    )
+    .prepare(`SELECT id, email, display_name, created_at, updated_at FROM users WHERE id = ?`)
     .get(id) as any;
-  return user || null;
-}
-
-export function getUserByEmail(email: string) {
-  const db = getDb();
-  const user = db
-    .prepare(
-      `SELECT id, email, display_name, is_instance_admin, created_at, updated_at FROM users WHERE email = ?`,
-    )
-    .get(email) as any;
   return user || null;
 }
 
 export function listUsers() {
   const db = getDb();
-  return db
-    .prepare(
-      `SELECT id, email, display_name, is_instance_admin, created_at FROM users ORDER BY email`,
-    )
-    .all();
+  return db.prepare(`SELECT id, email, display_name, created_at FROM users ORDER BY email`).all();
 }
 
-export function updateUser(id: string, data: { displayName?: string; isInstanceAdmin?: boolean }) {
+export function countUsers(): number {
   const db = getDb();
-  const fields: string[] = [];
-  const values: any[] = [];
-  if (data.displayName !== undefined) {
-    fields.push("display_name = ?");
-    values.push(data.displayName);
-  }
-  if (data.isInstanceAdmin !== undefined) {
-    fields.push("is_instance_admin = ?");
-    values.push(data.isInstanceAdmin ? 1 : 0);
-  }
-  if (fields.length === 0) return getUserById(id);
-  fields.push("updated_at = unixepoch()");
-  values.push(id);
-  db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const row = db.prepare(`SELECT COUNT(*) as count FROM users`).get() as { count: number };
+  return row.count;
+}
+
+export function updateUser(id: string, data: { displayName?: string }) {
+  const db = getDb();
+  if (data.displayName === undefined) return getUserById(id);
+  db.prepare(`UPDATE users SET display_name = ?, updated_at = unixepoch() WHERE id = ?`).run(
+    data.displayName,
+    id,
+  );
   return getUserById(id);
 }
 
@@ -170,7 +148,7 @@ export function getSession(sessionId: string) {
   const now = Math.floor(Date.now() / 1000);
   const session = db
     .prepare(
-      `SELECT s.*, u.id as uid, u.email, u.display_name, u.is_instance_admin
+      `SELECT s.*, u.id as uid, u.email, u.display_name
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ?`,
     )
@@ -181,7 +159,6 @@ export function getSession(sessionId: string) {
     userId: session.uid,
     email: session.email,
     displayName: session.display_name,
-    isInstanceAdmin: !!session.is_instance_admin,
   };
 }
 
