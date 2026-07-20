@@ -3,20 +3,19 @@
 import { Bot, Pause, Play, Terminal, Zap } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { OrgBadge } from "@/components/app/org-badge";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { Button } from "@/components/ui/button";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { useUpdateJob } from "@/lib/hooks/use-jobs";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { timeAgo } from "@/lib/time";
 
 export type RunRowData = {
   id: string;
   status: string;
-  org_id: string;
-  /** null = org-level run (its workflow has no project). */
-  project_id: string | null;
+  project_name: string;
   job_id: string;
   job_name: string;
   job_kind?: "agent" | "workflow" | null;
@@ -39,6 +38,7 @@ type Props = {
 
 export function RunRow({ run, showActions = true }: Props) {
   const [triggerOpen, setTriggerOpen] = useState(false);
+  const activeProjectId = useActiveProjectId();
   const updateJob = useUpdateJob();
   const toggling = updateJob.isPending;
   const isWorkflow = run.job_kind === "workflow" || !run.agent_name;
@@ -68,7 +68,6 @@ export function RunRow({ run, showActions = true }: Props) {
               <>
                 <Terminal className="h-3 w-3" />
                 <span>Workflow</span>
-                {run.project_id === null && <OrgBadge className="h-4 px-1.5" />}
               </>
             ) : (
               <>
@@ -79,6 +78,7 @@ export function RunRow({ run, showActions = true }: Props) {
                 <span className="font-mono">{run.agent_name}</span>
               </>
             )}
+            {!activeProjectId && <ProjectBadge name={run.project_name} className="h-4 px-1.5" />}
           </div>
         </div>
         <span className="text-xs text-muted-foreground shrink-0">

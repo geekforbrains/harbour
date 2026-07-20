@@ -68,7 +68,7 @@ type Agent = {
   placement: string | null;
   created_at: number;
   /** Slug path segments for the agent's on-disk workspace on the runner. */
-  workspace?: { org: string; project: string; agent: string } | null;
+  workspace?: { project: string; agent: string } | null;
 };
 type Job = {
   id: string;
@@ -243,7 +243,7 @@ export default function AgentDetailPage() {
               className="text-xs font-mono text-muted-foreground truncate"
               title="Working directory under the runner's HARBOUR_HOME (default ~/.harbour)"
             >
-              workspaces/{agent.workspace.org}/{agent.workspace.project}/{agent.workspace.agent}
+              workspaces/{agent.workspace.project}/{agent.workspace.agent}
             </span>
           </div>
         )}

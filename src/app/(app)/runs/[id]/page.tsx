@@ -35,8 +35,8 @@ import {
 import { AttachmentList } from "@/components/app/attachment-display";
 import { BackLink } from "@/components/app/back-link";
 import { EmptyState } from "@/components/app/empty-state";
-import { OrgBadge } from "@/components/app/org-badge";
 import { PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { StatusBadge } from "@/components/app/run-status";
 import { SectionHeader } from "@/components/app/section-header";
 import { Badge } from "@/components/ui/badge";
@@ -88,9 +88,7 @@ type Activity = {
 
 type Run = {
   id: string;
-  org_id: string;
-  /** null = org-level run (its workflow has no project). */
-  project_id: string | null;
+  project_name: string;
   job_id: string;
   agent_id: string | null;
   status: string;
@@ -694,7 +692,7 @@ export default function RunDetailPage() {
             >
               {run.job_name}
             </Link>
-            {run.project_id === null && <OrgBadge className="h-4 px-1.5" />}
+            <ProjectBadge name={run.project_name} className="h-4 px-1.5" />
           </div>
         </div>
         <div className="flex items-center justify-between sm:justify-start gap-2">

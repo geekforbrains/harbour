@@ -5,22 +5,20 @@ import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { ListState } from "@/components/app/list-state";
-import { OrgBadge } from "@/components/app/org-badge";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useJobs } from "@/lib/hooks/use-jobs";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { timeAgo } from "@/lib/time";
 
 type WorkflowJob = {
   id: string;
   kind: "agent" | "workflow";
-  org_id: string;
-  /** null = org-level workflow. */
-  project_id: string | null;
+  project_name: string;
   name: string;
   description: string | null;
   schedule: string;
@@ -34,7 +32,7 @@ type WorkflowJob = {
 
 export default function WorkflowsPage() {
   const [showCreate, setShowCreate] = useState(false);
-  const activeOrgId = useActiveOrgId();
+  const activeProjectId = useActiveProjectId();
 
   const { data: jobsData = [], isLoading: loading } = useJobs();
   // Workflows share the jobs API; agent jobs (kind === "agent") live at /jobs.
@@ -49,9 +47,9 @@ export default function WorkflowsPage() {
         subtitle="Scheduled shell commands — deterministic, no agent."
         actions={
           <ActionTooltip
-            hint={activeOrgId ? undefined : "Select an organization to create a workflow."}
+            hint={activeProjectId ? undefined : "Select a project to create a workflow."}
           >
-            <Button onClick={() => setShowCreate(true)} size="sm" disabled={!activeOrgId}>
+            <Button onClick={() => setShowCreate(true)} size="sm" disabled={!activeProjectId}>
               <Plus className="h-4 w-4 mr-1.5" /> New Workflow
             </Button>
           </ActionTooltip>
@@ -59,9 +57,6 @@ export default function WorkflowsPage() {
       />
 
       <ListState
-        scope={activeOrgId}
-        scopeNeed="org"
-        scopeEntity="workflows"
         isEmpty={workflows.length === 0}
         emptyIcon={<Workflow className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No workflows yet. Create one to get started."
@@ -94,7 +89,7 @@ export default function WorkflowsPage() {
                   )}
                 </div>
               </div>
-              {wf.project_id === null && <OrgBadge />}
+              {!activeProjectId && <ProjectBadge name={wf.project_name} />}
               {!wf.active && (
                 <Badge variant="secondary" className="text-[10px] shrink-0">
                   Paused

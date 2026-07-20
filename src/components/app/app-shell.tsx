@@ -2,59 +2,27 @@
 
 import { Anchor, LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { apiFetch } from "@/lib/api/client";
-import { orgsFromMe, useMe, userFromMe } from "@/lib/hooks/use-orgs";
+import { useMe, userFromMe } from "@/lib/hooks/use-me";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { useWaitingCount } from "@/lib/hooks/use-runs";
-import { AppContext, type Org, type User } from "./app-context";
+import { useSettings } from "@/lib/hooks/use-settings";
+import { AppContext } from "./app-context";
 import { MobileBottomNav } from "./mobile-nav";
 import { NavLinks } from "./nav-links";
 import { ProjectSwitcher } from "./project-switcher";
 import { ThemeToggle } from "./theme-toggle";
 
-export { useApp } from "./app-context";
-
-const ORG_COOKIE = "harbour_org";
-
-function readOrgCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|;\s*)harbour_org=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function writeOrgCookie(id: string | null) {
-  if (typeof document === "undefined") return;
-  if (id) {
-    // 1-year persistent cookie; server components read it for default scope.
-    // biome-ignore lint/suspicious/noDocumentCookie: intentional synchronous client-side cookie write; the Cookie Store API is async and not supported in all browsers
-    document.cookie = `${ORG_COOKIE}=${encodeURIComponent(id)}; path=/; max-age=31536000; samesite=lax`;
-  } else {
-    // biome-ignore lint/suspicious/noDocumentCookie: intentional synchronous client-side cookie clear; the Cookie Store API is async and not supported in all browsers
-    document.cookie = `${ORG_COOKIE}=; path=/; max-age=0; samesite=lax`;
-  }
-}
-
-function orgTimezone(org: Org | undefined): string | null {
-  if (!org?.settings) return null;
-  try {
-    const parsed = JSON.parse(org.settings) as { timezone?: string };
-    return parsed.timezone ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
 
-  // Identity + org memberships.
+  // Identity.
   const meQuery = useMe();
-  const user: User | null = userFromMe(meQuery.data);
-  const orgs = useMemo(() => orgsFromMe(meQuery.data), [meQuery.data]);
+  const user = userFromMe(meQuery.data);
 
   useEffect(() => {
     if (meQuery.isError) {
@@ -67,49 +35,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [meQuery.data, meQuery.isError]);
 
-  // Active org (persisted in the harbour_org cookie). Instance admins may pick
-  // "All orgs" (null); org members are pinned to their single org.
-  const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
-  const [orgStateLoaded, setOrgStateLoaded] = useState(false);
-
-  useEffect(() => {
-    setActiveOrgIdState(readOrgCookie());
-    setOrgStateLoaded(true);
-  }, []);
-
-  function setActiveOrgId(id: string | null) {
-    setActiveOrgIdState(id);
-    writeOrgCookie(id);
-  }
-
-  // Reconcile the active org against memberships once both are known.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setActiveOrgId is a plain wrapper around setState + cookie write recreated each render; listing it would re-run the effect every render
-  useEffect(() => {
-    if (!orgStateLoaded || !user) return;
-    const isAdmin = user.isInstanceAdmin;
-    if (activeOrgId && !orgs.some((o) => o.id === activeOrgId)) {
-      // Stored org no longer accessible.
-      if (isAdmin) {
-        // Admins may keep an explicit org even if not a member; otherwise clear.
-        if (orgs.length === 0) return; // can't validate; leave as-is
-        setActiveOrgId(null);
-      } else {
-        setActiveOrgId(orgs[0]?.id ?? null);
-      }
-    } else if (!activeOrgId && !isAdmin) {
-      // Members default to their single org (no "All orgs").
-      if (orgs[0]) setActiveOrgId(orgs[0].id);
-    }
-  }, [orgStateLoaded, user, orgs, activeOrgId]);
-
-  // Active project (persisted in localStorage), scoped to the active org.
+  // Active project (persisted in localStorage).
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
-  const [projectStateLoaded, setProjectStateLoaded] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem("harbour_active_project");
     if (stored) setActiveProjectIdState(stored);
-    setProjectStateLoaded(true);
   }, []);
 
   function setActiveProjectId(id: string | null) {
@@ -118,46 +49,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     else localStorage.removeItem("harbour_active_project");
   }
 
-  // Projects in the active org.
-  const { data: projects = [] } = useProjects(
-    { orgId: activeOrgId },
-    { enabled: !!user && !!activeOrgId, refetchInterval: 10000 },
-  );
+  const { data: projects = [] } = useProjects({ enabled: !!user, refetchInterval: 10000 });
 
-  // If the stored project isn't in the active org's project list, clear it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setActiveProjectId is a plain wrapper around setState + localStorage write recreated each render; listing it would re-run the effect every render
-  useEffect(() => {
-    if (
-      projectStateLoaded &&
-      activeProjectId &&
-      projects.length > 0 &&
-      !projects.some((p) => p.id === activeProjectId)
-    ) {
-      setActiveProjectId(null);
-    }
-  }, [projects, activeProjectId, projectStateLoaded]);
+  // Mask a stored selection the loaded project list doesn't contain (deleted
+  // project, or projects still loading) rather than expose a stale id; the raw
+  // id stays in localStorage so a valid selection survives reloads.
+  const effectiveProjectId = projects.some((p) => p.id === activeProjectId)
+    ? activeProjectId
+    : null;
 
-  // A project is only valid *within its own org*, so the exposed project must be
-  // present in the active org's loaded list. This masks two stale-state hazards
-  // that the clear-on-mismatch guard above can't catch on its own:
-  //   - "All orgs" view (`activeOrgId === null`): no org → no project.
-  //   - switching to an org with no (or not-yet-selected) projects while a
-  //     project from another org sits in localStorage — without this it would
-  //     leak through and show the *other* org's agents/jobs (and target creates
-  //     at the wrong org).
-  // We withhold during the brief projects-loading window rather than risk
-  // exposing a cross-org project; the raw id stays in localStorage so the
-  // selection is restored when its real org is active again.
-  const effectiveProjectId =
-    activeOrgId && projects.some((p) => p.id === activeProjectId) ? activeProjectId : null;
-
-  // Timezone comes from the active org's settings; falls back to the browser.
-  const activeOrg = orgs.find((o) => o.id === activeOrgId);
-  const timezone = orgTimezone(activeOrg) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Instance timezone from settings; falls back to the browser.
+  const { data: settings } = useSettings({ enabled: !!user });
+  const timezone = settings?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // Waiting-run count for the sidebar badge (scoped).
   const { data: waitingCount = 0 } = useWaitingCount({
-    enabled: !!user && !!activeOrgId,
+    enabled: !!user,
     refetchInterval: 5000,
   });
 
@@ -210,9 +117,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         user,
         waitingCount,
         timezone,
-        orgs,
-        activeOrgId,
-        setActiveOrgId,
         projects,
         activeProjectId: effectiveProjectId,
         setActiveProjectId,

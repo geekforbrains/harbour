@@ -7,6 +7,7 @@ import { AgentColorPicker } from "@/components/app/agent-color-picker";
 import { ListState } from "@/components/app/list-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { SlugPreview } from "@/components/app/slug-preview";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,7 @@ import { timeAgo } from "@/lib/time";
 type Agent = {
   id: string;
   name: string;
+  project_name: string;
   description: string | null;
   cli: string | null;
   model: string | null;
@@ -186,9 +188,6 @@ export default function AgentsPage() {
       )}
 
       <ListState
-        scope={activeProjectId}
-        scopeNeed="project"
-        scopeEntity="agents"
         isEmpty={agents.length === 0}
         emptyIcon={<Bot className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No agents yet. Create one to get started."
@@ -231,6 +230,7 @@ export default function AgentsPage() {
                   {agent.last_activity && <span>Active {timeAgo(agent.last_activity)}</span>}
                 </div>
               </div>
+              {!activeProjectId && <ProjectBadge name={agent.project_name} />}
               {agent.waiting_count > 0 && (
                 <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10 shrink-0">
                   {agent.waiting_count} waiting

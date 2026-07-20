@@ -6,6 +6,7 @@ import { ActionTooltip } from "@/components/app/action-tooltip";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import { timeAgo } from "@/lib/time";
 type Job = {
   id: string;
   kind: "agent" | "workflow";
+  project_name: string;
   agent_id: string | null;
   agent_name: string | null;
   agent_color: string | null;
@@ -73,9 +75,6 @@ export default function JobsPage() {
       />
 
       <ListState
-        scope={activeProjectId}
-        scopeNeed="project"
-        scopeEntity="jobs"
         isEmpty={jobs.length === 0}
         emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No jobs yet. Create one to get started."
@@ -140,6 +139,7 @@ export default function JobsPage() {
                     )}
                   </div>
                 </div>
+                {!activeProjectId && <ProjectBadge name={job.project_name} />}
                 {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     {!job.active && (

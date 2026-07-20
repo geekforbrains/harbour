@@ -4,10 +4,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Pin, Table2 } from "lucide-react";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useTables } from "@/lib/hooks/use-tables";
 import { timeAgo } from "@/lib/time";
 
@@ -16,6 +17,7 @@ type TableEntry = {
   name: string;
   table_name: string;
   pinned: number;
+  project_name: string;
   row_count: number;
   jobs: { id: string; name: string }[];
   created_at: number;
@@ -23,7 +25,7 @@ type TableEntry = {
 };
 
 export default function TablesPage() {
-  const activeOrgId = useActiveOrgId();
+  const activeProjectId = useActiveProjectId();
   const queryClient = useQueryClient();
 
   const { data: tablesData = [], isLoading: loading } = useTables();
@@ -49,9 +51,6 @@ export default function TablesPage() {
       <PageHeader title="Tables" subtitle="Agent-managed SQLite tables." />
 
       <ListState
-        scope={activeOrgId}
-        scopeNeed="org"
-        scopeEntity="tables"
         isEmpty={tables.length === 0}
         emptyIcon={<Table2 className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No tables yet. Agents create them through the API."
@@ -76,6 +75,7 @@ export default function TablesPage() {
                   </span>
                 </div>
               </div>
+              {!activeProjectId && <ProjectBadge name={table.project_name} />}
               <button
                 type="button"
                 onClick={(e) => handleTogglePin(e, table.id)}

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, Filter, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useApp } from "@/components/app/app-context";
 import { BackLink } from "@/components/app/back-link";
 import { EmptyState } from "@/components/app/empty-state";
 import { SELECT_CLASS } from "@/components/app/model-thinking-select";
@@ -12,7 +11,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { apiFetch, scoped } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
@@ -45,7 +44,6 @@ export default function RunsHistoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeProjectId = useActiveProjectId();
-  const { activeOrgId } = useApp();
 
   // Read filters from URL (URL is the source of truth)
   const statusesFromUrl = useMemo(() => {
@@ -119,24 +117,13 @@ export default function RunsHistoryPage() {
     if (projectId) params.set("projectId", projectId);
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(offset));
-    return scoped(`/api/runs/history?${params.toString()}`, { orgId: activeOrgId });
+    return `/api/runs/history?${params.toString()}`;
   }
 
   // Pagination: we keep all loaded pages in state so "Load more" can append.
   const queryKey = useMemo(
-    () => [
-      "runs",
-      "history",
-      statusesFromUrl.join(","),
-      agentId,
-      jobId,
-      from,
-      to,
-      sort,
-      projectId,
-      activeOrgId,
-    ],
-    [statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId],
+    () => ["runs", "history", statusesFromUrl.join(","), agentId, jobId, from, to, sort, projectId],
+    [statusesFromUrl, agentId, jobId, from, to, sort, projectId],
   );
 
   const [pages, setPages] = useState<RunRowData[][]>([]);
@@ -150,7 +137,6 @@ export default function RunsHistoryPage() {
         runs: [],
         hasMore: false,
       })),
-    enabled: !!activeOrgId,
     refetchInterval: 5000,
   });
 
@@ -175,7 +161,7 @@ export default function RunsHistoryPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [pages, statusesFromUrl, agentId, jobId, from, to, sort, projectId, activeOrgId]);
+  }, [pages, statusesFromUrl, agentId, jobId, from, to, sort, projectId]);
 
   const allRuns = pages.flat();
   const filtersActive =

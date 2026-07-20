@@ -21,7 +21,6 @@ import { useAgents } from "@/lib/hooks/use-agents";
 import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateAgentJob, useCreateWorkflowJob } from "@/lib/hooks/use-jobs";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useTables } from "@/lib/hooks/use-tables";
 import type { Gate } from "@/lib/runtimes";
 
@@ -167,7 +166,6 @@ export function CreateDialog({
 }) {
   const createAgentJob = useCreateAgentJob();
   const createWorkflowJob = useCreateWorkflowJob();
-  const activeProjectId = useActiveProjectId();
 
   // Scoped lists from the data layer (loaded while the dialog is open).
   const { data: agents = [] } = useAgents(undefined, { enabled: open });
@@ -201,19 +199,9 @@ export function CreateDialog({
   const [postrun, setPostrun] = useState<Gate | null>(null);
   const [postrunGates, setPostrunGates] = useState(false);
   const [titleFormat, setTitleFormat] = useState("");
-  // Workflow-only: scope is fixed at creation. Agent jobs are always project-level.
-  const [workflowScope, setWorkflowScope] = useState<"project" | "org">("project");
   // Workflow-only: which runner pool claims this workflow's runs (default 'local').
   // Agent jobs inherit their agent's placement, so this isn't shown for them.
   const [placement, setPlacement] = useState("");
-
-  // Without an active project, "This project" isn't an option — force org level.
-  const orgScoped = kind === "workflow" && (workflowScope === "org" || !activeProjectId);
-  // An org-level workflow may link only org-level resources (project_id IS NULL);
-  // the server rejects anything wider with a 400.
-  const eligibleDocs = orgScoped ? docs.filter((d) => d.project_id === null) : docs;
-  const eligibleEnvVars = orgScoped ? envVars.filter((ev) => ev.project_id === null) : envVars;
-  const eligibleTables = orgScoped ? tables.filter((t) => t.project_id === null) : tables;
 
   // Default the agent select to the first agent once the list loads.
   useEffect(() => {
@@ -247,7 +235,6 @@ export function CreateDialog({
     setPostrun(null);
     setPostrunGates(false);
     setTitleFormat("");
-    setWorkflowScope("project");
     setPlacement("");
   }
 
@@ -267,14 +254,6 @@ export function CreateDialog({
       return;
     setSubmitting(true);
 
-    // Drop selections that aren't linkable in the chosen scope (e.g. pinned
-    // project-level docs auto-seeded before the user picked "Entire org").
-    const docIds = selectedDocIds.filter((sid) => eligibleDocs.some((d) => d.id === sid));
-    const envVarIds = selectedEnvVarIds.filter((sid) =>
-      eligibleEnvVars.some((ev) => ev.id === sid),
-    );
-    const tableIds = selectedTableIds.filter((sid) => eligibleTables.some((t) => t.id === sid));
-
     const body = {
       name,
       description: description || undefined,
@@ -291,17 +270,16 @@ export function CreateDialog({
       model: !isWorkflow ? model || undefined : undefined,
       thinking: !isWorkflow ? thinking || undefined : undefined,
       titleFormat: !isWorkflow ? titleFormat.trim() || undefined : undefined,
-      docIds: docIds.length > 0 ? docIds : undefined,
-      envVarIds: envVarIds.length > 0 ? envVarIds : undefined,
-      tableIds: tableIds.length > 0 ? tableIds : undefined,
+      docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
+      envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
+      tableIds: selectedTableIds.length > 0 ? selectedTableIds : undefined,
     };
 
     try {
-      // Workflow jobs are created at the chosen scope (active project, or the
-      // whole org); agent jobs inherit their agent's project. v2 has no
-      // separate link step.
+      // Workflow jobs are created in the active project; agent jobs inherit
+      // their agent's project. v2 has no separate link step.
       if (isWorkflow) {
-        await createWorkflowJob.mutateAsync({ body, orgLevel: orgScoped });
+        await createWorkflowJob.mutateAsync(body);
       } else {
         await createAgentJob.mutateAsync({ agentId, body });
       }
@@ -356,7 +334,7 @@ export function CreateDialog({
   const docsEnvVarsFields = (
     <>
       <SelectedItems
-        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={docs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={selectedDocIds}
         onRemove={(id) => setSelectedDocIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowDocPicker(true)}
@@ -364,7 +342,7 @@ export function CreateDialog({
         label="Docs"
       />
       <SelectedItems
-        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
+        items={envVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={selectedEnvVarIds}
         onRemove={(id) => setSelectedEnvVarIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowEnvVarPicker(true)}
@@ -373,7 +351,7 @@ export function CreateDialog({
         nameClass="font-mono"
       />
       <SelectedItems
-        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        items={tables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
         selectedIds={selectedTableIds}
         onRemove={(id) => setSelectedTableIds((prev) => prev.filter((i) => i !== id))}
         onAdd={() => setShowTablePicker(true)}
@@ -394,25 +372,6 @@ export function CreateDialog({
 
           <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
             {kind === "agent" && sharedFields}
-
-            {kind === "workflow" && (
-              <div className="space-y-2">
-                <Label>Scope</Label>
-                <select
-                  value={orgScoped ? "org" : "project"}
-                  onChange={(e) => setWorkflowScope(e.target.value === "org" ? "org" : "project")}
-                  className={SELECT_CLASS}
-                >
-                  <option value="project" disabled={!activeProjectId}>
-                    This project
-                  </option>
-                  <option value="org">Entire org</option>
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Fixed at creation. Org workflows can link only org-level docs and secrets.
-                </p>
-              </div>
-            )}
 
             <div className="space-y-2">
               <Label>Name</Label>
@@ -555,7 +514,7 @@ export function CreateDialog({
         open={showDocPicker}
         onOpenChange={setShowDocPicker}
         title="Select Docs"
-        items={eligibleDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={docs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={new Set(selectedDocIds)}
         onToggle={(id) => toggleItem(id, selectedDocIds, setSelectedDocIds)}
         icon={FileText}
@@ -564,7 +523,7 @@ export function CreateDialog({
         open={showEnvVarPicker}
         onOpenChange={setShowEnvVarPicker}
         title="Select Secrets"
-        items={eligibleEnvVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
+        items={envVars.map((ev) => ({ id: ev.id, name: ev.name, pinned: ev.pinned }))}
         selectedIds={new Set(selectedEnvVarIds)}
         onToggle={(id) => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
         icon={KeyRound}
@@ -574,7 +533,7 @@ export function CreateDialog({
         open={showTablePicker}
         onOpenChange={setShowTablePicker}
         title="Select Tables"
-        items={eligibleTables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
+        items={tables.map((t) => ({ id: t.id, name: t.name, pinned: t.pinned }))}
         selectedIds={new Set(selectedTableIds)}
         onToggle={(id) => toggleItem(id, selectedTableIds, setSelectedTableIds)}
         icon={Table2}

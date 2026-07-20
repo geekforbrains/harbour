@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,17 +22,17 @@ import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useCreateDoc, useDocs } from "@/lib/hooks/use-docs";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { timeAgo } from "@/lib/time";
 
-type Doc = { id: string; title: string; pinned: number; updated_at: number };
+type Doc = { id: string; title: string; pinned: number; project_name: string; updated_at: number };
 
 export default function DocsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const activeOrgId = useActiveOrgId();
+  const activeProjectId = useActiveProjectId();
   const createDoc = useCreateDoc();
 
   const { data: docsData = [], isLoading: loading } = useDocs();
@@ -41,8 +42,7 @@ export default function DocsPage() {
     e.preventDefault();
     if (!newTitle.trim()) return;
     try {
-      // Created directly in the active scope (org + project) by useCreateDoc;
-      // no separate link step in v2.
+      // Created directly in the active project by useCreateDoc.
       const doc = await createDoc.mutateAsync({ title: newTitle });
       router.push(`/docs/${doc.id}?edit=1`);
     } catch {
@@ -70,11 +70,9 @@ export default function DocsPage() {
         actions={
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see tables/page.tsx. No
-                project_id reparent route exists; new docs land in the active scope. */}
-            <ActionTooltip
-              hint={activeOrgId ? undefined : "Select an organization to create a doc."}
-            >
-              <Button size="sm" onClick={() => setShowNew(true)} disabled={!activeOrgId}>
+                project_id reparent route exists; new docs land in the active project. */}
+            <ActionTooltip hint={activeProjectId ? undefined : "Select a project to create a doc."}>
+              <Button size="sm" onClick={() => setShowNew(true)} disabled={!activeProjectId}>
                 <Plus className="h-4 w-4 mr-1" /> New Doc
               </Button>
             </ActionTooltip>
@@ -83,9 +81,6 @@ export default function DocsPage() {
       />
 
       <ListState
-        scope={activeOrgId}
-        scopeNeed="org"
-        scopeEntity="docs"
         isEmpty={docs.length === 0}
         emptyIcon={<FileText className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No docs yet."
@@ -97,6 +92,7 @@ export default function DocsPage() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-medium flex-1 pt-1">{doc.title}</span>
+              {!activeProjectId && <ProjectBadge name={doc.project_name} />}
               <button
                 type="button"
                 onClick={(e) => handleTogglePin(e, doc.id)}

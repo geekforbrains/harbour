@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,17 +21,24 @@ import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useCreateEnvVar, useEnvVars } from "@/lib/hooks/use-env-vars";
-import { useActiveOrgId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { timeAgo } from "@/lib/time";
 
-type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
+type EnvVar = {
+  id: string;
+  name: string;
+  pinned: number;
+  project_name: string;
+  created_at: number;
+  updated_at: number;
+};
 
 export default function EnvVarsPage() {
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
-  const activeOrgId = useActiveOrgId();
+  const activeProjectId = useActiveProjectId();
   const createEnvVar = useCreateEnvVar();
 
   const { data: envVarsData = [], isLoading: loading } = useEnvVars();
@@ -40,7 +48,7 @@ export default function EnvVarsPage() {
     e.preventDefault();
     if (!newName.trim() || !newValue.trim()) return;
     try {
-      // Created directly in the active scope (org + project); no link step in v2.
+      // Created directly in the active project.
       await createEnvVar.mutateAsync({ name: newName.trim(), value: newValue });
       setShowNew(false);
       setNewName("");
@@ -70,11 +78,11 @@ export default function EnvVarsPage() {
         actions={
           <div className="flex gap-2">
             {/* TODO(v2): "Add Existing" removed — see tables/page.tsx. No
-                project_id reparent route exists; new env vars land in the active scope. */}
+                project_id reparent route exists; new env vars land in the active project. */}
             <ActionTooltip
-              hint={activeOrgId ? undefined : "Select an organization to create a secret."}
+              hint={activeProjectId ? undefined : "Select a project to create a secret."}
             >
-              <Button size="sm" onClick={() => setShowNew(true)} disabled={!activeOrgId}>
+              <Button size="sm" onClick={() => setShowNew(true)} disabled={!activeProjectId}>
                 <Plus className="h-4 w-4 mr-1" /> New Secret
               </Button>
             </ActionTooltip>
@@ -83,9 +91,6 @@ export default function EnvVarsPage() {
       />
 
       <ListState
-        scope={activeOrgId}
-        scopeNeed="org"
-        scopeEntity="secrets"
         isEmpty={envVars.length === 0}
         emptyIcon={<KeyRound className="h-10 w-10 text-muted-foreground/40" />}
         emptyMessage="No secrets yet."
@@ -97,6 +102,7 @@ export default function EnvVarsPage() {
                 <KeyRound className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-mono font-medium flex-1 truncate">{ev.name}</span>
+              {!activeProjectId && <ProjectBadge name={ev.project_name} />}
               <button
                 type="button"
                 onClick={(e) => handleTogglePin(e, ev.id)}

@@ -26,8 +26,8 @@ import { PickerDialog, SelectedItems } from "@/components/app/create-dialog";
 import { EmptyState } from "@/components/app/empty-state";
 import { GateField } from "@/components/app/gate-field";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
-import { OrgBadge } from "@/components/app/org-badge";
 import { PageLoading } from "@/components/app/page-header";
+import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
 import { StatusDot } from "@/components/app/run-status";
 import {
@@ -69,9 +69,7 @@ import { formatTimestamp, timeAgo } from "@/lib/time";
 type Job = {
   id: string;
   kind: "agent" | "workflow";
-  org_id: string;
-  /** null = org-level workflow (agent jobs are always project-level). */
-  project_id: string | null;
+  project_id: string;
   agent_id: string | null;
   agent_name: string | null;
   agent_color: string | null;
@@ -133,7 +131,7 @@ function InstructionsBlock({ text }: { text: string }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { timezone } = useApp();
+  const { timezone, projects } = useApp();
 
   const { data: jobData, isLoading: loading } = useJob(id);
   const job = (jobData as Job | undefined) ?? null;
@@ -146,9 +144,11 @@ export default function JobDetailPage() {
 
   const { data: jobRunsData = [] } = useJobRuns(id);
 
-  const { data: allDocs = [] } = useDocs();
-  const { data: allEnvVars = [] } = useEnvVars();
-  const { data: allTables = [] } = useTables();
+  // Linked-resource pickers offer the job's project's resources.
+  const jobScope = { projectId: job?.project_id };
+  const { data: allDocs = [] } = useDocs(jobScope, { enabled: !!job });
+  const { data: allEnvVars = [] } = useEnvVars(jobScope, { enabled: !!job });
+  const { data: allTables = [] } = useTables(jobScope, { enabled: !!job });
 
   const updateJob = useUpdateJob();
   const deleteJob = useDeleteJob();
@@ -295,14 +295,7 @@ export default function JobDetailPage() {
   const workflowGate = toGate(job.workflow_runtime, job.workflow_script);
   // The primary gate shown up top: a workflow's command, or an agent's prerun.
   const primaryGate = isWorkflow ? workflowGate : prerunGate;
-  const isOrgLevel = job.project_id === null;
-  // Org-level workflows may link only org-level resources; the server 400s
-  // anything project-scoped, so don't offer it.
-  const linkableDocs = isOrgLevel ? allDocs.filter((d) => d.project_id === null) : allDocs;
-  const linkableEnvVars = isOrgLevel
-    ? allEnvVars.filter((ev) => ev.project_id === null)
-    : allEnvVars;
-  const linkableTables = isOrgLevel ? allTables.filter((t) => t.project_id === null) : allTables;
+  const projectName = projects.find((p) => p.id === job.project_id)?.name;
 
   return (
     <div className="space-y-6">
@@ -315,7 +308,7 @@ export default function JobDetailPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">{job.name}</h1>
-            {isOrgLevel && <OrgBadge />}
+            <ProjectBadge name={projectName} />
             {!job.active && <Badge variant="secondary">Paused</Badge>}
           </div>
           {job.description && (
@@ -608,7 +601,7 @@ export default function JobDetailPage() {
           </DialogHeader>
           {(() => {
             const linkedIds = new Set(job.docs.map((d) => d.id));
-            const available = linkableDocs.filter((d) => !linkedIds.has(d.id));
+            const available = allDocs.filter((d) => !linkedIds.has(d.id));
             if (available.length === 0) {
               return (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -653,7 +646,7 @@ export default function JobDetailPage() {
           </DialogHeader>
           {(() => {
             const linkedIds = new Set(job.envVars.map((ev) => ev.id));
-            const available = linkableEnvVars.filter((ev) => !linkedIds.has(ev.id));
+            const available = allEnvVars.filter((ev) => !linkedIds.has(ev.id));
             if (available.length === 0) {
               return (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -700,7 +693,7 @@ export default function JobDetailPage() {
           </DialogHeader>
           {(() => {
             const linkedIds = new Set(job.tables.map((t) => t.id));
-            const available = linkableTables.filter((t) => !linkedIds.has(t.id));
+            const available = allTables.filter((t) => !linkedIds.has(t.id));
             if (available.length === 0) {
               return (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -850,7 +843,7 @@ export default function JobDetailPage() {
               />
             )}
             <SelectedItems
-              items={linkableDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+              items={allDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
               selectedIds={editDocIds}
               onRemove={(did) => setEditDocIds((prev) => prev.filter((i) => i !== did))}
               onAdd={() => setShowEditDocPicker(true)}
@@ -858,7 +851,7 @@ export default function JobDetailPage() {
               label="Docs"
             />
             <SelectedItems
-              items={linkableEnvVars}
+              items={allEnvVars}
               selectedIds={editEnvVarIds}
               onRemove={(evid) => setEditEnvVarIds((prev) => prev.filter((i) => i !== evid))}
               onAdd={() => setShowEditEnvVarPicker(true)}
@@ -867,7 +860,7 @@ export default function JobDetailPage() {
               nameClass="font-mono"
             />
             <SelectedItems
-              items={linkableTables}
+              items={allTables}
               selectedIds={editTableIds}
               onRemove={(tid) => setEditTableIds((prev) => prev.filter((i) => i !== tid))}
               onAdd={() => setShowEditTablePicker(true)}
@@ -898,7 +891,7 @@ export default function JobDetailPage() {
         open={showEditDocPicker}
         onOpenChange={setShowEditDocPicker}
         title="Select Docs"
-        items={linkableDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        items={allDocs.map((d) => ({ id: d.id, name: d.title, pinned: d.pinned }))}
         selectedIds={new Set(editDocIds)}
         onToggle={(did) =>
           setEditDocIds((prev) =>
@@ -911,7 +904,7 @@ export default function JobDetailPage() {
         open={showEditEnvVarPicker}
         onOpenChange={setShowEditEnvVarPicker}
         title="Select Secrets"
-        items={linkableEnvVars}
+        items={allEnvVars}
         selectedIds={new Set(editEnvVarIds)}
         onToggle={(evid) =>
           setEditEnvVarIds((prev) =>
@@ -925,7 +918,7 @@ export default function JobDetailPage() {
         open={showEditTablePicker}
         onOpenChange={setShowEditTablePicker}
         title="Select Tables"
-        items={linkableTables}
+        items={allTables}
         selectedIds={new Set(editTableIds)}
         onToggle={(tid) =>
           setEditTableIds((prev) =>

@@ -20,7 +20,6 @@ import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
-import { useUpdateOrg } from "@/lib/hooks/use-orgs";
 import {
   type MintedRunner,
   useCreateRunner,
@@ -31,7 +30,7 @@ import { timeAgo } from "@/lib/time";
 
 type Settings = Record<string, string>;
 
-type AdminApiKey = {
+type ApiKey = {
   id: string;
   name: string;
   created_at: number;
@@ -224,9 +223,8 @@ function VideoProcessingSettings({
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const { projects, activeProjectId, setActiveProjectId, activeOrgId, timezone } = useApp();
+  const { projects, activeProjectId, setActiveProjectId, timezone } = useApp();
   const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null;
-  const updateOrg = useUpdateOrg(activeOrgId);
 
   const [tzSearch, setTzSearch] = useState("");
   const [tzOpen, setTzOpen] = useState(false);
@@ -234,9 +232,10 @@ export default function SettingsPage() {
   const [projectNameLoaded, setProjectNameLoaded] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // Admin API keys
+  // API keys
   const [newKeyName, setNewKeyName] = useState("");
   const [showNewKey, setShowNewKey] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
@@ -286,37 +285,37 @@ export default function SettingsPage() {
   }
 
   const { data: settings, isLoading } = useQuery<Settings>({
-    queryKey: ["settings"],
+    queryKey: qk.settings.detail(),
     queryFn: () => apiFetch<Settings>("/api/settings").catch(() => ({})),
   });
 
   const { data: timezones = [] } = useQuery<string[]>({
-    queryKey: ["timezones"],
+    queryKey: qk.settings.timezones(),
     queryFn: () => apiFetch<string[]>("/api/settings/timezones").catch(() => []),
   });
 
-  const { data: adminKeys = [] } = useQuery<AdminApiKey[]>({
-    queryKey: ["admin-api-keys"],
-    queryFn: () => apiFetch<AdminApiKey[]>("/api/admin-api-keys").catch(() => []),
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: qk.apiKeys.list(),
+    queryFn: () => apiFetch<ApiKey[]>("/api/api-keys").catch(() => []),
   });
 
   const createKeyMutation = useMutation({
     mutationFn: (name: string) =>
-      apiFetch<{ apiKey: string }>("/api/admin-api-keys", {
+      apiFetch<{ apiKey: string }>("/api/api-keys", {
         method: "POST",
         body: { name },
       }),
     onSuccess: (data) => {
       setCreatedKey(data.apiKey);
       setNewKeyName("");
-      queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
+      queryClient.invalidateQueries({ queryKey: qk.apiKeys.all });
     },
   });
 
   const deleteKeyMutation = useMutation({
-    mutationFn: (id: string) => apiFetch(`/api/admin-api-keys/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => apiFetch(`/api/api-keys/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
+      queryClient.invalidateQueries({ queryKey: qk.apiKeys.all });
     },
   });
 
@@ -363,13 +362,11 @@ export default function SettingsPage() {
       alert("Failed to update setting");
       return;
     }
-    queryClient.invalidateQueries({ queryKey: ["settings"] });
+    queryClient.invalidateQueries({ queryKey: qk.settings.all });
   }
 
-  async function updateTimezone(tz: string) {
-    if (!activeOrgId) return;
-    await updateOrg.mutateAsync({ settings: { timezone: tz } });
-  }
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const keyInvite = `You have full access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- API Key: ${createdKey}\n- Base URL: ${origin}\n\nTo get started, fetch the management guide:\n  GET ${origin}/api/management-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, tables, env vars, projects, and settings.`;
 
   if (isLoading) return <PageLoading />;
 
@@ -402,8 +399,8 @@ export default function SettingsPage() {
               <div>
                 <p className="text-sm font-medium">Delete project</p>
                 <p className="text-xs text-muted-foreground">
-                  Archives the project (a soft-delete) — it's hidden from the switcher, but nothing
-                  is destroyed. Agents, jobs, docs, and secrets are preserved.
+                  Permanently deletes this project and everything in it — agents, jobs, runs, docs,
+                  secrets, and tables. This cannot be undone.
                 </p>
               </div>
               <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
@@ -413,50 +410,48 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Timezone — per-org setting (v2: stored in the org's settings JSON). */}
-        {activeOrgId && (
-          <div className="space-y-2">
-            <Label>Timezone</Label>
-            <p className="text-xs text-muted-foreground">
-              Used for scheduling jobs and displaying times in this organization.
-            </p>
-            <div className="relative">
-              <Input
-                value={tzOpen ? tzSearch : timezone}
-                onChange={(e) => {
-                  setTzSearch(e.target.value);
-                  setTzOpen(true);
-                }}
-                onFocus={() => {
-                  setTzSearch("");
-                  setTzOpen(true);
-                }}
-                onBlur={() => setTimeout(() => setTzOpen(false), 200)}
-                placeholder="Search timezones..."
-                className="font-mono text-sm"
-              />
-              {tzOpen && filteredTimezones.length > 0 && (
-                <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-md">
-                  {filteredTimezones.slice(0, 50).map((tz) => (
-                    <button
-                      key={tz}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        updateTimezone(tz);
-                        setTzOpen(false);
-                        setTzSearch("");
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-accent transition-colors ${tz === timezone ? "bg-accent/50 font-medium" : ""}`}
-                    >
-                      {tz}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+        {/* Timezone */}
+        <div className="space-y-2">
+          <Label>Timezone</Label>
+          <p className="text-xs text-muted-foreground">
+            Used for scheduling jobs and displaying times.
+          </p>
+          <div className="relative">
+            <Input
+              value={tzOpen ? tzSearch : timezone}
+              onChange={(e) => {
+                setTzSearch(e.target.value);
+                setTzOpen(true);
+              }}
+              onFocus={() => {
+                setTzSearch("");
+                setTzOpen(true);
+              }}
+              onBlur={() => setTimeout(() => setTzOpen(false), 200)}
+              placeholder="Search timezones..."
+              className="font-mono text-sm"
+            />
+            {tzOpen && filteredTimezones.length > 0 && (
+              <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-md">
+                {filteredTimezones.slice(0, 50).map((tz) => (
+                  <button
+                    key={tz}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      updateSetting("timezone", tz);
+                      setTzOpen(false);
+                      setTzSearch("");
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm font-mono hover:bg-accent transition-colors ${tz === timezone ? "bg-accent/50 font-medium" : ""}`}
+                  >
+                    {tz}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
         {/* Recent Runs Limit */}
         <div className="space-y-2">
@@ -498,17 +493,17 @@ export default function SettingsPage() {
         {/* Video Processing */}
         <VideoProcessingSettings settings={settings || {}} updateSetting={updateSetting} />
 
-        {/* Admin API Keys */}
+        {/* API Keys */}
         <div className="rounded-lg border p-4 space-y-4">
           <div>
-            <Label className="text-base font-medium">Admin API Keys</Label>
+            <Label className="text-base font-medium">API Keys</Label>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Keys for external agents to manage Harbour. Each key has full admin access.
+              Keys for external agents to manage Harbour. Each key has full access.
             </p>
           </div>
-          {adminKeys.length > 0 && (
+          {apiKeys.length > 0 && (
             <div className="space-y-2">
-              {adminKeys.map((key) => (
+              {apiKeys.map((key) => (
                 <div
                   key={key.id}
                   className="flex items-center justify-between rounded-md border px-3 py-2"
@@ -618,7 +613,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Create admin key dialog */}
+      {/* Create API key dialog */}
       <Dialog
         open={showNewKey}
         onOpenChange={(open) => {
@@ -628,7 +623,7 @@ export default function SettingsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Admin API Key</DialogTitle>
+            <DialogTitle>New API Key</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -675,7 +670,7 @@ export default function SettingsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Admin API Key Created</DialogTitle>
+            <DialogTitle>API Key Created</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -683,16 +678,13 @@ export default function SettingsPage() {
               again.
             </p>
             <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all select-all max-h-64 overflow-y-auto">
-              {`You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${typeof window !== "undefined" ? window.location.origin : ""}\n\nTo get started, fetch the admin guide:\n  GET ${typeof window !== "undefined" ? window.location.origin : ""}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, tables, env vars, projects, and settings.`}
+              {keyInvite}
             </div>
             <Button
               variant="outline"
               className="w-full"
               onClick={() => {
-                const base = typeof window !== "undefined" ? window.location.origin : "";
-                navigator.clipboard.writeText(
-                  `You have admin access to a Harbour instance — a control plane for AI agents.\n\nSave these credentials now:\n- Admin API Key: ${createdKey}\n- Base URL: ${base}\n\nTo get started, fetch the admin guide:\n  GET ${base}/api/admin-guide\n  Authorization: Bearer ${createdKey}\n\nThe guide covers every endpoint you can use to manage agents, jobs, runs, docs, tables, env vars, projects, and settings.`,
-                );
+                navigator.clipboard.writeText(keyInvite);
                 setCopied(true);
               }}
             >
@@ -819,20 +811,48 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+      <Dialog
+        open={showDeleteConfirm}
+        onOpenChange={(open) => {
+          setShowDeleteConfirm(open);
+          if (!open) setDeleteConfirmText("");
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete {activeProject?.name}?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This archives the project (a soft-delete) — it disappears from the switcher, but nothing
-            is destroyed. Your agents, jobs, docs, and secrets are preserved.
+            This permanently deletes the project and everything in it — agents, jobs, runs, docs,
+            secrets, and tables. This cannot be undone.
           </p>
+          <div className="space-y-2">
+            <Label htmlFor="delete-project-confirm">
+              Type <span className="font-mono font-medium">{activeProject?.name}</span> to confirm
+            </Label>
+            <Input
+              id="delete-project-confirm"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={activeProject?.name}
+              autoComplete="off"
+            />
+          </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                setDeleteConfirmText("");
+              }}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteProject} disabled={deleting}>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteProject}
+              disabled={deleting || deleteConfirmText !== activeProject?.name}
+            >
               {deleting ? "Deleting..." : "Delete Project"}
             </Button>
           </DialogFooter>

@@ -6,14 +6,13 @@ import { ListState } from "@/components/app/list-state";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { RunRow, type RunRowData } from "@/components/app/run-row";
 import { SectionHeader } from "@/components/app/section-header";
-import { useActiveOrgId, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useRuns } from "@/lib/hooks/use-runs";
 
 type Run = RunRowData;
 
 export default function RunsPage() {
   const activeProjectId = useActiveProjectId();
-  const activeOrgId = useActiveOrgId();
   const historyHref = activeProjectId ? `/runs?projectId=${activeProjectId}` : "/runs";
 
   const { data: runsData, isLoading: loading } = useRuns({ refetchInterval: 5000 });
@@ -32,9 +31,6 @@ export default function RunsPage() {
       <PageHeader title="Runs" subtitle="All run activity." />
 
       <ListState
-        scope={activeOrgId}
-        scopeNeed="org"
-        scopeEntity="runs"
         isEmpty={
           running.length === 0 &&
           scheduled.length === 0 &&
