@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Breaking: orgs are gone — Harbour is flat
+
+- **Orgs, memberships, roles, and the instance-admin flag are removed.** The
+  hierarchy is now instance → projects → agents & jobs → runs, and every
+  authenticated user can do everything. Projects organize work — slug unique
+  instance-wide — and are no longer a tenancy boundary: lists span all projects
+  by default (filter with `?projectId=`), and a job may link docs, secrets, and
+  tables from any project. Pinning now auto-injects a resource into every run
+  of every job in its own project.
+- **Project delete is a hard delete** — no archive state; the cascade takes the
+  project's agents, jobs, runs, docs, secrets, and tables with it.
+- **Renames.** Admin API keys are now just **API keys** (`/api/api-keys`,
+  `hbr_` prefix) and the admin guide is the **management guide**, served at
+  `/api/management-guide`. The CLI's `harbour admin create` is
+  `harbour user create` (env var `HARBOUR_USER_PASSWORD`); the `harbour
+  migrate` command is removed. Runner scope drops `orgId` (only `agentId`
+  remains). Workspace and script paths lose the org segment:
+  `workspaces/<project>/<agent>` and `workflows/<project>[/<agent>]/<job-leaf>`.
+- **Migration: none.** Harbour has no schema migrations — a fresh database is
+  the only path across this change. See [MIGRATION.md](MIGRATION.md) for the
+  by-hand cutover notes.
+
 ### Runs
 
 - The dashboard's Recent feed shows individual runs again — the v2.1.0
@@ -70,8 +92,8 @@
 going forward: a multi-tenant control plane organized around instance admins,
 orgs, projects, shared context, remote runners, workflows, and the unified
 runner protocol. Existing v1 installs should move to a fresh v2 install and use
-[`harbour migrate`](docs/guides/migrating-from-v1.md) to translate their data
-into the new schema.
+`harbour migrate` to translate their data into the new schema. (The migrate
+command and its guide were removed later, in the flatten above.)
 
 ### v2 foundation
 

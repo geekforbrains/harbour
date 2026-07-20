@@ -46,11 +46,9 @@ and the paired `*_script` column holds the body. Together they form a gate — a
 it with the runtime's interpreter; nothing is referenced by bare filename. See
 [Gates](#gates) below.
 
-Workflow jobs are dual-tier, like docs, env vars, and tables: every job carries a NOT NULL `org_id`, and a workflow's `project_id` is nullable — `NULL` means **org-level**, belonging to the org as a whole rather than one project. Agent jobs are always project-level. Scope is fixed at creation; to move a workflow between tiers, re-create it.
+Workflow jobs live in a project like every other job: `project_id` is NOT NULL for both kinds. A workflow may link docs, env vars, and tables from any project; injection is composition-driven (like every job) — the run carries the resources pinned in the workflow's project plus those it's explicitly linked to, never a project's resources at large.
 
-An org-level workflow may link only **org-level** docs, env vars, and tables — linking a project-scoped resource into an org-scoped job would widen that resource's reach to the whole org, so the API rejects it with a 400. Injection is attachment-driven (like every job): the run carries only the resources the workflow is actually linked to, never the org tier at large.
-
-Workflows are claimed by the **same** unified runner as agent jobs — any runner advertising the `workflow` kind whose placement label matches the workflow's. The runner registry is the DB `runners` table; there is no separate workflow-runner credential. A runner claims every due workflow it's eligible for, org-level and project-level alike. See the [Runner Protocol](../runner-guide.md).
+Workflows are claimed by the **same** unified runner as agent jobs — any runner advertising the `workflow` kind whose placement label matches the workflow's. The runner registry is the DB `runners` table; there is no separate workflow-runner credential. A runner claims every due workflow it's eligible for. See the [Runner Protocol](../runner-guide.md).
 
 ## Creating Workflows
 
@@ -59,7 +57,7 @@ From the dashboard, open the **Workflows** page and create a new workflow.
 From the API:
 
 ```http
-POST /api/jobs?orgId=<org-id>&projectId=<project-id>
+POST /api/jobs?projectId=<project-id>
 Content-Type: application/json
 
 {
@@ -73,7 +71,7 @@ Content-Type: application/json
 
 `command` is the workflow gate and is required: an object `{ runtime, content }` where `runtime` is `bash` (the default if omitted), `python`, or `node`, and `content` is the script body. The `workflow` key is accepted as an alias for `command`. `content` is stored verbatim — never trimmed — so shebangs and leading blank lines survive.
 
-`projectId` is optional (query or body) — without it the workflow is **org-level**.
+`projectId` is required (body or query — body wins). Missing it is a 400 (`{"error":"projectId is required"}`); an unknown project is a 404.
 
 `POST /api/jobs` only creates workflows. Agent jobs are created under an agent with `POST /api/agents/:id/jobs`, whose body takes `prerun` and `postrun` as `{ runtime, content }` objects plus a `postrunGates` boolean.
 
@@ -171,7 +169,7 @@ The workflow receives the same composed run context as an agent run, minus the a
     "command": { "runtime": "python", "content": "import json, sys\n..." },
     "workflow": { "runtime": "python", "content": "import json, sys\n..." },
     "timeout_minutes": 30,
-    "scripts_dir": "acme/ops/health-check-1a2b3c4d"
+    "scripts_dir": "ops/health-check-1a2b3c4d"
   },
   "docs": [],
   "tables": {},
@@ -244,10 +242,9 @@ Each gate has two parts:
 
 Gates travel in the run payload (on both agent and workflow runs) as `{ runtime, content }` objects (or `null`), alongside `job.scripts_dir`:
 
-- `job.scripts_dir` — a **relative** path the server computes from immutable slugs (`getJobScriptsDir`), under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Tiers:
-  - agent job → `<org-slug>/<project-slug>/<agent-slug>/<job-leaf>`
-  - project workflow → `<org-slug>/<project-slug>/<job-leaf>`
-  - org-level workflow → `<org-slug>/<job-leaf>`
+- `job.scripts_dir` — a **relative** path the server computes from immutable slugs (`getJobScriptsDir`), under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Shapes:
+  - agent job → `<project-slug>/<agent-slug>/<job-leaf>`
+  - workflow → `<project-slug>/<job-leaf>`
 
   where `<job-leaf>` is `<slugified-job-name>-<first-8-of-job-id>` — stable across renames and collision-free. `scripts_dir` is `null` only for a malformed or unknown job.
 

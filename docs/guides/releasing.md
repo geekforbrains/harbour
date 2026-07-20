@@ -22,8 +22,8 @@ GitHub Release title are the same string: `vX.Y.Z`.
    git status --short --branch
    git log --oneline main..dev
    ```
-3. Choose the next version from the rules below. For a breaking v1-to-v2 cut,
-   use the major release (`v2.0.0`), not another v1 minor.
+3. Choose the next version from the rules below. For a breaking cut, use a
+   major release, not another minor.
 
 ## Release prep on `dev`
 
@@ -32,8 +32,9 @@ For a release `vX.Y.Z`, create one release-prep commit on `dev`:
 1. Add a section at the top of [`changelog.md`](../../changelog.md) matching the
    existing style: `## vX.Y.Z — YYYY-MM-DD`, then one or more `### <Topic>`
    subheads with human-readable bullets (not raw commit subjects).
-   For a major release that sunsets v1, call that out explicitly and link the
-   migration guide if existing v1 installs need a documented path.
+   For a major release with breaking changes, call them out explicitly —
+   Harbour has no schema migrations, so a schema-breaking release means a
+   fresh database, and the changelog should say so.
 2. Bump [`package.json`](../../package.json) and
    [`package-lock.json`](../../package-lock.json) together:
    ```bash

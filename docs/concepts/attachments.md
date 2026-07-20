@@ -78,7 +78,7 @@ For embeds: a plain `fetch` POST with JSON body.
 
 ## Auth
 
-Attachment routes use `withRunExecutorOrUser`: the run's per-run exec token — bound to exactly that run, so an executor can't reach another run's attachments — or any user with the right role in the run's org acting from the dashboard (reads need `viewer`, uploads/deletes need `editor`). See the [auth model](../reference/architecture.md#auth-model).
+Attachment routes use `withRunExecutorOrUser`: the run's per-run exec token — bound to exactly that run, so an executor can't reach another run's attachments — or any authenticated user acting from the dashboard. See the [auth model](../reference/architecture.md#auth-model).
 
 ## Endpoints
 

@@ -1,79 +1,70 @@
-# Orgs & projects
+# Projects
 
-Orgs and projects are Harbour's **tenancy**, not an optional view filter. An
-instance admin owns the install; work is organized into **orgs → projects**; and
-every agent, job, and run lives inside a project — except org-level
-**workflows** (and their runs), which belong to the org as a whole
-([workflows](workflows.md#data-model)). Projects are where operational entities
-are born and scoped.
+Projects are Harbour's **organization**, not a tenancy or permission boundary.
+The hierarchy is flat: instance → **projects** → agents & jobs → runs. Every
+agent, job, run, doc, secret, and table lives inside exactly one project, and
+every authenticated user sees and can operate all of them — a project is a
+grouping that keeps one stream of work filterable, nothing more.
 
 ## The hierarchy
 
-- **Instance admin** — created from the shell (`harbour setup`); owns the
-  install and spans every org. Stored as `users.is_instance_admin`.
-- **Org** — the tenant boundary. A user joins an org through a `memberships` row
-  carrying a role (`editor` or `viewer`). **Resources never cross org lines.**
-- **Project** — groups the actual work within an org.
-
-Roles resolve per org (`src/lib/db/access.ts`): a **viewer** reads, an **editor**
-changes things, and an **instance admin** satisfies any check in any org.
+- **Instance** — the install itself. The first user is created from the shell
+  (`harbour setup`); further users are invited from the dashboard. There are no
+  roles, no memberships, and no admin flag — every user can do everything.
+- **Project** — groups the actual work. `slug` is unique instance-wide and is
+  the workspace path segment (see below).
 
 ## What lives where
 
-Two ownership shapes (full columns in
-[database-schema.md](../reference/database-schema.md)):
+One ownership shape (full columns in
+[database-schema.md](../reference/database-schema.md)): `agents`, `jobs`,
+`runs`, `docs`, `env_vars`, and `tables` all carry a NOT NULL `project_id`
+referencing `projects` with `ON DELETE CASCADE`. Belonging to a project *is*
+the `project_id` column, not a linking row. The only junction tables are the
+job-linked ones (`job_docs`, `job_env_vars`, `job_tables`) — and those links
+may cross projects freely (see [shared context](shared-context.md)).
 
-- **Operational entities** — `agents` carry a NOT NULL `project_id`; an agent
-  belongs to one project, and deleting the project cascades it away. `jobs` and
-  `runs` carry a NOT NULL `org_id` plus a nullable `project_id`: agent jobs are
-  always project-level, but a **workflow** job may be org-level
-  (`project_id IS NULL`), and its runs inherit that. Scope is fixed at creation.
-- **Resources** — `docs`, `env_vars` (Secrets), `tables` — are **dual-tier**:
-  a NOT NULL `org_id` plus a nullable `project_id`. `project_id IS NULL` means
-  **org-level** (usable by every project in the org); otherwise **project-level**.
-  See [shared context](shared-context.md).
+## Filtering by project
 
-There are **no** `project_*` junction tables (v1 had them). Belonging to a
-project *is* the `project_id` column, not a linking row. The only junction tables
-left are the job-linked ones (`job_docs`, `job_env_vars`, `job_tables`).
-
-## Switching org & project
-
-The active org lives in the `harbour_org` cookie (set by the org switcher); the
-active project in `localStorage["harbour_active_project"]`. `AppShell` reads both
-and pipes them through React context; list pages pass `?orgId=` / `?projectId=`
-to their queries. Switching either invalidates all React Query keys so every list
-refetches in the new scope. A stale active id (project deleted from another tab)
-is cleared on mount.
+The active project lives in `localStorage["harbour_active_project"]` —
+`null` means **all projects**. `AppShell` reads it and pipes it through React
+context; list pages pass `?projectId=` to their queries, and omitting it
+returns the union across every project (list payloads carry a `project_name`
+so rows stay attributable). Switching invalidates all React Query keys so
+every list refetches in the new scope. A stale active id (project deleted from
+another tab) is cleared on mount.
 
 Creating something while a project is active scopes it there — "+ Agent" /
 "+ Job" sets the new row's `project_id`.
 
 ## Deletion
 
-Projects soft-delete (`archived_at`) on the normal path; a hard delete is the
-admin escape hatch. Either way the cascade follows the `project_id` FKs — the
-project's agents, jobs, and runs go with it. Org-level rows
-(`project_id IS NULL`) — resources and workflows — are untouched; project-level
-resources in that project cascade.
+Project delete is a **hard delete**: the row goes, and the cascade follows the
+`project_id` FKs — the project's agents, jobs, runs, docs, secrets, and tables
+all go with it. There is no archive state and no undo.
+
+One caveat worth knowing: deleting a project frees its slug, but runner
+machines keep the old workspace directories
+(`~/.harbour/workspaces/<project-slug>/<agent-slug>/`) — disk cleanup is
+manual. A later project created with the same name takes the same slug and
+will **reuse** those leftover directories, inheriting whatever filesystem
+state the old agents left behind. Clean up the old tree first if that matters.
 
 ## What projects don't do
 
-- **No cross-org references.** A resource in org A can never be used by org B.
-- **No nesting.** Flat list within an org.
-- **No multi-project entities.** An agent or job belongs to exactly one project
-  (the direct FK) — or, for workflows only, to the org tier. Sharing *within* an
-  org is done at the **org level** — an org-level doc / secret / table /
-  workflow is visible to every project in the org — not by referencing one
-  entity from many projects.
+- **No access control.** A project never hides anything from anyone — every
+  user (and every API key) reaches every project.
+- **No nesting.** One flat list.
+- **No multi-project entities.** An agent or job belongs to exactly one
+  project (the direct FK). Sharing across projects is done by **linking** —
+  a job may link docs, secrets, and tables from any project.
 
 ## Source-of-truth pointers
 
-- `src/lib/db/schema.ts` — `orgs`, `memberships`, `projects`, and the `org_id` /
-  `project_id` columns on entities and resources.
-- `src/lib/db/access.ts` — role resolution (`resolveAccess`, `meets`) and the
-  `orgIdFor*` hierarchy walkers.
-- `src/lib/auth.ts` — `withOrgAuth` / `withProjectAuth` / `withResourceAuth`.
-- `src/components/app/app-shell.tsx` — active org/project state.
+- `src/lib/db/schema.ts` — `projects` and the `project_id` columns on entities
+  and resources.
+- `src/lib/db/projects.ts` — project CRUD and the hard-delete cascade.
+- `src/lib/auth.ts` — `withAuthenticatedUser` and friends (no roles anywhere).
+- `src/components/app/app-shell.tsx` — active-project state.
 - `src/lib/hooks/use-project-filter.ts` — the scope hooks.
-- `src/components/app/project-switcher.tsx` — the org and project dropdowns.
+- `src/components/app/project-switcher.tsx` — the project dropdown.

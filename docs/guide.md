@@ -21,7 +21,7 @@ Key concepts:
 
 Jobs use the `schedule` field to define when they run. Harbour automatically computes `next_run_at` when a job is created, and advances it each time a run reaches a terminal status (`done`, `failed`, `skipped`, or `killed`). You don't need to manage `next_run_at` yourself.
 
-All schedule times use the org's timezone, set per-org in Settings (it falls back to the instance default, auto-detected from the server on first run).
+All schedule times use the instance timezone, set in Settings (it falls back to the server's own timezone when unset).
 
 **Choose the right schedule type for the job.** Most agent jobs should use short intervals (every few minutes), not weekly schedules. Use weekly/daily only for jobs that genuinely run on a calendar cadence (e.g. a weekly newsletter). For monitoring, triage, content posting, and most recurring work, use an interval.
 
@@ -100,10 +100,10 @@ You don't see that selection — you just receive the chosen run, already flippe
     "thinking": null,
     "title_format": null,
     "timeout_minutes": 30,
-    "scripts_dir": "acme/marketing/social-media-bot/morning-tweet-1a2b3c4d"
+    "scripts_dir": "marketing/social-media-bot/morning-tweet-1a2b3c4d"
   },
   "agent": { "cli": "claude", "model": null, "thinking": null, "eager": false },
-  "workspace": { "org": "acme", "project": "marketing", "agent": "social-media-bot" },
+  "workspace": { "project": "marketing", "agent": "social-media-bot" },
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
   ],
@@ -163,14 +163,14 @@ You don't see that selection — you just receive the chosen run, already flippe
 }
 ```
 
-Everything the agent needs is bundled in the context the runner passes through: the run, the `exec_token` you authenticate callbacks with, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), attached docs, attached tables (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Only resources **attached to the job** are included — docs, tables, and env vars are injected by job attachment, not by org/project membership. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and tables — no need to construct URLs yourself, and send the `exec_token` (echoed in `api.auth`) as the Bearer on each one.
+Everything the agent needs is bundled in the context the runner passes through: the run, the `exec_token` you authenticate callbacks with, job instructions (with optional per-job model/thinking overrides and any prerun/postrun gates — `prerun`, `postrun`, and `postrun_gates` are executed by the runner, not by you), the agent's own CLI config (`agent`, present on agent runs), the agent's workspace slugs (`workspace`, agent runs only — see below), injected docs, injected tables (keyed by name; each carries only its `id` — read rows with `read_rows` and write with `insert_rows`, both targeted by `id`; no rows or columns are inlined), env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. A run's docs, tables, and env vars come from two sources: resources **pinned** in the job's own project (injected automatically) and resources **explicitly linked to the job** (from any project) — a linked resource wins on a collision. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and tables — no need to construct URLs yourself, and send the `exec_token` (echoed in `api.auth`) as the Bearer on each one.
 
-The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds three slugs locating the agent in the hierarchy — org, project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<org>/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the org, project, or agent is renamed.
+The `workspace` field appears on agent runs only (workflow runs don't carry it) and holds two slugs locating the agent in the hierarchy — project, agent. Harbour runners derive the CLI's working directory from it as `workspaces/<project>/<agent>/` under the runner's Harbour home; external agents may ignore it or use it the same way. The slugs are identity segments, never absolute paths — they're assigned at creation and don't change when the project or agent is renamed.
 
 The `job.prerun`, `job.postrun`, `job.command`, `job.workflow`, and `job.scripts_dir` fields carry the job's gates for the runner that executes them. They are present on every run (agent and workflow):
 
 - Each gate is a `{ runtime, content }` object (or `null` when unset). `runtime` is one of `bash`, `python`, or `node`; `content` is the script body, stored verbatim. `prerun` and `postrun` are the agent-job gates; `command` and `workflow` are two aliases for the same workflow gate (both set on workflow runs, both `null` on agent runs).
-- `scripts_dir` is a **relative** path under the runner's `$HARBOUR_HOME/workflows` root. The runner `mkdir -p`s this per-job directory, materializes each present gate's `content` into it as `<role>.<ext>` (`prerun`/`postrun`/`workflow`; `bash`→`.sh`, `python`→`.py`, `node`→`.js`) with an executable mode, and runs it from there via the runtime's interpreter (`bash <file>` / `python3 <file>` / `node <file>`).
+- `scripts_dir` is a **relative** path under the runner's `$HARBOUR_HOME/workflows` root — `<project>/<agent>/<job-leaf>` for agent jobs, `<project>/<job-leaf>` for workflows. The runner `mkdir -p`s this per-job directory, materializes each present gate's `content` into it as `<role>.<ext>` (`prerun`/`postrun`/`workflow`; `bash`→`.sh`, `python`→`.py`, `node`→`.js`) with an executable mode, and runs it from there via the runtime's interpreter (`bash <file>` / `python3 <file>` / `node <file>`).
 
 These fields matter only to a runner that executes the gates; if you're a worker doing the actual LLM work (not running `prerun`/`postrun`/`command`), you can ignore them.
 
@@ -209,9 +209,9 @@ Statuses you set (these are the `status_options` in the `api` block):
 - `failed` — something broke (or timed out)
 - `waiting` — agent needs human input (surfaces on dashboard)
 
-Statuses you'll see but shouldn't set yourself (the API accepts them, but they're managed by Harbour or the runner):
+Statuses you'll see but shouldn't set yourself (they're managed by Harbour or the runner):
 - `running` — set when a runner claims the run
-- `pending` — set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run; queued for agent pickup
+- `pending` — set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run; queued for agent pickup. An exec token asking for `pending` is rejected with 403
 - `skipped` — a workflow or prerun gate determined there was nothing to do (exit code 77)
 - `killed` — set by the harbour-agent runner when a kill request was honored
 
@@ -285,7 +285,7 @@ Pending runs **always take priority** over scheduled jobs. Other jobs continue t
 
 ## Tables
 
-Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the run context carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. Pinned tables are pre-selected for new jobs when created from the dashboard (like pinned docs and secrets).
+Tables are real SQLite tables managed through the API. Each table is a named table with typed columns — agents create them, insert rows, and link them to jobs. A table injected into a run is a **read reference**: the run context carries only its `name` and `id`, never its rows or columns. Read its contents on demand with `read_rows` and write with `insert_rows`, both targeted by `id`. A table pinned in a job's project is injected into that job's runs automatically (like pinned docs and secrets).
 
 ### Create a Table
 
@@ -369,7 +369,7 @@ Content-Type: application/json
 { "tableId": "uuid" }
 ```
 
-Only tables **linked to the job** (via this endpoint) are included in the run context under `tables`, keyed by name — org/project membership alone does not inject a table. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/tables/:id` returns the table's column schema if you need it.
+A run's `tables` (keyed by name) are the tables **pinned in the job's project** plus those **linked to the job** via this endpoint — a table in the same project as the job is not injected unless it's pinned or linked. Each entry is `{ id }` only; no columns or rows are inlined. Use the `id` to read rows with `read_rows` and write with `insert_rows`; `GET /api/tables/:id` returns the table's column schema if you need it.
 
 ### Convenience Endpoint
 
@@ -389,7 +389,7 @@ Content-Type: application/json
 
 ## Docs
 
-Docs are org- or project-level resources linked to jobs. When a job fires, all its linked docs are included in the run context automatically. Pinned docs are pre-selected for new jobs when created from the dashboard. Agents can also create and update docs:
+Docs are project-level resources. When a job fires, the run context includes the docs pinned in the job's project plus the docs explicitly linked to the job. Agents can also create and update docs:
 
 ### Create a Doc
 

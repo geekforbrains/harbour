@@ -130,9 +130,9 @@ harbour.example.com {
 
 Nginx, Traefik, or a Cloudflare Tunnel all work just as well. If the dashboard is internet-facing, consider an extra gate in front of harbour's own login — Caddy's `basic_auth` directive, an IP allowlist, or a VPN/Tailscale-only bind. Standard host hygiene applies too: firewall down to `22/80/443` (ufw), fail2ban, unattended security upgrades, key-only SSH.
 
-### 5. Create the admin and log in
+### 5. Create the first user and log in
 
-There's no web signup — create the instance admin over SSH (one-time, interactive). Run it as the `harbour` user so the CLI writes to the same `HARBOUR_HOME` the service uses:
+There's no web signup — create the first user over SSH (one-time, interactive). Run it as the `harbour` user so the CLI writes to the same `HARBOUR_HOME` the service uses:
 
 ```bash
 su - harbour

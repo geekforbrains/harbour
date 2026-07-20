@@ -2,10 +2,11 @@
 
 One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 `foreign_keys = ON`, `busy_timeout = 5000`. **Source of truth:
-`src/lib/db/schema.ts`** (`initializeSchema`). v2 is a clean break — there is no
-v1 → v2 migration; a fresh database is the only supported path.
+`src/lib/db/schema.ts`** (`initializeSchema`). Harbour has no schema migrations —
+a drifted database fails startup verification (`verifySchema`) with a precise
+diff; a fresh database is the only supported path.
 
-- **24 tables**, **31 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **22 tables**, **26 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id`, which is an
   AUTOINCREMENT integer used as an SSE cursor.
@@ -13,80 +14,49 @@ v1 → v2 migration; a fresh database is the only supported path.
 Notation: **PK** / **FK**(cascade) / **NN** / **U** / **CHECK**. Defaults shown
 only when non-trivial.
 
-## Tenancy shape
+## Shape
 
-The defining v2 structure — **instance admin → orgs → projects** — is enforced
-in the schema, not bolted on:
+The hierarchy is flat: **instance → projects → agents & jobs → runs**, and
+every resource (docs / env_vars / tables) belongs to exactly one project:
 
-- **Operational entities** (`agents`, `jobs`, `runs`) carry a direct
-  `project_id` FK. There are **no** `project_*` junction tables (v1 had them).
-- **Resources** (`docs`, `env_vars`, `tables`) are **dual-tier**: a NOT NULL
-  `org_id` plus a NULLABLE `project_id`. `project_id IS NULL` ⇒ org-level (shared
-  across the org); otherwise project-level.
-- **Jobs are dual-tier too**, but only for workflows: `jobs` carries a NOT NULL
-  `org_id` plus a NULLABLE `project_id`; `project_id IS NULL` ⇒ an org-level
-  workflow job. Agent jobs are always
-  project-level (a table CHECK enforces it). Scope is fixed at creation —
-  `updateJob` cannot move a job between tiers — and an org-level job may link
-  only org-level resources (linking a project-scoped doc/env var/table into
-  an org-scoped job would widen its blast radius; the query layer rejects it
-  and routes return 400).
-- The `runners` registry is **instance-level** (org-agnostic — execution
-  doesn't see tenancy).
-- `runs.org_id` and `runs.project_id` are denormalized (copied from the job) so
-  org-scoped run queries need no join and org-level runs (`project_id` NULL)
-  stay reachable.
+- Every project-owned table (`agents`, `jobs`, `runs`, `docs`, `env_vars`,
+  `tables`) carries a **NOT NULL** `project_id` FK with `ON DELETE CASCADE` —
+  deleting a project is a **hard cascade delete** of everything beneath it
+  (there is no `archived_at` / soft delete). Runner workspace directories on
+  runner machines are **never auto-removed**; a deleted project leaves its
+  workspace dirs behind.
+- `runs.project_id` is denormalized (copied from the job) so project-scoped run
+  queries need no join.
+- The `runners` registry and the `settings` KV are **instance-level**.
+- There are no tenancy tables: no orgs, no memberships, no roles. `users` has
+  no admin flag — every authenticated user may do everything.
 
 ## Slugs
 
-`orgs`, `projects`, and `agents` each carry a `slug` (TEXT NN) — the
-filesystem-safe workspace path segment runners use to nest workspaces as
-`<org-slug>/<project-slug>/<agent-slug>`. Semantics (algorithm in
-`src/lib/slug.ts`, enforcement in the create paths of the query layer):
+`projects` and `agents` each carry a `slug` (TEXT NN) — the filesystem-safe
+workspace path segment runners use to nest workspaces as
+`<project-slug>/<agent-slug>`. Semantics (algorithm in `src/lib/slug.ts`,
+enforcement in the create paths of the query layer):
 
 - **Assigned at creation** from the name (lowercase; runs of non-`[a-z0-9]`
   collapse to a single `-`; trimmed). A name that slugifies to `""` is rejected.
 - **Immutable on rename** — workspace paths stay stable.
-- **Unique per scope**, enforced by unique indexes: org slugs instance-wide
-  (`idx_orgs_slug`), project slugs per org (`idx_projects_org_slug`), agent
-  slugs per project (`idx_agents_project_slug`). Archived rows keep their slug
-  and still block reuse, so a new same-name org/project can't inherit leftover
-  workspace directories on runner machines.
+- **Unique per scope**, enforced by unique indexes: project slugs
+  instance-wide (`idx_projects_slug`), agent slugs per project
+  (`idx_agents_project_slug`).
 
-## Identity & access
+## Identity
 
 ### `users`
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | uuid |
 | `email` | TEXT | NN, U | |
-| `password_hash` | TEXT | | argon2id; **NULLABLE** — admin-created until a set-password link is consumed |
+| `password_hash` | TEXT | | argon2id; **NULLABLE** — created without one until a set-password link is consumed |
 | `display_name` | TEXT | NN | |
-| `is_instance_admin` | INTEGER | NN, default 0 | owns the install; spans all orgs |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-### `orgs`
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | |
-| `name` | TEXT | NN | |
-| `slug` | TEXT | NN, U | creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
-| `settings` | TEXT | NN, default `'{}'` | JSON, org-scoped (e.g. `timezone`) |
-| `archived_at` | INTEGER | | soft-delete |
-| `created_at` / `updated_at` | INTEGER | NN | |
-
-Index: `idx_orgs_slug(slug)` (UNIQUE).
-
-### `memberships`
-Maps a user to an org with a role. Instance admins need **no** membership row.
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `user_id` | TEXT | PK, FK → `users` (CASCADE) | composite PK `(user_id, org_id)` |
-| `org_id` | TEXT | PK, FK → `orgs` (CASCADE) | |
-| `role` | TEXT | NN, CHECK in (`editor`, `viewer`) | |
-| `created_at` | INTEGER | NN | |
-
-Index: `idx_memberships_org(org_id)`.
+No role or admin columns — authentication is the whole story.
 
 ### `sessions`
 Cookie-backed user sessions. `id` is the `harbour_session` cookie value.
@@ -107,8 +77,9 @@ Single-use invite / reset links.
 
 Index: `idx_set_password_tokens_hash`.
 
-### `admin_api_keys`
-Bearer keys that resolve to the **creator's** user identity.
+### `api_keys`
+Bearer keys (`hbr_` + 64 hex chars) that resolve to the **creator's** user
+identity.
 `id`, `name`, `api_key_hash` (NN, U — sha256), `created_by_user_id` (NN, FK →
 users CASCADE), `last_used_at`, timestamps.
 
@@ -118,13 +89,12 @@ users CASCADE), `last_used_at`, timestamps.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
 | `name` | TEXT | NN | |
-| `slug` | TEXT | NN | unique per org; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
-| `archived_at` | INTEGER | | soft-delete (normal path); hard delete is the admin escape hatch |
+| `slug` | TEXT | NN | unique instance-wide; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_projects_org`, `idx_projects_org_slug(org_id, slug)` (UNIQUE).
+Index: `idx_projects_slug(slug)` (UNIQUE). DELETE is a hard cascade — every
+agent, job, run, doc, secret, and table under the project goes with it.
 
 ## Operational entities
 
@@ -150,9 +120,7 @@ config). Indexes: `idx_agents_project`,
 
 ### `runners`
 The **instance-level runner registry** — one row per runner (the auto-provisioned
-local pool plus any remote runners). Org-agnostic on purpose: execution is
-org-agnostic; tenancy only shapes what users see. Replaces the file-based agent
-runner config (`runners.json`) and the per-org `workflow_runners` table.
+local runner plus any remote runners).
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
@@ -161,7 +129,7 @@ runner config (`runners.json`) and the per-org `workflow_runners` table.
 | `tier` | TEXT | NN, CHECK in (`local`, `remote`) | local = trusted/unscoped; remote = scoped |
 | `labels` | TEXT | NN, default `'[]'` | JSON: placement labels this token is **authorized** to serve |
 | `capabilities` | TEXT | | JSON `{kinds,clis,labels}` — last-**advertised** host capabilities (health/display) |
-| `scope` | TEXT | | JSON `{orgId?,agentId?}` or NULL (unscoped — local tier) |
+| `scope` | TEXT | | JSON `{agentId?}` or NULL (unscoped — local tier) |
 | `last_polled_at` | INTEGER | | updated on every claim/peek; drives the health surface |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
@@ -172,8 +140,7 @@ Static configuration for recurring work (agent or workflow).
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | |
-| `project_id` | TEXT | FK → `projects` (CASCADE) | **NULL = org-level (workflow jobs only)** |
+| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
 | `kind` | TEXT | NN, default `agent`, CHECK in (`agent`, `workflow`) | |
 | `agent_id` | TEXT | FK → `agents` (CASCADE) | set for agent jobs, **NULL for workflow jobs** |
 | `name` / `description` / `instructions` | TEXT | | `instructions` is the agent prompt body |
@@ -193,10 +160,7 @@ Static configuration for recurring work (agent or workflow).
 | `last_run_at` / `next_run_at` | INTEGER | | schedule advance |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Table CHECK: `kind != 'agent' OR project_id IS NOT NULL` — agent jobs can never
-be org-level.
-
-Indexes: `idx_jobs_org`, `idx_jobs_project`, `idx_jobs_agent`,
+Indexes: `idx_jobs_project`, `idx_jobs_agent`,
 `idx_jobs_schedule(kind, agent_id, active, next_run_at)`.
 
 ### `runs`
@@ -204,8 +168,7 @@ A single execution of a job.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | TEXT | PK | |
-| `org_id` | TEXT | NN, FK → `orgs` (CASCADE) | denormalized from the job |
-| `project_id` | TEXT | FK → `projects` (CASCADE) | denormalized from the job; **NULL = org-level job's run** |
+| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | denormalized from the job |
 | `job_id` | TEXT | NN, FK → `jobs` (CASCADE) | |
 | `agent_id` | TEXT | FK → `agents` (SET NULL) | NULL for workflow runs |
 | `status` | TEXT | NN, default `running`, CHECK | `scheduled \| running \| waiting \| pending \| done \| failed \| skipped \| killed` |
@@ -221,7 +184,7 @@ A single execution of a job.
 | `session_id` / `session_cwd` | TEXT | | CLI session + cwd for resume |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Indexes: `idx_runs_org`, `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
+Indexes: `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
 `idx_runs_status`, `idx_runs_claimed_by`.
 
 ### `run_activity`
@@ -253,14 +216,14 @@ ffmpeg + whisper state for a video attachment. `attachment_id` is **UNIQUE**
 `duration_seconds` (REAL), `error`, `started_at`, `completed_at`. Indexes:
 `idx_attachment_processing_attachment`, `idx_attachment_processing_run`.
 
-## Resources (dual-tier)
+## Resources — project-owned
 
-Each carries `org_id` (NN) and a NULLABLE `project_id` (`NULL` = org-level).
+Each carries a NOT NULL `project_id` FK (CASCADE).
 
 ### `docs`
-`org_id`, `project_id`, `title`, `pinned` (default 0), `created_by_type`
-(CHECK `user`/`agent`), `created_by_id`, timestamps. Index:
-`idx_docs_org_project(org_id, project_id)`.
+`project_id`, `title`, `pinned` (default 0), `created_by_type`
+(CHECK `user`/`agent`), `created_by_id`, timestamps. Titles are unrestricted —
+no uniqueness constraint. Index: `idx_docs_project`.
 
 ### `doc_revisions`
 Append-only history; newest row's `content` is the live body.
@@ -269,18 +232,19 @@ Append-only history; newest row's `content` is the live body.
 
 ### `env_vars`
 Encrypted secrets (labeled "Secrets" in the UI).
-`org_id`, `project_id`, `name`, `encrypted_value` (NN — AES-256-GCM as
+`project_id`, `name`, `encrypted_value` (NN — AES-256-GCM as
 `hex(iv):hex(tag):hex(ciphertext)`, 12-byte IV, 16-byte tag), `pinned`,
-timestamps. **Name uniqueness is enforced in the query layer**, not by a DB
-constraint, so a project-level name can override an org-level one. Index:
-`idx_env_vars_org_project`.
+timestamps. **Name uniqueness per project is enforced in the query layer**, not
+by a DB constraint (error copy: `already exists in this project`). Index:
+`idx_env_vars_project`.
 
 ### `tables`
 Registry of agent-managed SQLite tables (the data tables are siblings in the
-same file). `org_id`, `project_id`, `name`, `table_name` (NN, **U** — globally
-unique physical identifier), `pinned` (INTEGER NN, default 0 — pinned tables
-are pre-selected for new jobs in the dashboard, parity with `docs`/`env_vars`). Index:
-`idx_tables_org_project`.
+same file). `project_id`, `name`, `table_name` (NN, **U** — the physical table
+identifier, made globally unique by an id suffix), `pinned` (INTEGER NN,
+default 0 — pinned tables are pre-selected for new jobs in the dashboard,
+parity with `docs`/`env_vars`). Lookup by logical name is per project
+(`getTableByName(projectId, name)`). Index: `idx_tables_project`.
 
 ### `table_migrations`
 Per-table DDL history. `table_id`, `version` (NN), `description`, `sql`
@@ -288,9 +252,9 @@ Per-table DDL history. `table_id`, `version` (NN), `description`, `sql`
 
 ## Job-linked junctions
 
-The **only** junction tables in v2. Composite PKs, `ON DELETE CASCADE` both
-sides. These attach a resource to a specific job (tier 3, on top of the org- and
-project-level tiers).
+The **only** junction tables. Composite PKs, `ON DELETE CASCADE` both sides.
+These attach a resource to a specific job — from **any** project (links are
+unrestricted; inserts are `INSERT OR IGNORE`, so re-linking is a no-op).
 
 | Table | A | B |
 |---|---|---|
@@ -298,17 +262,22 @@ project-level tiers).
 | `job_env_vars` | `job_id` → `jobs` | `env_var_id` → `env_vars` |
 | `job_tables` | `job_id` → `jobs` | `table_id` → `tables` |
 
+Run-bundle composition: pinned resources of the job's **own** project come
+first, then the linked resources (any project) in link-table rowid order —
+on a name collision (env vars / tables are keyed by name in the payload) the
+later assignment wins.
+
 ## Settings
 
 ### `settings`
-`key` (PK), `value` (NN). **True instance-global KV only** — e.g.
-video-processing settings. Org-scoped config (like `timezone`) lives in
-`orgs.settings` JSON, not here. There is **no** `signup_enabled` key (no web
-signup).
+`key` (PK), `value` (NN). **Instance-global KV** — holds the instance
+`timezone` (read only through `getTimezone()` in `src/lib/db/settings.ts`,
+falling back to the host timezone), recent-feed limits, and video-processing
+settings. There is **no** `signup_enabled` key (no web signup).
 
 ## Notable invariants
 
-- **Polling-ladder atomicity.** `claimNextRun` / `peekClaim`
+- **Claim atomicity.** `claimNextRun` / `peekClaim`
   (`src/lib/db/runs.ts`, behind `POST /api/runner/claim`) run the whole
   select-and-claim in one **IMMEDIATE** transaction, so concurrent claims
   serialize on the single SQLite writer. The guarded claim UPDATEs
@@ -316,23 +285,16 @@ signup).
   for agent runs, `job_id` for workflow runs, nothing in flight
   (`running`/`pending`; `waiting` is idle) — make a lost race a no-op, never a
   double-claim.
-- **Dual-tier resolution.** For `docs`/`env_vars`/`tables`, `project_id IS
-  NULL` means org-level; the query layer resolves project-over-org on name
-  collisions.
 - **Workflows.** `jobs.kind = 'workflow'` ⇒ `agent_id` is NULL on both the job
   and its runs; claimed via `POST /api/runner/claim` like any other run (a
   runner advertising the `workflow` kind), no separate poll endpoint.
-  Workflow jobs may be org-level (`project_id` NULL — scope fixed at creation,
-  org-level resources only); agent jobs never are (table CHECK).
 - **Env-var encryption.** Plaintext never lands in the DB; the key is read from
   `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
-- **`run_activity.author_type`** allows `workflow`; `ensureRunActivityAuthorTypes`
-  rebuilds the table once for DBs created before that value was permitted.
 
 ## Schema initialization
 
 A single `initializeSchema(db)` call from `getDb()` on first use runs the
-`CREATE TABLE IF NOT EXISTS` block (the target shape), the one-time
-`run_activity` author-type rebuild, and an encryption-key backfill. There is no
-migrations folder; the schema file **is** the schema — change the target shape
-directly and start from a fresh DB.
+`CREATE TABLE IF NOT EXISTS` block (the target shape) and an encryption-key
+backfill, then `verifySchema` diffs the live DB against the expected shape and
+refuses to boot on drift. There is no migrations folder; the schema file **is**
+the schema — change the target shape directly and start from a fresh DB.

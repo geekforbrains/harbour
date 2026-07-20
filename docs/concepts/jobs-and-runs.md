@@ -15,8 +15,8 @@ Jobs don't *do* anything on their own. They sit in the database and wait. When t
 
 Jobs come in two flavors:
 
-- **Agent jobs** — `agent_id` is set. Always project-level. An LLM CLI runs them.
-- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. Project-level or org-level (`project_id IS NULL`). See [Workflows](workflows.md).
+- **Agent jobs** — `agent_id` is set. An LLM CLI runs them.
+- **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. See [Workflows](workflows.md).
 
 Both kinds are picked up the same way: a runner claims due work via `POST /api/runner/claim` (the [Runner Protocol](../runner-guide.md)). The runner branches on `run.kind` — drive a CLI for agent runs, run the gate script for workflows.
 
@@ -55,13 +55,13 @@ Intervals are timezone-agnostic: every 5 minutes is every 5 minutes wall-clock. 
 
 ## Triggered runs
 
-Most runs come from a recurring job firing on schedule. For an ad-hoc run, **trigger an existing job**: `POST /api/jobs/:id/trigger` with optional `{"instructions": "..."}`. It inserts a fresh `scheduled` run with `extra_instructions` saved on the run; the runner appends those to `job.instructions` and adds an "Additional instructions: ..." system activity entry. The recurring schedule keeps ticking — a triggered run is one extra firing on top of the regular cadence.
+Most runs come from a recurring job firing on schedule. For an ad-hoc run, **trigger an existing job**: `POST /api/jobs/:id/trigger` with optional `{"instructions": "..."}`. It inserts a fresh `scheduled` run with `extra_instructions` saved on the run and adds an "Additional instructions: ..." system activity entry; at payload-build time the server appends them to `job.instructions` (`buildRunPayload`), so the runner sees the merged instructions. The recurring schedule keeps ticking — a triggered run is one extra firing on top of the regular cadence.
 
 (v2 removed standalone "New Run" one-off creation; ad-hoc work is always a trigger on a job, so every run traces back to a job.)
 
 ## The unified claim
 
-`claimNextRun(runner, capabilities)` is the single source of truth for work assignment — one org-agnostic path for both kinds, behind `POST /api/runner/claim`. It runs `reapStaleRuns` first, then a four-step ladder inside one **IMMEDIATE** transaction (so concurrent claims serialize on SQLite's single writer):
+`claimNextRun(runner, capabilities)` is the single source of truth for work assignment — one path for both kinds, behind `POST /api/runner/claim`. It runs `reapStaleRuns` first, then a four-step ladder inside one **IMMEDIATE** transaction (so concurrent claims serialize on SQLite's single writer):
 
 ```
 0. Fail any running run past its job's timeout (reapStaleRuns)
@@ -72,7 +72,7 @@ Most runs come from a recurring job firing on schedule. For an ad-hoc run, **tri
    (none claimable → { run: null })
 ```
 
-A run is claimable only when its **placement** matches one of the runner's advertised labels, its **kind** (and, for agent runs, the agent's **CLI**) is one the runner advertised, and its **lock unit** has nothing in flight — `agent_id` for agent runs, `job_id` for workflow runs, where in-flight = `running | pending`. A `waiting` run (paused for human input) is idle and does *not* hold the lock, so the agent's other work isn't stranded behind an open-ended human pause (#50). Distinct lock units run in parallel, unbounded by org; the *same* agent or workflow job never doubles up on active execution. Order matters within the ladder: pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run.
+A run is claimable only when its **placement** matches one of the runner's advertised labels, its **kind** (and, for agent runs, the agent's **CLI**) is one the runner advertised, and its **lock unit** has nothing in flight — `agent_id` for agent runs, `job_id` for workflow runs, where in-flight = `running | pending`. A `waiting` run (paused for human input) is idle and does *not* hold the lock, so the agent's other work isn't stranded behind an open-ended human pause (#50). Distinct lock units run in parallel; the *same* agent or workflow job never doubles up on active execution. Order matters within the ladder: pending always wins so a human reply doesn't get stuck behind tomorrow's recurring run.
 
 Step 0 is important: if a previous `running` run is wedged past its job's `timeout_minutes`, the lock-unit check would otherwise gate that unit forever. `reapStaleRuns` checks `claimed_at + (timeout_minutes * 60) < now()` — a hard wallclock ceiling measured from when the current running attempt was claimed, deliberately **not** keyed on `updated_at` (streaming output refreshes `updated_at`, which would turn the check into a sliding inactivity window that never fires for a chatty-but-stuck run). Matches are force-failed with a system activity entry: "Run timed out after N minutes without completion."
 
@@ -84,7 +84,7 @@ Step 0 is important: if a previous `running` run is wedged past its job's `timeo
 scheduled ──► running ──► done
                        ──► failed
                        ──► skipped     (workflow exit 77)
-                       ──► killed      (harbour-agent only)
+                       ──► killed      (user-requested kill)
                        ──► waiting ──► pending ──► running ──► …
 ```
 
@@ -103,7 +103,7 @@ CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skip
 | `done` | Completed successfully. Resumable via comment. |
 | `failed` | Agent or workflow returned non-zero, or the run timed out. Resumable via comment or retry. |
 | `skipped` | Workflow returned exit 77 — "nothing to do." Retryable, but not comment-resumable. |
-| `killed` | A user clicked Kill on a harbour-agent run. Resumable via comment. |
+| `killed` | A user clicked Kill on a running run. Resumable via comment. |
 
 When a run reaches any terminal status — `done`, `failed`, `skipped`, or `killed` — `updateRunStatus` advances the job's `next_run_at`. A kill ends this run, so the next scheduled occurrence should still fire; the user can also resume the killed run via a comment (the resume acts on the same run, and the in-flight lock keeps it from overlapping the next occurrence). Transitions are validated against a `LEGAL_RUN_TRANSITIONS` map at the single `updateRunStatus` chokepoint; an illegal edge returns **409**.
 
@@ -113,7 +113,7 @@ A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pe
 
 ### Timeouts
 
-`jobs.timeout_minutes` defaults to 30. The runner enforces it as the CLI subprocess timeout. Harbour itself enforces it via `reapStaleRuns`: if `claimed_at + timeout_minutes*60 < now`, the run is marked `failed` on the next poll. This is a hard wallclock ceiling per running attempt — `claimed_at` is stamped on every entry into `running` (the initial claim, and again on each `pending → running` resume), so a resumed run gets a fresh clock, but nothing resets it while the run stays `running`. It is deliberately not a sliding inactivity window keyed on `updated_at`: a run that keeps streaming output can still be wedged (looping, stuck repeating itself), and resetting the clock on activity would let it hold its agent forever. The ceiling guarantees a run can never stay `running` past `timeout_minutes`, so the agent is never gated indefinitely.
+`jobs.timeout_minutes` defaults to 30. The runner does **not** enforce it on the agent CLI — the only runner-side limit there is an inactivity window (SIGTERM after 3 minutes with no output, tunable via `HARBOUR_CLI_INACTIVITY_MS`), so a productive long run is never killed at a wallclock cap as long as it keeps streaming. The runner does apply `timeout_minutes` as the subprocess timeout for workflow gate scripts. Harbour itself enforces it server-side via `reapStaleRuns`: if `claimed_at + timeout_minutes*60 < now`, the run is marked `failed` on the next poll. This is a hard wallclock ceiling per running attempt — `claimed_at` is stamped on every entry into `running` (the initial claim, and again on each `pending → running` resume), so a resumed run gets a fresh clock, but nothing resets it while the run stays `running`. It is deliberately not a sliding inactivity window keyed on `updated_at`: a run that keeps streaming output can still be wedged (looping, stuck repeating itself), and resetting the clock on activity would let it hold its agent forever. The ceiling guarantees a run can never stay `running` past `timeout_minutes`, so the agent is never gated indefinitely.
 
 ### Retry
 
@@ -121,22 +121,24 @@ A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pe
 POST /api/runs/:id/retry
 ```
 
-Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pending` and the agent's next poll picks it up at step 2 of the ladder above; a workflow run is requeued as `scheduled` (with `scheduled_for = now`) so a workflow runner claims a fresh attempt. Both add a system activity entry. Retry doesn't reset the activity log — the agent sees the prior attempts in the run payload's `run.activity` and can act on them.
+Allowed for `failed`, `skipped`, and `killed` runs. An agent run flips to `pending` and the agent's next poll picks it up at step 1 of the ladder above; a workflow run is requeued as `scheduled` (with `scheduled_for = now`) and claimed at step 2 as a fresh attempt. Both add a system activity entry. Retry doesn't reset the activity log — the agent sees the prior attempts in the run payload's `run.activity` and can act on them.
 
-### Kill (harbour agents only)
+### Kill
 
 ```
 POST /api/runs/:id/kill
 ```
 
-Allowed on a `running` run. Sets `runs.kill_requested_at`; a Harbour runner polling the run picks up the flag and stops the CLI. The runner notices via two channels:
+Allowed on any `running` run — agent or workflow. Sets `runs.kill_requested_at`; the bundled runner picks up the flag and stops the work (the agent CLI, or a workflow's gate script). For agent runs it notices via two channels:
 
 1. **Piggyback** — every `POST /api/runs/:id/output` flush returns `{kill_requested: bool}`. While the CLI streams, this is hot-path latency (~750ms).
 2. **Fallback poll** — `GET /api/runs/:id/kill` every 10s. Catches stretches where the CLI is silent (long thinking, model-side stalls).
 
 Either fires an `AbortController` that SIGTERMs the CLI, waits 3s, then SIGKILLs. The runner saves the CLI session ID, posts a "Run killed by user. Comment on this run to resume…" activity message, and sets status `killed`. A user comment flips it back through `pending → running` and resumes the CLI session.
 
-An external agent doesn't poll the kill signal, so there's no process for Harbour to stop.
+For workflow runs the runner polls the kill flag mid-gate the same way and marks the run `killed`; a killed workflow run is re-run via retry (there's no CLI session to resume).
+
+A runner that never polls the kill signal (e.g. an external agent implementation) is unaffected — there's no process for Harbour to stop, and the flag just sits on the run.
 
 ## What the agent gets
 

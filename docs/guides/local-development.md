@@ -23,7 +23,7 @@ npm run dev -- -p 3010
 ```
 
 `npm run dev` is `next dev` (fast refresh, no build step). It still needs a
-first-run admin to log in — see [getting started](getting-started.md).
+first-run user to log in — see [getting started](getting-started.md).
 
 ## The change loop
 

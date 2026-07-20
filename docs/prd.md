@@ -4,7 +4,7 @@
 > users, the principles it holds to, and the requirements it must meet. It does
 > **not** describe *how* the system is built — that lives in
 > [docs/reference](reference/) (architecture, schema, API) and the live wire
-> contracts [guide.md](guide.md) / [admin-guide.md](admin-guide.md). When
+> contracts [guide.md](guide.md) / [management-guide.md](management-guide.md). When
 > intent is unclear, resolve it here. When this document and the code disagree
 > about *behavior*, the code wins and this document should be corrected.
 
@@ -27,13 +27,12 @@ second full-time job.
 
 ## 3. Who it's for
 
-- **Instance operator / admin** — owns the install; creates orgs, projects, and
-  users; runs it on their own hardware.
-- **Org members** — people scoped to an org, operating the agents, jobs, and runs
-  within their projects.
+- **Operators** — the people running the install: they create projects and
+  users, operate the agents, jobs, and runs, and host it on their own hardware.
+  Every user can do everything; there are no roles.
 - **Agents** — external integrations or Harbour-managed CLI tools that poll for
   and execute work.
-- **Management / integrator agents** — admin-key holders that operate Harbour
+- **Management / integrator agents** — API-key holders that operate Harbour
   itself over the API.
 
 ## 4. Principles & constraints
@@ -47,8 +46,9 @@ The non-negotiables. A feature that violates one needs an explicit exception.
   SQLite transaction.
 - **Local-first state.** Everything lives under `~/.harbour` (DB, uploads,
   encryption key, runner config). Back up one directory and you have everything.
-- **Multi-tenant by construction.** Instance admin → **orgs** → **projects**.
-  Resources never cross org lines.
+- **One instance, one team.** A flat hierarchy: instance → **projects** →
+  agents & jobs → runs. Projects organize work — they are not a tenancy or
+  permission boundary. Every authenticated user sees and can do everything.
 - **Least privilege.** An agent can reach only its own run and the secrets and
   connection vars Harbour hands it — nothing more of the host or the database.
 - **Public-app-grade security.** Harbour is multi-user; it must be safe to expose
@@ -89,12 +89,12 @@ detail, see [docs/reference](reference/).
 **Shared context**
 - Docs (versioned markdown), tables (agent-managed SQLite tables), and secrets
   (encrypted env vars), linkable to jobs and composed into each run's payload.
-- Dual-tier (org-level + project-level) plus job-linked; pinning pre-selects an
-  item as a default on new jobs.
+- Every resource lives in a project; job links may cross projects; pinning
+  pre-selects an item as a default on new jobs in its project.
 
-**Orgs & projects**
-- The org → project hierarchy is the tenancy boundary; projects group and filter
-  the work within an org.
+**Projects**
+- Projects group and filter the work — an organizational grouping, not a
+  tenancy or permission boundary.
 
 **Operator surface**
 - Per-run attachments (files + embeds) with optional video transcription and
@@ -102,8 +102,9 @@ detail, see [docs/reference](reference/).
 - Dashboard for runs, jobs, agents, docs, tables, secrets, users, and settings.
 
 **APIs**
-- A worker wire contract ([guide.md](guide.md)) and an admin wire contract
-  ([admin-guide.md](admin-guide.md)), served live so agents can read them.
+- A worker wire contract ([guide.md](guide.md)) and a management wire contract
+  ([management-guide.md](management-guide.md)), served live so agents can read
+  them.
 
 ## 6. Non-functional requirements
 
@@ -115,14 +116,14 @@ stable labels for each item):
 
 | Area | Requirement | Status |
 |---|---|---|
-| Authorization | Org → project roles; agents act only on their own resources; runners share one credential type | Done (v2) |
-| Onboarding | Shell-based first-run admin (no web signup); argon2id password hashing; token set-password links | Done (v2) |
+| Authorization | Flat trust: every authenticated user can do everything (no roles); agents act only on their own run; runners share one credential type | Done |
+| Onboarding | Shell-based first-run user (no web signup); argon2id password hashing; token set-password links | Done (v2) |
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
 | Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
 | Secrets at rest | Env-var secrets are AES-256-GCM; sensitive settings (e.g. video API keys) encrypted the same way | Partial — settings encryption planned (M3) |
 | Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Planned (H4) |
 | DB column types | Runtime-allowlist `TEXT/INTEGER/REAL` — no SQL injection via a column type | Planned (C3) |
-| Settings writes | Allowlist writable keys (already instance-admin-only) | Planned (H1) |
+| Settings writes | Allowlist writable keys | Planned (H1) |
 | Row APIs | Clamp read limits, bound rows per insert, reject oversized bodies | Planned (M5) |
 | Uploads | Per-file cap, and reject when free disk is under 10% | Planned (H6) |
 | File paths | Verify served/deleted attachment paths stay under the uploads directory | Planned (M4) |
@@ -131,7 +132,7 @@ stable labels for each item):
 
 ### Reliability & operability
 - Single-binary deployment; one directory (`~/.harbour`) is the entire backup.
-- Run-claim is atomic; two runners polling one org cannot double-claim a run.
+- Run-claim is atomic; two runners polling at once cannot double-claim a run.
 
 ### Portability
 - macOS / launchd and Linux / systemd. No shipped container or IaC setup — containerizing is left to the operator.
@@ -141,10 +142,10 @@ stable labels for each item):
 - **No 2FA** — no supported mechanism; not planned.
 - **No intra-agent concurrency** — an agent executes one run at a time (`running`/`pending` serialize per agent). A run paused in `waiting` for human review is idle and doesn't hold the agent's lock, so the agent's other work isn't stranded behind an open-ended pause (#50).
 - **No external datastore** — a single SQLite file; no Redis, queue, or worker pool.
-- **No web signup** — the first admin is created from the shell; further users
+- **No web signup** — the first user is created from the shell; further users
   are invited.
-- **No v1 → v2 migration** — v2 is a clean break; a fresh database is the only
-  supported path.
+- **No schema migrations** — across breaking schema changes, a fresh database
+  is the only supported path.
 
 ## 8. Roadmap
 
@@ -161,4 +162,4 @@ password policy shipped in v2 — see §6.)
 This PRD is the top of the pyramid. For the **map of every doc and its role**,
 see [docs/README.md](README.md). In short: this PRD owns *why / what*;
 [docs/reference](reference/) owns *how*; [guide.md](guide.md) and
-[admin-guide.md](admin-guide.md) are the on-the-wire source of truth.
+[management-guide.md](management-guide.md) are the on-the-wire source of truth.

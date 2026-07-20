@@ -45,9 +45,9 @@ Current sanctioned exceptions (don't add more without recording them here):
 - `noExplicitAny` is off in `src/lib/db/**` only — SQLite rows are untyped at
   the driver boundary. Everywhere else, type it properly or use `unknown` and
   narrow.
-- `noNonNullAssertion` is off globally — auth wrappers guarantee
-  `?orgId=`/`?projectId=` presence, so `param!` after a wrapper is the
-  codebase idiom.
+- `noNonNullAssertion` is off globally — re-reading a row the same function
+  just wrote (`return getTableById(id)!` after an INSERT) is the codebase
+  idiom; the row provably exists.
 - `src/app/globals.css` is excluded — Biome's CSS parser doesn't understand
   Tailwind v4 directives.
 
@@ -87,11 +87,10 @@ The full route conventions are in [api.md](api.md) and
   libraries): check required fields, return
   `NextResponse.json({ error: "..." }, { status: 400 })`.
 - All responses via `NextResponse.json`; errors are always
-  `{ error: string }` with a correct status code (400/403/409/429). A cross-org
-  lookup of a route's **primary** (path-param) resource returns 403, not 404; but a
-  **body-supplied** resource id from another org (e.g. a doc/env-var/table link
-  target) returns 404 — uniform with a missing id, so it leaks no cross-tenant
-  existence.
+  `{ error: string }` with a correct status code (400/403/404/409/429). A
+  missing `[id]` resource is a **404**; creates that need a project return
+  `400 {"error":"projectId is required"}` when it's absent and
+  `404 {"error":"Project not found"}` when it's unknown.
 
 ## Database
 

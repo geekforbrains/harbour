@@ -3,7 +3,7 @@
 A 30-minute orientation for someone digging in. Pointer-rich, not exhaustive —
 for the exact schema see [database-schema.md](database-schema.md), for the route
 map see [api.md](api.md), for on-the-wire payloads see
-[guide.md](../guide.md) / [admin-guide.md](../admin-guide.md).
+[guide.md](../guide.md) / [management-guide.md](../management-guide.md).
 
 ## Overview
 
@@ -13,10 +13,10 @@ a **runner** polls one HTTP endpoint (`POST /api/runner/claim`) to claim it. Sta
 changes happen inside SQLite transactions, so the claim path is atomic without
 external coordination.
 
-It is **multi-tenant**: an instance admin owns the install, work is organized
-into **orgs → projects**, and every agent, job, doc, secret, and table lives
-inside a project. Resources never cross org lines. Harbour never calls out to
-agents — everything is pull.
+The hierarchy is **flat**: instance → **projects** → agents & jobs → runs, and
+every agent, job, doc, secret, and table lives inside exactly one project.
+There are no orgs, no memberships, no roles — every authenticated user may do
+everything. Harbour never calls out to agents — everything is pull.
 
 Everything an installation needs lives under one directory (`~/.harbour/` by
 default):
@@ -76,36 +76,40 @@ identities are:
 
 Agents have **no credential of their own**: a runner claims their runs and the
 spawned CLI authenticates *as the run* via its exec token (above), so the
-docs/tables/data routes accept that exec token, not an agent key. An **admin API
-key** (`hbr_…`) resolves to the *creating user's* identity — it acts as that
-user, and is the only `hbr_` Bearer the server still accepts.
+docs/tables/data routes accept that exec token, not an agent key. An **API key**
+(`hbr_…`) resolves to the *creating user's* identity — it acts as that user, and
+is the only `hbr_` Bearer the server accepts.
 
-**Authorization** is layered on top by role. Roles (`src/lib/db/access.ts`):
-`viewer < editor < instance_admin`. `resolveAccess(userId, orgId)` returns
-`instance_admin` for any org if `users.is_instance_admin`, else the
-`memberships` role for that org, else `null`. `meets(role, min)` does the rank
-check.
+**Authentication is the whole story** — there are no roles and no tenancy, so
+any user identity is authorized for every user-facing route. Every route is
+wrapped in exactly **one** of four HOFs from `auth.ts` (no inline checks):
 
-Every route is wrapped in exactly one HOF from `auth.ts` (no inline checks):
+| Wrapper | Who passes |
+|---|---|
+| `withAuthenticatedUser` | any signed-in user (session or API key) — the standard wrapper for every dashboard/API route |
+| `withRunnerAuth` | runner token only — the claim endpoint (`/api/runner/claim`); the handler receives the runner's tier/labels/scope |
+| `withRunExecutorOrUser` | the run's **exec token** (must match the route's `id` param) **or** any user — the run-lifecycle routes (status/activity/output/kill/title/session/attachments) |
+| `withAgentOrUser` | any user, **or** an agent-run **executor** token acting as the run's agent — the resource routes both dashboards and agents call (docs create/update, tables + rows + columns, trigger) |
 
-| Wrapper | Who passes | Scope source |
-|---|---|---|
-| `withInstanceAdmin` | instance admin only | — (spans all orgs) |
-| `withOrgAuth(h, {role})` | user meeting `role` in the org | `?orgId=` or `harbour_org` cookie |
-| `withProjectAuth(h, {role})` | user meeting `role` in the project's org | `?projectId=` → owning org |
-| `withResourceAuth(kind, idParam, {role})` | user meeting `role` in the resource's org | `orgIdForResource(kind, id)` |
-| `withAuthenticatedUser` | any signed-in user (no org scope) | system info routes |
-| `withRunnerAuth` | runner token only | the claim endpoint (`/api/runner/claim`) |
-| `withRunExecutorOrUser(h, {role})` | the run's **exec token** (bound to that run id) **or** a user meeting `role` in the run's org | run's org |
-| `withAgentOrUser(h, {role, orgFromParams?})` | user **or** agent — where "agent" is an agent-run **executor** token acting as the run's agent (agents have no key of their own; see above) | per-identity |
+Two token-confinement invariants hold everywhere:
 
-`withAgentOrUser` narrows an agent (or agent-run executor) to its own org inline:
-for `[id]` routes it resolves the target org via `orgFromParams` and rejects
-anything outside the agent's org. Cross-org or missing resources resolve to
-**403**, not 404, so existence doesn't leak across tenants.
+1. **An exec token is bound to exactly one run.** `withRunExecutorOrUser`
+   rejects an executor whose `runId` differs from the route's `id` param, so a
+   leaked token grants no cross-run access.
+2. **An executor acts as its agent only while the run is executing.**
+   `withAgentOrUser` requires an agent-run executor (a workflow run's executor
+   has no agent identity and is rejected) and rejects exec tokens of
+   terminal runs (`done`/`failed`/`skipped`/`killed`) — a lingering token can't
+   keep writing the agent's docs/tables after the work turn.
 
-First-run setup is a shell flow (`harbour setup`); there is **no web signup**.
+`[id]` routes return **404** for a missing resource — there is no
+existence-hiding 403 (nothing to hide with no tenants).
+
+First-run setup is a shell flow (`harbour setup` — creates the first user and
+provisions the local runner; `harbour user create` is the non-interactive form,
+reading `HARBOUR_USER_PASSWORD` if set); there is **no web signup**.
 The public routes are `POST /api/auth/{login,logout,set-password}`,
+`GET /api/auth/me` (identity echo; 401 when unauthenticated),
 `GET /api/guide`, and `GET /api/runner-guide`.
 
 ## The unified claim
@@ -131,7 +135,7 @@ The server is the sole arbiter. A run is claimable when:
   means status `running` or `pending`. A `waiting` run (paused for human review)
   is *not* in flight — it has no timeout, so letting it hold the lock would strand
   the agent's other work indefinitely (#50). Distinct lock units run in
-  parallel (unbounded by org, capped only by the runner's pool size).
+  parallel, capped only by the runner's pool size.
 
 Atomicity: the dueness check, placement/capability/lock-unit filters, recurring
 materialization, and the guarded status flip (`UPDATE … SET status = 'running' …
@@ -164,7 +168,7 @@ scheduled --> running ----------+
   occurrence still fires; the user can also resume the killed run via a comment
   (the in-flight lock keeps the resumed run and the next occurrence from overlapping).
 
-Unlike v1, transitions are **mechanically enforced**: `updateRunStatus` (the
+Transitions are **mechanically enforced**: `updateRunStatus` (the
 single chokepoint) validates against a `LEGAL_RUN_TRANSITIONS` map and throws
 `IllegalRunStatusTransition`; `PUT /api/runs/:id/status` returns **409** for an
 illegal edge (vs 400 for a bad enum value). `createRun`/`requeueWorkflowRun` are
@@ -173,7 +177,7 @@ documented direct-write bypasses.
 The lifecycle endpoints the runner drives during a run
 (`title`/`status`/`activity`/`output`/`kill`/`session`/`attachments`) authenticate
 with that run's **exec token** (`withRunExecutorOrUser` — the token is bound to a
-single run id, or a user meeting the route's role in the run's org also passes).
+single run id; any authenticated user also passes).
 
 ### The kill flow
 
@@ -187,8 +191,8 @@ SIGTERM, waits a grace period, then SIGKILL, and saves the CLI session id to
 ## Runner architecture
 
 The runner is a **separate Node CLI**, not the Next.js process. There is **one**
-runner and **one** command, `harbour run` — it replaces the two former runners
-(`agent run` + `workflow run`). A single service runs it on a tick: launchd
+runner and **one** command, `harbour run` — it drives both agent jobs and
+workflows. A single service runs it on a tick: launchd
 (macOS) invokes it every 60s (`com.harbour.runner`, `StartInterval=60`); the
 systemd variant loops with `sleep 60`. Each invocation drains all currently-due
 work and exits.
@@ -216,13 +220,13 @@ one; only which token `loadRunnerCredentials` returns differs.
 
 | File | Role |
 |---|---|
-| `bin/harbour.mjs` | CLI dispatcher (`run`, `connect`, `install`, `uninstall`, `status`, plus `start`/`dev`/`setup`/`admin`) |
+| `bin/harbour.mjs` | CLI dispatcher (`run`, `connect`, `install`, `uninstall`, `status`, plus `start`/`dev`/`setup`/`user`) |
 | `bin/lib/runner.mjs` | `runPool` (drain loop) → `claimOne` (claim) + `dispatch` (kind branch); the `processNextRun` / `processNextWorkflow` executors; prompt assembly, kill plumbing, session save |
 | `bin/lib/providers.mjs` | `detectCapabilities` (host `kinds`/`clis`/`labels`) and the per-CLI provider: command building, JSONL parsing, SIGTERM/SIGKILL grace |
 | `bin/lib/install.mjs` | launchd plist install/uninstall for the single `com.harbour.runner` service |
 | `bin/lib/connect.mjs` | `connectRunner` — decode `harbour connect <blob>`, peek-verify, write the token + url |
 | `bin/lib/config.mjs` | read/write `runner.token` (+ `runner.url`) and `sessions.json`; `printRunnerStatus` |
-| `bin/lib/bootstrap.mjs` | `harbour setup` / `harbour admin create` (argon2id, direct DB) |
+| `bin/lib/bootstrap.mjs` | `harbour setup` / `harbour user create` (argon2id, direct DB) |
 
 **Remote enrollment.** `harbour connect <blob>` enrolls a runner on another host
 from a minted credential blob (`{url, token, name}`): it peek-verifies via
@@ -239,9 +243,9 @@ runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`;
 to the server every ~750ms and replayed to the dashboard via SSE.
 
 **Sessions & workspaces.** Each agent runs its CLI in
-`~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/`, built from the
+`~/.harbour/workspaces/<project-slug>/<agent-slug>/`, built from the
 payload's `workspace` block of immutable slugs (segments validated against
-`^[a-z0-9-]+$`; legacy flat fallback for older servers — see
+`^[a-z0-9-]+$` — see
 [agents.md](../concepts/agents.md#workspaces)); session ids and the run's cwd
 are cached in `sessions.json` (`run_id → {sessionId, cli, cwd}`) to resume
 killed/waiting runs in place. Draining all due work each cycle subsumes the old
@@ -265,10 +269,10 @@ Two App Router route groups:
   `env-vars/` (labeled **Secrets**), `users/`, `settings/`.
 
 `AppShell` (`src/components/app/app-shell.tsx`) does the auth check
-(`/api/auth/me` → redirect on 401), the **org switcher** + **project switcher**
-(active org in the `harbour_org` cookie, active project in
-`localStorage["harbour_active_project"]`), sidebar/mobile nav, theme toggle, and
-the waiting-runs badge. Switching org/project invalidates all React Query keys.
+(`/api/auth/me` → redirect on 401), the **project switcher** (active project in
+`localStorage["harbour_active_project"]`; no selection = all projects),
+sidebar/mobile nav, theme toggle, and the waiting-runs badge. Switching project
+invalidates all React Query keys.
 
 React Query defaults: `staleTime: 2000`, `refetchOnWindowFocus: true`; most lists
 `refetchInterval` ~5s, the sidebar projects ~10s. SSE (`/api/runs/:id/output/stream`)
@@ -283,19 +287,19 @@ service worker).
 Read these in order:
 
 1. `src/lib/db/schema.ts` — every table; the schema *is* the file.
-2. `src/lib/db/access.ts` — roles, `resolveAccess`, `orgIdForResource`.
-3. `src/lib/auth.ts` — identity resolution and the wrapper set above.
-4. `src/lib/db/runs.ts` — `claimNextRun`/`peekClaim` (the unified claim,
+2. `src/lib/auth.ts` — identity resolution and the four wrappers above.
+3. `src/lib/db/runs.ts` — `claimNextRun`/`peekClaim` (the unified claim,
    placement/capability/lock-unit filters, the guarded flip), exec-token minting,
    the `updateRunStatus` transition map, and the kill flow.
-5. `src/lib/db/jobs.ts` — schedule advance, job-creation transactions.
-6. `src/app/api/runner/claim/route.ts` — the server side of the claim and the
+4. `src/lib/db/jobs.ts` — schedule advance, job-creation transactions.
+5. `src/app/api/runner/claim/route.ts` — the server side of the claim and the
    `api` block (with the per-run exec token) that travels with each payload.
-7. `bin/lib/runner.mjs` + `bin/lib/providers.mjs` — the client side of the runner
+6. `bin/lib/runner.mjs` + `bin/lib/providers.mjs` — the client side of the runner
    (`runPool` drain, `claimOne`/`dispatch`, the kind executors), prompt assembly,
    kill, capability detection, and per-CLI parsing.
-8. `bin/lib/bootstrap.mjs` — first-run admin creation.
-9. `docs/guide.md` / `docs/admin-guide.md` / `docs/runner-guide.md` — wire
-   contracts, live-served on `/api/guide`, `/api/admin-guide`, and
+7. `bin/lib/bootstrap.mjs` — first-run user creation.
+8. `docs/guide.md` / `docs/management-guide.md` / `docs/runner-guide.md` — wire
+   contracts, live-served on `/api/guide`, `/api/management-guide`, and
    `/api/runner-guide`.
-10. `src/lib/schedule.ts` — interval / weekly parsing and timezone math.
+9. `src/lib/schedule.ts` — interval / weekly parsing and timezone math
+   (the instance timezone comes from the `settings` KV via `getTimezone()`).

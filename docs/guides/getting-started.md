@@ -15,13 +15,13 @@ git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
-npm run harbour -- setup   # one-time: create the instance admin + local runner (interactive)
+npm run harbour -- setup   # one-time: create the first user + local runner (interactive)
 npm start
 ```
 
-`harbour setup` does two things: it creates the instance admin **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600). No minting, no connect blobs; the local path just works. At the end it prompts `Install the runner service to poll for work every 60s? [Y/n]` — answer yes and launchd starts polling immediately, or skip it and run `npm run harbour -- install` later (see [Run the local runner](#run-the-local-runner)).
+`harbour setup` does two things: it creates the first user **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600). No minting, no connect blobs; the local path just works. At the end it prompts `Install the runner service to poll for work every 60s? [Y/n]` — answer yes and launchd starts polling immediately, or skip it and run `npm run harbour -- install` later (see [Run the local runner](#3-run-the-local-runner)).
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first org and project from the dashboard — every agent and agent job lives inside a project (workflows can also be org-level). (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin non-interactively — it also auto-provisions the local runner token, but doesn't prompt to install the service; schedule it yourself with `harbour install` when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.)
+`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first project from the dashboard — every agent and job lives inside a project. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user non-interactively — it also auto-provisions the local runner token, but doesn't prompt to install the service; schedule it yourself with `harbour install` when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.)
 
 State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 
@@ -52,7 +52,7 @@ On the agent's detail page, click **New Job**. Fill in:
 - **Instructions** — `Say hello.`
 - **Create**
 
-Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [admin guide](../admin-guide.md#create-an-agent-job).
+Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check","schedule":"every 5 minutes","instructions":"Say hello"}`. You can also create jobs over the API directly — see the [management guide](../management-guide.md#create-an-agent-job).
 
 ### 3. Verify the polling loop with curl
 
@@ -161,7 +161,7 @@ The one thing to know up front: **the same local runner handles workflows too.**
 
 ### 1. Create a workflow
 
-In the dashboard, open **Workflows → New Workflow**. Give it a name and schedule, pick a runtime (`bash`, `python`, or `node`), and write the command body. (Over the API this is `POST /api/jobs` with a `command` gate — see the [admin guide](../admin-guide.md#create-a-workflow-no-agent).)
+In the dashboard, open **Workflows → New Workflow**. Give it a name and schedule, pick a runtime (`bash`, `python`, or `node`), and write the command body. (Over the API this is `POST /api/jobs` with a `command` gate — see the [management guide](../management-guide.md#create-a-workflow-no-agent).)
 
 ### 2. Run it
 

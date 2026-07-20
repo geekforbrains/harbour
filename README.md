@@ -23,13 +23,13 @@ Harbour is polling-based — it never calls out to agents; they pull work on the
 - **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by the same runner that drives agent jobs. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
 - **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
-It's multi-tenant: an **instance admin** owns the install, and work is organized into **orgs → projects**. Resources never cross org lines.
+Work is organized into **projects** — an organizational grouping, not a tenancy boundary. Every user sees everything; a project just keeps one stream of work filterable in the dashboard.
 
 > Going deeper: the [concepts](docs/concepts/) explain the model in prose, and [docs/guide.md](docs/guide.md) is the exact wire contract an agent reads at `/api/guide`.
 
 ## Getting started
 
-There's no web signup — the first admin is created from the shell (the operator has host access, so first-run setup belongs there). After that, admins create orgs, projects, and users from the dashboard.
+There's no web signup — the first user is created from the shell (the operator has host access, so first-run setup belongs there). After that, projects and further users are created from the dashboard.
 
 All you need is Node 24 LTS on macOS or Linux.
 
@@ -38,13 +38,13 @@ git clone https://github.com/geekforbrains/harbour.git
 cd harbour
 npm install
 npm run build
-npm run harbour -- setup   # one-time: create the instance admin + local runner (interactive)
+npm run harbour -- setup   # one-time: create the first user + local runner (interactive)
 npm start                  # run the server
 ```
 
 `setup` also auto-provisions the **local runner** — it writes a runner token to `~/.harbour/runner.token` and prompts to schedule the polling service. `npm start` runs the server; `npm run harbour -- install` schedules the runner (polls every 60s), or `npm run harbour -- run` drains all due work once.
 
-Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- admin create --email <e> --name "<n>" --password <p>` creates the admin and provisions the local runner non-interactively.)
+Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively.)
 
 ### Deploy to production
 
@@ -70,17 +70,17 @@ Workflows are claimed by the **same** local runner that drives agent jobs — on
 
 ### Managing Harbour over the API
 
-An **admin API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, tables, and more. Mint one in **Settings → Admin API Keys**; the agent fetches its reference at `GET /api/admin-guide`. See [docs/admin-guide.md](docs/admin-guide.md).
+An **API key** lets a separate management agent operate Harbour itself — create agents, jobs, docs, tables, and more. Mint one in **Settings → API Keys**; the agent fetches its reference at `GET /api/management-guide`. See [docs/management-guide.md](docs/management-guide.md).
 
 ## Documentation
 
 Start with the **[docs map](docs/README.md)**, which routes you to the right page. The **[PRD](docs/prd.md)** is the product north star — what Harbour is, the principles it holds to, and the roadmap.
 
-- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [orgs & projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [attachments](docs/concepts/attachments.md)
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs & runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [attachments](docs/concepts/attachments.md)
 - **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
 - **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API](docs/reference/api.md), [design language](docs/reference/design-language.md)
 
-The wire contracts — [docs/guide.md](docs/guide.md) (worker agents) and [docs/admin-guide.md](docs/admin-guide.md) (admin agents) — are served live and are the source of truth for on-the-wire behavior.
+The wire contracts — [docs/guide.md](docs/guide.md) (worker agents) and [docs/management-guide.md](docs/management-guide.md) (management agents) — are served live and are the source of truth for on-the-wire behavior.
 
 ## Tech stack
 
