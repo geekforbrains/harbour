@@ -6,9 +6,7 @@ import { PUT as jobPUT } from "@/app/api/jobs/[id]/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { POST as tablesPOST } from "@/app/api/tables/route";
 import {
-  addMembership,
   createAgent,
-  createOrg,
   createProject,
   createSession,
   createUser,
@@ -50,26 +48,24 @@ function ctx(params: Record<string, string>) {
 }
 
 function fixture() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const editor = createUser("e@x.com", "pw", "Editor")!;
-  addMembership(editor.id, org.id, "editor");
+  const project = createProject("Site")!;
+  const user = createUser("u@x.com", "pw", "User")!;
   const agent = createAgent(project.id, "Dev");
-  return { org, project, editor, agent };
+  return { project, user, agent };
 }
 
 describe("POST /api/agents/:id/jobs validation", () => {
   it("returns 400 (not 500) on a malformed JSON body", async () => {
-    const { editor, agent } = fixture();
-    const req = userReq(editor.id, "http://localhost/api/agents/x/jobs", "{not valid json");
+    const { user, agent } = fixture();
+    const req = userReq(user.id, "http://localhost/api/agents/x/jobs", "{not valid json");
     const res = await agentJobsPOST(req, ctx({ id: agent.id }));
     expect(res.status).toBe(400);
   });
 
   it("returns 400 (not 500) when docIds is a string instead of an array", async () => {
-    const { editor, agent } = fixture();
+    const { user, agent } = fixture();
     const req = userReq(
-      editor.id,
+      user.id,
       "http://localhost/api/agents/x/jobs",
       JSON.stringify({ name: "J", schedule: '{"every":60}', docIds: "doc-1" }),
     );
@@ -78,9 +74,9 @@ describe("POST /api/agents/:id/jobs validation", () => {
   });
 
   it("accepts a valid agent job", async () => {
-    const { editor, agent } = fixture();
+    const { user, agent } = fixture();
     const req = userReq(
-      editor.id,
+      user.id,
       "http://localhost/api/agents/x/jobs",
       JSON.stringify({ name: "J", schedule: '{"every":60}', docIds: [] }),
     );
@@ -91,10 +87,10 @@ describe("POST /api/agents/:id/jobs validation", () => {
 
 describe("POST /api/jobs (workflow) validation", () => {
   it("returns 400 when command is missing", async () => {
-    const { org, editor } = fixture();
+    const { project, user } = fixture();
     const req = userReq(
-      editor.id,
-      `http://localhost/api/jobs?orgId=${org.id}`,
+      user.id,
+      `http://localhost/api/jobs?projectId=${project.id}`,
       JSON.stringify({ name: "W", schedule: '{"every":60}' }),
     );
     const res = await jobsPOST(req, ctx({}));
@@ -102,10 +98,10 @@ describe("POST /api/jobs (workflow) validation", () => {
   });
 
   it("returns 400 when command is a non-string", async () => {
-    const { org, editor } = fixture();
+    const { project, user } = fixture();
     const req = userReq(
-      editor.id,
-      `http://localhost/api/jobs?orgId=${org.id}`,
+      user.id,
+      `http://localhost/api/jobs?projectId=${project.id}`,
       JSON.stringify({ name: "W", schedule: '{"every":60}', command: 123 }),
     );
     const res = await jobsPOST(req, ctx({}));
@@ -113,10 +109,10 @@ describe("POST /api/jobs (workflow) validation", () => {
   });
 
   it("accepts a valid workflow", async () => {
-    const { org, editor } = fixture();
+    const { project, user } = fixture();
     const req = userReq(
-      editor.id,
-      `http://localhost/api/jobs?orgId=${org.id}`,
+      user.id,
+      `http://localhost/api/jobs?projectId=${project.id}`,
       JSON.stringify({
         name: "W",
         schedule: '{"every":60}',
@@ -141,8 +137,8 @@ describe("PUT /api/jobs/:id gate clearing", () => {
   }
 
   it("clears a gate when the alias key is sent as null (not a silent no-op)", async () => {
-    const { org, project, editor } = fixture();
-    const wf = createWorkflow(org.id, project.id, {
+    const { project, user } = fixture();
+    const wf = createWorkflow(project.id, {
       name: "WF",
       schedule: '{"every":60}',
       workflow: { runtime: "node", content: "console.log(1)" },
@@ -152,7 +148,7 @@ describe("PUT /api/jobs/:id gate clearing", () => {
 
     // command:null must clear it — the bug was `command ?? workflow` collapsing
     // null to undefined and leaving the gate unchanged.
-    const res = await jobPUT(putReq(editor.id, wf.id, { command: null }), ctx({ id: wf.id }));
+    const res = await jobPUT(putReq(user.id, wf.id, { command: null }), ctx({ id: wf.id }));
     expect(res.status).toBeLessThan(300);
     const after = getJobById(wf.id);
     expect(after.workflow_script).toBeNull();
@@ -160,28 +156,28 @@ describe("PUT /api/jobs/:id gate clearing", () => {
   });
 
   it("rejects a malformed gate with 400", async () => {
-    const { org, project, editor } = fixture();
-    const wf = createWorkflow(org.id, project.id, {
+    const { project, user } = fixture();
+    const wf = createWorkflow(project.id, {
       name: "WF",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const res = await jobPUT(
-      putReq(editor.id, wf.id, { command: { runtime: "ruby", content: "x" } }),
+      putReq(user.id, wf.id, { command: { runtime: "ruby", content: "x" } }),
       ctx({ id: wf.id }),
     );
     expect(res.status).toBe(400);
   });
 
   it("returns 400 when tableIds is not an array (parity with docIds/envVarIds)", async () => {
-    const { org, project, editor } = fixture();
-    const wf = createWorkflow(org.id, project.id, {
+    const { project, user } = fixture();
+    const wf = createWorkflow(project.id, {
       name: "WF",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo hi" },
     })!;
     const res = await jobPUT(
-      putReq(editor.id, wf.id, { tableIds: "not-an-array" }),
+      putReq(user.id, wf.id, { tableIds: "not-an-array" }),
       ctx({ id: wf.id }),
     );
     expect(res.status).toBe(400);
@@ -190,10 +186,10 @@ describe("PUT /api/jobs/:id gate clearing", () => {
 
 describe("POST /api/tables validation", () => {
   it("returns 400 on an unsupported column type", async () => {
-    const { org, editor } = fixture();
+    const { project, user } = fixture();
     const req = userReq(
-      editor.id,
-      `http://localhost/api/tables?orgId=${org.id}`,
+      user.id,
+      `http://localhost/api/tables?projectId=${project.id}`,
       JSON.stringify({ name: "mydb", columns: [{ name: "col", type: "VARCHAR" }] }),
     );
     const res = await tablesPOST(req, ctx({}));
@@ -201,10 +197,10 @@ describe("POST /api/tables validation", () => {
   });
 
   it("accepts supported column types", async () => {
-    const { org, editor } = fixture();
+    const { project, user } = fixture();
     const req = userReq(
-      editor.id,
-      `http://localhost/api/tables?orgId=${org.id}`,
+      user.id,
+      `http://localhost/api/tables?projectId=${project.id}`,
       JSON.stringify({ name: "mydb", columns: [{ name: "col", type: "TEXT" }] }),
     );
     const res = await tablesPOST(req, ctx({}));

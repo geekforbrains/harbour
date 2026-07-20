@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authenticateRunner,
   createAgent,
-  createOrg,
   createProject,
   createRunner,
   createWorkflow,
@@ -38,8 +37,7 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// runners registry — the instance-level table that replaces runners.json and
-// the per-org workflow_runners table.
+// runners registry — the instance-level table that replaces runners.json
 // ---------------------------------------------------------------------------
 
 describe("createRunner", () => {
@@ -64,18 +62,17 @@ describe("createRunner", () => {
   });
 
   it("stores authorized labels and scope for a remote runner", () => {
-    const org = createOrg("Acme")!;
     const runner = createRunner({
       name: "GPU box",
       tier: "remote",
       labels: ["gpu", "gpu", "  "],
-      scope: { orgId: org.id },
+      scope: { agentId: "agent-1" },
     });
     const fetched = getRunnerById(runner.id)!;
     expect(fetched.tier).toBe("remote");
     // labels de-duped and trimmed of blanks
     expect(fetched.labels).toEqual(["gpu"]);
-    expect(fetched.scope).toEqual({ orgId: org.id });
+    expect(fetched.scope).toEqual({ agentId: "agent-1" });
   });
 
   it("mints unique tokens across runners", () => {
@@ -101,24 +98,22 @@ describe("authenticateRunner", () => {
   });
 
   it("parses labels and scope back into structured values", () => {
-    const org = createOrg("Acme")!;
     const created = createRunner({
       name: "Scoped",
       tier: "remote",
       labels: ["gpu"],
-      scope: { orgId: org.id, agentId: "agent-1" },
+      scope: { agentId: "agent-1" },
     });
     const auth = authenticateRunner(created.token)!;
     expect(auth.labels).toEqual(["gpu"]);
-    expect(auth.scope).toEqual({ orgId: org.id, agentId: "agent-1" });
+    expect(auth.scope).toEqual({ agentId: "agent-1" });
   });
 });
 
 describe("listRunners / getRunnerById", () => {
-  it("lists every runner instance-wide (registry is not org-scoped)", () => {
+  it("lists every runner instance-wide", () => {
     createRunner({ name: "Local pool", tier: "local" });
-    const org = createOrg("Acme")!;
-    createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"], scope: { orgId: org.id } });
+    createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
     const all = listRunners();
     expect(all.length).toBe(2);
     expect(all.map((r) => r.name).sort()).toEqual(["GPU box", "Local pool"]);
@@ -176,8 +171,7 @@ describe("deleteRunner", () => {
 
 describe("placement defaults", () => {
   it("defaults a new agent's placement to 'local'", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "Worker");
     const row = getDb().prepare(`SELECT placement FROM agents WHERE id = ?`).get(agent.id) as {
       placement: string;
@@ -186,9 +180,8 @@ describe("placement defaults", () => {
   });
 
   it("defaults a new workflow job's placement to 'local'", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },
@@ -200,8 +193,7 @@ describe("placement defaults", () => {
   });
 
   it("honors an explicit placement on agent creation", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "GPU worker", undefined, { placement: "gpu" });
     const row = getDb().prepare(`SELECT placement FROM agents WHERE id = ?`).get(agent.id) as {
       placement: string;
@@ -210,8 +202,7 @@ describe("placement defaults", () => {
   });
 
   it("updateAgent edits placement (and falls back to 'local' when blanked)", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "Worker");
     updateAgent(agent.id, { placement: "gpu" });
     expect(
@@ -232,9 +223,8 @@ describe("placement defaults", () => {
   });
 
   it("updateJob edits a workflow job's placement", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },
@@ -257,8 +247,7 @@ describe("placement defaults", () => {
 describe("runs.placement denormalization", () => {
   it("copies the agent's placement onto an agent run at creation", async () => {
     const { createJob, createRun } = await import("@/lib/db/queries");
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "GPU worker", undefined, { placement: "gpu" });
     const job = createJob(project.id, agent.id, { name: "Daily", schedule: '{"every":60}' })!;
     const run = createRun(job.id, agent.id)!;
@@ -270,9 +259,8 @@ describe("runs.placement denormalization", () => {
 
   it("copies a workflow job's placement onto a workflow run at creation", async () => {
     const { createRun } = await import("@/lib/db/queries");
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },

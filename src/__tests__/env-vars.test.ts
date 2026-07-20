@@ -4,12 +4,14 @@ import {
   createAgent,
   createEnvVar,
   createJob,
-  createOrg,
   createProject,
   getDecryptedEnvVarsForJob,
+  getEnvVarById,
+  getEnvVarDecryptedValue,
   linkEnvVarToJob,
+  updateEnvVar,
 } from "@/lib/db/queries";
-import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -31,86 +33,89 @@ afterEach(() => {
 const SCHEDULE = '{"every":60}';
 
 function fixture() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
+  const project = createProject("Site")!;
   const agent = createAgent(project.id, "Dev");
   const job = createJob(project.id, agent.id, { name: "J", schedule: SCHEDULE })!;
-  return { org, project, agent, job };
+  return { project, agent, job };
 }
 
 // ---------------------------------------------------------------------------
-// Same-tier name uniqueness (the baseline the override relies on): an org-level
-// name and a project-level name may coincide, but within a single tier a name
-// is unique. Two projects may independently use the same name.
+// Name uniqueness — per project (enforced in the query layer; the schema has
+// no UNIQUE constraint). Two projects may independently use the same name.
 // ---------------------------------------------------------------------------
 
-describe("env-var same-tier name uniqueness", () => {
-  it("rejects a duplicate org-level name", () => {
-    const { org } = fixture();
-    createEnvVar(org.id, null, "DUP", "a");
-    expect(() => createEnvVar(org.id, null, "DUP", "b")).toThrow(/already exists at the org level/);
+describe("env-var per-project name uniqueness", () => {
+  it("rejects a duplicate name within one project", () => {
+    const { project } = fixture();
+    createEnvVar(project.id, "DUP", "a");
+    expect(() => createEnvVar(project.id, "DUP", "b")).toThrow(/already exists in this project/);
   });
 
-  it("rejects a duplicate project-level name", () => {
-    const { org, project } = fixture();
-    createEnvVar(org.id, project.id, "DUP", "a");
-    expect(() => createEnvVar(org.id, project.id, "DUP", "b")).toThrow(
-      /already exists at the project level/,
+  it("allows the same name in two different projects", () => {
+    const { project } = fixture();
+    const project2 = createProject("Site2")!;
+    createEnvVar(project.id, "X", "a");
+    expect(() => createEnvVar(project2.id, "X", "b")).not.toThrow();
+  });
+
+  it("rejects a rename onto an existing name in the same project", () => {
+    const { project } = fixture();
+    createEnvVar(project.id, "TAKEN", "a");
+    const other = createEnvVar(project.id, "FREE", "b")!;
+    expect(() => updateEnvVar(other.id, { name: "TAKEN" })).toThrow(
+      /already exists in this project/,
     );
   });
 
-  it("allows the same name across tiers (org + project)", () => {
-    const { org, project } = fixture();
-    createEnvVar(org.id, null, "SHARED", "org");
-    expect(() => createEnvVar(org.id, project.id, "SHARED", "proj")).not.toThrow();
-  });
-
-  it("allows the same name in two different projects of one org", () => {
-    const { org, project } = fixture();
-    const project2 = createProject(org.id, "Site2")!;
-    createEnvVar(org.id, project.id, "X", "a");
-    expect(() => createEnvVar(org.id, project2.id, "X", "b")).not.toThrow();
+  it("allows a rename that keeps the var's own name (self-collision excluded)", () => {
+    const { project } = fixture();
+    const envVar = createEnvVar(project.id, "KEEP", "a")!;
+    expect(() => updateEnvVar(envVar.id, { name: "KEEP", value: "b" })).not.toThrow();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Project-over-org override at injection: when a project-level and an org-level
-// var with the same name are both linked to one job, the project value wins —
-// deterministically, regardless of the order they were linked.
+// Value encryption — values are encrypted at rest and only decrypted on the
+// dedicated read paths (the /value endpoint and run-payload composition).
 // ---------------------------------------------------------------------------
 
-describe("env-var project-over-org override", () => {
-  it("project value wins when org + project vars of the same name are linked", () => {
-    const { org, project, job } = fixture();
-    const orgVar = createEnvVar(org.id, null, "API_BASE", "https://org.example")!;
-    const projVar = createEnvVar(org.id, project.id, "API_BASE", "https://proj.example")!;
-    linkEnvVarToJob(job.id, orgVar.id);
-    linkEnvVarToJob(job.id, projVar.id);
+describe("env-var value encryption", () => {
+  it("stores the value encrypted and round-trips it through decryption", () => {
+    const { project } = fixture();
+    const envVar = createEnvVar(project.id, "SECRET", "s3cret-value")!;
 
-    const env = getDecryptedEnvVarsForJob(job.id);
-    expect(env.API_BASE).toBe("https://proj.example");
+    const raw = getDb()
+      .prepare(`SELECT encrypted_value FROM env_vars WHERE id = ?`)
+      .get(envVar.id) as { encrypted_value: string };
+    expect(raw.encrypted_value).not.toContain("s3cret-value");
+
+    expect(getEnvVarDecryptedValue(envVar.id)).toBe("s3cret-value");
   });
 
-  it("is deterministic regardless of link order (project linked first)", () => {
-    const { org, project, job } = fixture();
-    const orgVar = createEnvVar(org.id, null, "API_BASE", "https://org.example")!;
-    const projVar = createEnvVar(org.id, project.id, "API_BASE", "https://proj.example")!;
-    // Link project first, then org — project must still win.
-    linkEnvVarToJob(job.id, projVar.id);
-    linkEnvVarToJob(job.id, orgVar.id);
-
-    const env = getDecryptedEnvVarsForJob(job.id);
-    expect(env.API_BASE).toBe("https://proj.example");
+  it("getEnvVarById never carries the encrypted value", () => {
+    const { project } = fixture();
+    const envVar = createEnvVar(project.id, "SECRET", "v")!;
+    expect(getEnvVarById(envVar.id)).not.toHaveProperty("encrypted_value");
   });
 
-  it("keeps distinct names from both tiers", () => {
-    const { org, project, job } = fixture();
-    const orgVar = createEnvVar(org.id, null, "ORG_ONLY", "o")!;
-    const projVar = createEnvVar(org.id, project.id, "PROJ_ONLY", "p")!;
-    linkEnvVarToJob(job.id, orgVar.id);
-    linkEnvVarToJob(job.id, projVar.id);
+  it("getEnvVarDecryptedValue returns null for an unknown id", () => {
+    expect(getEnvVarDecryptedValue("nope")).toBeNull();
+  });
 
-    const env = getDecryptedEnvVarsForJob(job.id);
-    expect(env).toEqual({ ORG_ONLY: "o", PROJ_ONLY: "p" });
+  it("decrypts values in the job composition map", () => {
+    const { project, job } = fixture();
+    const a = createEnvVar(project.id, "A_VAR", "a-val")!;
+    const b = createEnvVar(project.id, "B_VAR", "b-val")!;
+    linkEnvVarToJob(job.id, a.id);
+    linkEnvVarToJob(job.id, b.id);
+
+    expect(getDecryptedEnvVarsForJob(job.id)).toEqual({ A_VAR: "a-val", B_VAR: "b-val" });
+  });
+
+  it("an updated value re-encrypts and round-trips", () => {
+    const { project } = fixture();
+    const envVar = createEnvVar(project.id, "ROTATE", "old-value")!;
+    updateEnvVar(envVar.id, { value: "new-value" });
+    expect(getEnvVarDecryptedValue(envVar.id)).toBe("new-value");
   });
 });

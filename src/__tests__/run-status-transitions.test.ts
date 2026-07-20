@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   getRunById,
@@ -37,8 +36,7 @@ afterEach(() => {
 // of an arbitrary status we seed the column directly, bypassing the guard the
 // same way the test fixtures in workflow-runs.test.ts do.
 function makeRun(status: string): string {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Website")!;
+  const project = createProject("Website")!;
   const agent = createAgent(project.id, "Dev");
   const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
   const run = createRun(job.id, agent.id)!;

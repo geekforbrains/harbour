@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createOrg,
+  createAgent,
+  createJob,
   createProject,
   createRunner,
   createWorkflow,
@@ -28,35 +29,40 @@ beforeEach(() => {
 afterEach(() => resetDb());
 
 function workflow(placement: string) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(org.id, project.id, {
+  const project = createProject("Site")!;
+  const wf = createWorkflow(project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo sync" },
     placement,
   })!;
-  return { org, project, wf };
+  return { project, wf };
 }
 
 describe("stalledPlacements (absent-runner surface)", () => {
   it("flags a placement with queued work but no live runner", () => {
-    const { org, wf } = workflow("gpu");
+    const { project, wf } = workflow("gpu");
     triggerJobRun(wf.id); // a scheduled run, placement 'gpu'
-    expect(stalledPlacements(org.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
+  });
+
+  it("flags across all projects when no projectId is given", () => {
+    const { wf } = workflow("gpu");
+    triggerJobRun(wf.id);
+    expect(stalledPlacements()).toEqual([{ placement: "gpu", count: 1 }]);
   });
 
   it("clears once a live runner advertises that placement label", () => {
-    const { org, wf } = workflow("gpu");
+    const { project, wf } = workflow("gpu");
     triggerJobRun(wf.id);
     const runner = createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
     // The runner polled just now, advertising the 'gpu' label.
     touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["gpu"] });
-    expect(stalledPlacements(org.id)).toEqual([]);
+    expect(stalledPlacements(project.id)).toEqual([]);
   });
 
   it("still flags when the only matching runner polled too long ago (stale)", () => {
-    const { org, wf } = workflow("gpu");
+    const { project, wf } = workflow("gpu");
     triggerJobRun(wf.id);
     const runner = createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
     touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["gpu"] });
@@ -64,37 +70,101 @@ describe("stalledPlacements (absent-runner surface)", () => {
     getDb()
       .prepare(`UPDATE runners SET last_polled_at = ? WHERE id = ?`)
       .run(Math.floor(Date.now() / 1000) - 600, runner.id);
-    expect(stalledPlacements(org.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
   });
 
   it("still flags when a live runner over-advertises a label it isn't authorized for", () => {
-    const { org, wf } = workflow("gpu");
+    const { project, wf } = workflow("gpu");
     triggerJobRun(wf.id);
     // Authorized only for 'cpu', but the host advertises 'gpu' too — the claim
     // path refuses 'gpu', so it must NOT count as served.
     const runner = createRunner({ name: "CPU box", tier: "remote", labels: ["cpu"] });
     touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["cpu", "gpu"] });
-    expect(stalledPlacements(org.id)).toEqual([{ placement: "gpu", count: 1 }]);
-  });
-
-  it("still flags when the only matching runner is scoped to a different org", () => {
-    const { org, wf } = workflow("gpu");
-    triggerJobRun(wf.id);
-    const otherOrg = createOrg("Beta")!;
-    // A live runner advertising 'gpu' but scoped to another org can't serve us.
-    const runner = createRunner({
-      name: "Other-org GPU",
-      tier: "remote",
-      labels: ["gpu"],
-      scope: { orgId: otherOrg.id },
-    });
-    touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["gpu"] });
-    expect(stalledPlacements(org.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
   });
 
   it("returns nothing when there is no queued work", () => {
-    const { org } = workflow("gpu");
-    expect(stalledPlacements(org.id)).toEqual([]);
+    const { project } = workflow("gpu");
+    expect(stalledPlacements(project.id)).toEqual([]);
+  });
+
+  // A runner only "serves" a run it could actually claim — an agent-scoped
+  // runner never claims workflow runs or other agents' runs, so it must not
+  // suppress the banner for them.
+  describe("claim-eligibility mirroring (scope, kind, CLI)", () => {
+    /** An agent on 'gpu' with a job, plus one queued run for it. */
+    function queuedAgentRun(project: { id: string }, name: string) {
+      const agent = createAgent(project.id, name, undefined, { cli: "claude", placement: "gpu" })!;
+      const job = createJob(project.id, agent.id, {
+        name: `${name} job`,
+        schedule: '{"every":60}',
+      })!;
+      triggerJobRun(job.id);
+      return agent;
+    }
+
+    it("an agent-scoped runner does NOT suppress the banner for workflow runs", () => {
+      const { project, wf } = workflow("gpu");
+      triggerJobRun(wf.id);
+      const agent = queuedAgentRun(project, "Dev");
+      const runner = createRunner({
+        name: "Dev-only box",
+        tier: "remote",
+        labels: ["gpu"],
+        scope: { agentId: agent.id },
+      });
+      touchRunnerPolled(runner.id, {
+        kinds: ["agent", "workflow"],
+        clis: ["claude"],
+        labels: ["gpu"],
+      });
+      // The agent's own run is served; the workflow run is not.
+      expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    });
+
+    it("an agent-scoped runner does NOT suppress the banner for another agent's runs", () => {
+      const project = createProject("Site")!;
+      const dev = queuedAgentRun(project, "Dev");
+      queuedAgentRun(project, "Ops");
+      const runner = createRunner({
+        name: "Dev-only box",
+        tier: "remote",
+        labels: ["gpu"],
+        scope: { agentId: dev.id },
+      });
+      touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+      // Dev's run is served; Ops' run still stalls.
+      expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    });
+
+    it("an agent-scoped runner DOES suppress the banner for its own agent's runs", () => {
+      const project = createProject("Site")!;
+      const dev = queuedAgentRun(project, "Dev");
+      const runner = createRunner({
+        name: "Dev-only box",
+        tier: "remote",
+        labels: ["gpu"],
+        scope: { agentId: dev.id },
+      });
+      touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+      expect(stalledPlacements(project.id)).toEqual([]);
+    });
+
+    it("a workflow-only runner does NOT suppress the banner for agent runs", () => {
+      const project = createProject("Site")!;
+      queuedAgentRun(project, "Dev");
+      const runner = createRunner({ name: "WF box", tier: "remote", labels: ["gpu"] });
+      touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["gpu"] });
+      expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    });
+
+    it("a runner without the agent's CLI does NOT suppress the banner for its runs", () => {
+      const project = createProject("Site")!;
+      queuedAgentRun(project, "Dev"); // agent cli 'claude'
+      const runner = createRunner({ name: "Codex box", tier: "remote", labels: ["gpu"] });
+      touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["codex"], labels: ["gpu"] });
+      expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
+    });
   });
 });
 

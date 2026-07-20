@@ -1,13 +1,6 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  createAgent,
-  createJob,
-  createOrg,
-  createProject,
-  getJobById,
-  updateJob,
-} from "@/lib/db/queries";
+import { createAgent, createJob, createProject, getJobById, updateJob } from "@/lib/db/queries";
 import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -33,8 +26,7 @@ afterEach(() => {
 });
 
 function agentJob(data: Parameters<typeof createJob>[2]) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Website")!;
+  const project = createProject("Website")!;
   const agent = createAgent(project.id, "Dev");
   return createJob(project.id, agent.id, data)!;
 }

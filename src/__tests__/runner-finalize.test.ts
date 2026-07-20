@@ -61,9 +61,9 @@ describe("buildApiPrompt (work prompt)", () => {
 
 // ===========================================================================
 // Work prompt: linked tables must be surfaced so the agent can learn their ids.
-// The claim payload carries `tables` (keyed by name, id only); the list endpoint
-// is org-scoped and rejects the run's exec token, so the prompt is the agent's
-// only source of table ids. Regression guard for the dropped `## Tables` block.
+// The claim payload carries `tables` (keyed by name, id only), so the prompt is
+// the agent's cheapest source of table ids. Regression guard for the dropped
+// `## Tables` block.
 // ===========================================================================
 
 describe("buildPrompt (work prompt) — tables block", () => {

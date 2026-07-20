@@ -43,7 +43,7 @@ function jsonReq(url: string, body: unknown, headers: Record<string, string> = {
   return new NextRequest(url, { method: "POST", body: JSON.stringify(body), headers: h });
 }
 
-function adminReq(userId: string, url: string) {
+function sessionReq(userId: string, url: string) {
   const sessionId = createSession(userId);
   const h = new Headers({ cookie: `harbour_session=${sessionId}` });
   return new NextRequest(url, { method: "POST", headers: h });
@@ -189,19 +189,17 @@ describe("POST /api/auth/set-password rate limiting", () => {
 });
 
 describe("POST /api/users/:id/set-password-link", () => {
-  function makeAdmin() {
-    const u = createUser("admin@example.com", "adminpass1", "Admin", { isInstanceAdmin: true }) as {
-      id: string;
-    };
+  function makeMinter() {
+    const u = createUser("minter@example.com", "minterpass1", "Minter") as { id: string };
     return u.id;
   }
 
-  it("instance admin mints a usable link; the returned token redeems", async () => {
-    const adminId = makeAdmin();
+  it("a signed-in user mints a usable link; the returned token redeems", async () => {
+    const minterId = makeMinter();
     const target = createUser("target@example.com", null, "Target") as { id: string };
 
     const res = await linkPOST(
-      adminReq(adminId, "http://localhost/api/users/x/set-password-link"),
+      sessionReq(minterId, "http://localhost/api/users/x/set-password-link"),
       idParams(target.id),
     );
     expect(res.status).toBe(200);
@@ -220,21 +218,19 @@ describe("POST /api/users/:id/set-password-link", () => {
     expect(authenticateUser("target@example.com", "freshpassword1")).not.toBeNull();
   });
 
-  it("non-admins are forbidden", async () => {
-    const editor = createUser("editor@example.com", "editorpass1", "Editor") as { id: string };
+  it("an unauthenticated request is rejected", async () => {
     const target = createUser("target@example.com", null, "Target") as { id: string };
-
     const res = await linkPOST(
-      adminReq(editor.id, "http://localhost/api/users/x/set-password-link"),
+      new NextRequest("http://localhost/api/users/x/set-password-link", { method: "POST" }),
       idParams(target.id),
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it("returns 404 for an unknown user", async () => {
-    const adminId = makeAdmin();
+    const minterId = makeMinter();
     const res = await linkPOST(
-      adminReq(adminId, "http://localhost/api/users/x/set-password-link"),
+      sessionReq(minterId, "http://localhost/api/users/x/set-password-link"),
       idParams("no-such-user"),
     );
     expect(res.status).toBe(404);

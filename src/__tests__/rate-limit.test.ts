@@ -86,13 +86,24 @@ describe("clientIp", () => {
     return new Request("http://localhost/", { headers });
   }
 
-  it("returns the first hop of x-forwarded-for", () => {
+  it("returns the last hop of x-forwarded-for (the proxy-appended one)", () => {
     const req = reqWithHeaders({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" });
+    expect(clientIp(req)).toBe("10.0.0.1");
+  });
+
+  it("ignores client-forged leading hops appended to by the proxy", () => {
+    // A client sends a fake XFF; the trusted proxy appends the real address.
+    const req = reqWithHeaders({ "x-forwarded-for": "6.6.6.6, 203.0.113.7" });
     expect(clientIp(req)).toBe("203.0.113.7");
   });
 
-  it("trims whitespace around the first hop", () => {
-    const req = reqWithHeaders({ "x-forwarded-for": "  203.0.113.7  ,10.0.0.1" });
+  it("returns a lone hop as-is", () => {
+    const req = reqWithHeaders({ "x-forwarded-for": "203.0.113.7" });
+    expect(clientIp(req)).toBe("203.0.113.7");
+  });
+
+  it("trims whitespace around the last hop", () => {
+    const req = reqWithHeaders({ "x-forwarded-for": "10.0.0.1,  203.0.113.7  " });
     expect(clientIp(req)).toBe("203.0.113.7");
   });
 

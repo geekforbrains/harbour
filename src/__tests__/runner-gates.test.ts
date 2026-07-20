@@ -20,9 +20,9 @@ describe("resolveJobDir", () => {
   it("joins harbourHome/workflows/scriptsDir", () => {
     const cwd = resolveJobDir({
       harbourHome: "/home/h/.harbour",
-      scriptsDir: "acme/web/checker/health-check-1a2b3c4d",
+      scriptsDir: "web/checker/health-check-1a2b3c4d",
     });
-    expect(cwd).toBe("/home/h/.harbour/workflows/acme/web/checker/health-check-1a2b3c4d");
+    expect(cwd).toBe("/home/h/.harbour/workflows/web/checker/health-check-1a2b3c4d");
   });
 
   it("throws when scriptsDir is null, undefined, or empty", () => {
@@ -39,7 +39,7 @@ describe("resolveJobDir", () => {
     const prev = process.env.HARBOUR_HOME;
     process.env.HARBOUR_HOME = "/tmp/hb-home";
     try {
-      expect(resolveJobDir({ scriptsDir: "org/leaf" })).toBe("/tmp/hb-home/workflows/org/leaf");
+      expect(resolveJobDir({ scriptsDir: "site/leaf" })).toBe("/tmp/hb-home/workflows/site/leaf");
     } finally {
       if (prev === undefined) delete process.env.HARBOUR_HOME;
       else process.env.HARBOUR_HOME = prev;

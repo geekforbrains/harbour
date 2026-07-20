@@ -262,7 +262,7 @@ describe("slugify output is always a valid workspace segment", () => {
   const NASTY_NAMES = [
     "Dev Agent",
     "Dev_Agent",
-    "  My  Org!! ",
+    "  My  Project!! ",
     "日本語",
     "🚀 Launch Crew 🚀",
     "../../../etc/passwd",
@@ -313,9 +313,9 @@ describe("ensureWorkingDir", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("creates the nested org/project/agent directory under HARBOUR_HOME", () => {
-    const dir = ensureWorkingDir(["acme", "website", "dev-agent"]);
-    expect(dir).toBe(path.join(home, "workspaces", "acme", "website", "dev-agent"));
+  it("creates the nested project/agent directory under HARBOUR_HOME", () => {
+    const dir = ensureWorkingDir(["website", "dev-agent"]);
+    expect(dir).toBe(path.join(home, "workspaces", "website", "dev-agent"));
     expect(fs.existsSync(dir)).toBe(true);
   });
 
@@ -331,7 +331,7 @@ describe("ensureWorkingDir", () => {
     expect(() => ensureWorkingDir([""])).toThrow(/Invalid workspace path segment/);
     expect(() => ensureWorkingDir(["UPPER"])).toThrow(/Invalid workspace path segment/);
     // One bad segment poisons the whole path, wherever it sits.
-    expect(() => ensureWorkingDir(["acme", "..", "dev-agent"])).toThrow(
+    expect(() => ensureWorkingDir(["website", "..", "dev-agent"])).toThrow(
       /Invalid workspace path segment/,
     );
     // Validation happens before mkdir — a refused run creates nothing.
@@ -355,12 +355,18 @@ describe("detectCapabilities — honest CLI detection", () => {
   });
 
   it("does not advertise CLIs that are not on PATH", () => {
-    // System dirs hold none of claude/codex/gemini.
-    process.env.PATH = "/usr/bin:/bin";
-    resetBinaryCache();
-    const caps = detectCapabilities();
-    expect(caps.clis).toEqual([]);
-    expect(caps.kinds).toEqual(["workflow"]); // no "agent" kind without a CLI
+    // An empty temp dir as the entire PATH holds none of claude/codex/gemini
+    // (system dirs can't be trusted — dev machines have the CLIs installed).
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "hb-nopath-"));
+    try {
+      process.env.PATH = empty;
+      resetBinaryCache();
+      const caps = detectCapabilities();
+      expect(caps.clis).toEqual([]);
+      expect(caps.kinds).toEqual(["workflow"]); // no "agent" kind without a CLI
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   });
 
   it("advertises a CLI that IS on PATH", () => {

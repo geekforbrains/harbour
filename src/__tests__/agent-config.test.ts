@@ -4,7 +4,6 @@ import {
   buildRunPayload,
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createWorkflow,
@@ -38,8 +37,7 @@ afterEach(() => {
 
 describe("run payload carries live agent config", () => {
   it("includes the agent's cli/model/thinking/eager", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
+    const project = createProject("Website")!;
     const agent = createAgent(project.id, "Dev", undefined, {
       cli: "codex",
       model: "gpt-5",
@@ -59,8 +57,7 @@ describe("run payload carries live agent config", () => {
   });
 
   it("reflects a dashboard model change on the next run without touching the runner", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
+    const project = createProject("Website")!;
     const agent = createAgent(project.id, "Dev", undefined, { cli: "claude", model: "sonnet" });
     const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
 
@@ -75,9 +72,8 @@ describe("run payload carries live agent config", () => {
   });
 
   it("omits the agent block for a deterministic workflow run", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
-    const job = createWorkflow(org.id, project.id, {
+    const project = createProject("Website")!;
+    const job = createWorkflow(project.id, {
       name: "WF",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo hi" },

@@ -119,7 +119,7 @@ describe("processNextWorkflow orchestration", () => {
       kind: "workflow",
       name: "t",
       command: { runtime: "bash", content },
-      scripts_dir: "org/proj/job",
+      scripts_dir: "proj/job",
       timeout_minutes: 1,
     },
   });
@@ -222,7 +222,7 @@ describe("runPool (claim → dispatch → drain)", () => {
         kind: "workflow",
         name: "p",
         command: { runtime: "bash", content: "echo pooled" },
-        scripts_dir: "org/proj/poolwf",
+        scripts_dir: "proj/poolwf",
         timeout_minutes: 1,
       },
     };

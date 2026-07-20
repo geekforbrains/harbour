@@ -1,12 +1,6 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  createOrg,
-  createProject,
-  createRun,
-  createWorkflow,
-  listRecentRuns,
-} from "@/lib/db/queries";
+import { createProject, createRun, createWorkflow, listRecentRuns } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -41,8 +35,8 @@ type RecentRow = {
 // (later calls are newer). Started in the past to stay below unixepoch().
 let clock = Math.floor(Date.now() / 1000) - 100000;
 
-function makeWorkflow(orgId: string, projectId: string, name: string) {
-  return createWorkflow(orgId, projectId, {
+function makeWorkflow(projectId: string, name: string) {
+  return createWorkflow(projectId, {
     name,
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo hi" },
@@ -65,29 +59,27 @@ function rowsFor(rows: RecentRow[], jobId: string, status: string) {
 
 describe("listRecentRuns: the Recent feed", () => {
   it("excludes skipped runs entirely", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const sync = makeWorkflow(org.id, project.id, "Sync");
+    const project = createProject("Site")!;
+    const sync = makeWorkflow(project.id, "Sync");
 
     addRun(sync.id, "done");
     for (let i = 0; i < 5; i++) addRun(sync.id, "skipped");
     addRun(sync.id, "failed");
 
-    const rows = listRecentRuns(org.id, 50, project.id) as RecentRow[];
+    const rows = listRecentRuns(project.id, 50) as RecentRow[];
 
     expect(rows.some((r) => r.status === "skipped")).toBe(false);
     expect(rows).toHaveLength(2); // the done + the failed
   });
 
   it("caps a job's successes at perJobLimit, keeping the newest", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const sync = makeWorkflow(org.id, project.id, "Sync");
+    const project = createProject("Site")!;
+    const sync = makeWorkflow(project.id, "Sync");
 
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push(addRun(sync.id, "done"));
 
-    const rows = listRecentRuns(org.id, 50, project.id, { perJobLimit: 2 }) as RecentRow[];
+    const rows = listRecentRuns(project.id, 50, { perJobLimit: 2 }) as RecentRow[];
 
     const done = rowsFor(rows, sync.id, "done");
     expect(done).toHaveLength(2);
@@ -96,57 +88,64 @@ describe("listRecentRuns: the Recent feed", () => {
   });
 
   it("defaults the per-job cap to 3", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const sync = makeWorkflow(org.id, project.id, "Sync");
+    const project = createProject("Site")!;
+    const sync = makeWorkflow(project.id, "Sync");
 
     for (let i = 0; i < 6; i++) addRun(sync.id, "done");
 
-    const rows = listRecentRuns(org.id, 50, project.id) as RecentRow[];
+    const rows = listRecentRuns(project.id, 50) as RecentRow[];
     expect(rowsFor(rows, sync.id, "done")).toHaveLength(3);
   });
 
   it("never caps failures or killed runs", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const sync = makeWorkflow(org.id, project.id, "Sync");
+    const project = createProject("Site")!;
+    const sync = makeWorkflow(project.id, "Sync");
 
     for (let i = 0; i < 5; i++) addRun(sync.id, "failed");
     for (let i = 0; i < 4; i++) addRun(sync.id, "killed");
 
-    const rows = listRecentRuns(org.id, 50, project.id, { perJobLimit: 1 }) as RecentRow[];
+    const rows = listRecentRuns(project.id, 50, { perJobLimit: 1 }) as RecentRow[];
     expect(rowsFor(rows, sync.id, "failed")).toHaveLength(5);
     expect(rowsFor(rows, sync.id, "killed")).toHaveLength(4);
   });
 
   it("a chatty job's older successes free slots for other jobs' runs", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const quiet = makeWorkflow(org.id, project.id, "Quiet");
-    const chatty = makeWorkflow(org.id, project.id, "Chatty");
+    const project = createProject("Site")!;
+    const quiet = makeWorkflow(project.id, "Quiet");
+    const chatty = makeWorkflow(project.id, "Chatty");
 
     const quietRun = addRun(quiet.id, "done"); // oldest run overall
     for (let i = 0; i < 10; i++) addRun(chatty.id, "done");
 
     // Uncapped, chatty's 10 newer successes would fill the whole feed of 5.
-    const rows = listRecentRuns(org.id, 5, project.id, { perJobLimit: 3 }) as RecentRow[];
+    const rows = listRecentRuns(project.id, 5, { perJobLimit: 3 }) as RecentRow[];
 
     expect(rowsFor(rows, chatty.id, "done")).toHaveLength(3);
     expect(rows.some((r) => r.id === quietRun)).toBe(true);
   });
 
   it("caps the returned rows at the limit, newest first", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const a = makeWorkflow(org.id, project.id, "A");
-    const b = makeWorkflow(org.id, project.id, "B");
-    const c = makeWorkflow(org.id, project.id, "C");
+    const project = createProject("Site")!;
+    const a = makeWorkflow(project.id, "A");
+    const b = makeWorkflow(project.id, "B");
+    const c = makeWorkflow(project.id, "C");
 
     addRun(a.id, "failed");
     const second = addRun(b.id, "failed");
     const newest = addRun(c.id, "failed");
 
-    const rows = listRecentRuns(org.id, 2, project.id) as RecentRow[];
+    const rows = listRecentRuns(project.id, 2) as RecentRow[];
     expect(rows.map((r) => r.id)).toEqual([newest, second]);
+  });
+
+  it("unions across all projects when projectId is omitted", () => {
+    const a = makeWorkflow(createProject("Site A")!.id, "A");
+    const b = makeWorkflow(createProject("Site B")!.id, "B");
+
+    addRun(a.id, "done");
+    addRun(b.id, "failed");
+
+    const rows = listRecentRuns(undefined, 50) as RecentRow[];
+    expect(rows.map((r) => r.job_id).sort()).toEqual([a.id, b.id].sort());
   });
 });

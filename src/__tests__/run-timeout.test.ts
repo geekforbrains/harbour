@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createWorkflow,
@@ -66,12 +65,11 @@ function claimedAtOf(runId: string): number {
 }
 
 function agentSetup() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Website")!;
+  const project = createProject("Website")!;
   // A CLI is required for a CLI runner to claim/resume the agent's runs.
   const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
   const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
-  return { org, project, agent, job };
+  return { project, agent, job };
 }
 
 // ===========================================================================
@@ -115,9 +113,8 @@ describe("reapStaleRuns (agent path): hard cap keyed on claimed_at", () => {
 
 describe("workflow claim: hard cap keyed on claimed_at", () => {
   it("fails a workflow run claimed past the timeout despite recent updated_at", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },
@@ -131,9 +128,8 @@ describe("workflow claim: hard cap keyed on claimed_at", () => {
   });
 
   it("does NOT fail a workflow run claimed within the timeout", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },

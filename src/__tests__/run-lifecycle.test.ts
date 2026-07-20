@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createWorkflow,
@@ -61,22 +60,20 @@ function timeoutActivityRows(runId: string) {
 }
 
 function agentSetup() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Website")!;
+  const project = createProject("Website")!;
   const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
   const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
-  return { org, project, agent, job };
+  return { project, agent, job };
 }
 
 function workflowSetup() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(org.id, project.id, {
+  const project = createProject("Site")!;
+  const wf = createWorkflow(project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo sync" },
   })!;
-  return { org, project, wf };
+  return { project, wf };
 }
 
 // ===========================================================================

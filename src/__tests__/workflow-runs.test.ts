@@ -7,7 +7,6 @@ import {
   buildRunPayload,
   createDoc,
   createEnvVar,
-  createOrg,
   createProject,
   createRun,
   createTable,
@@ -45,15 +44,14 @@ afterEach(() => {
 const HOUR_AGO = () => Math.floor(Date.now() / 1000) - 3600;
 
 function workflowJob(active = true) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(org.id, project.id, {
+  const project = createProject("Site")!;
+  const wf = createWorkflow(project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo sync" },
     active,
   })!;
-  return { org, project, wf };
+  return { project, wf };
 }
 
 /** Force a job to be due now by backdating its next_run_at. */
@@ -167,7 +165,7 @@ describe("claim: scheduled workflow run claim", () => {
 // ---------------------------------------------------------------------------
 describe("workflow stale-run reaping", () => {
   function staleRunningRun() {
-    const { org, wf } = workflowJob();
+    const { project, wf } = workflowJob();
     const run = createRun(wf.id, null)!; // status 'running'
     // Backdate claimed_at well past the job's 30-min hard cap. updated_at stays
     // recent on purpose: the reaper is a claimed_at ceiling (issue #15), not an
@@ -175,7 +173,7 @@ describe("workflow stale-run reaping", () => {
     getDb()
       .prepare(`UPDATE runs SET claimed_at = ?, updated_at = ? WHERE id = ?`)
       .run(Math.floor(Date.now() / 1000) - 4000, Math.floor(Date.now() / 1000), run.id);
-    return { org, wf, run };
+    return { project, wf, run };
   }
 
   it("claim fails a run that ran past its timeout and records a system note", () => {
@@ -208,13 +206,12 @@ describe("workflow stale-run reaping", () => {
 // ---------------------------------------------------------------------------
 describe("buildRunPayload: workflow run shape", () => {
   it("injects linked docs/data/env, carries the command, and omits the agent block + title preamble", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
 
-    const doc = createDoc(org.id, project.id, "Runbook", "do the thing")!;
-    const env = createEnvVar(org.id, project.id, "API_TOKEN", "secret")!;
+    const doc = createDoc(project.id, "Runbook", "do the thing")!;
+    const env = createEnvVar(project.id, "API_TOKEN", "secret")!;
 
-    const wf = createWorkflow(org.id, project.id, {
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },
@@ -222,7 +219,7 @@ describe("buildRunPayload: workflow run shape", () => {
       envVarIds: [env.id],
     })!;
 
-    const data = createTable(org.id, project.id, "metrics", [{ name: "v", type: "TEXT" }]);
+    const data = createTable(project.id, "metrics", [{ name: "v", type: "TEXT" }]);
     insertRows(data.id, [{ v: "row-1" }]);
     linkTableToJob(wf.id, data.id);
 

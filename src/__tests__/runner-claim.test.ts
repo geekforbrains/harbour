@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createWorkflow,
   getRunByExecToken,
   getRunById,
+  listRunningRuns,
+  listRunsByAgent,
+  listRunsByJob,
+  listRunsHistory,
   triggerJobRun,
   updateRunStatus,
 } from "@/lib/db/queries";
@@ -34,10 +37,9 @@ afterEach(() => {
 const HOUR_AGO = () => Math.floor(Date.now() / 1000) - 3600;
 const NOW = () => Math.floor(Date.now() / 1000);
 
-/** org → project → agent (with a CLI so it's claimable) → recurring agent job. */
+/** project → agent (with a CLI so it's claimable) → recurring agent job. */
 function agentJob(opts: { cli?: string; placement?: string; schedule?: string } = {}) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
+  const project = createProject("Site")!;
   const agent = createAgent(project.id, "Worker", undefined, {
     cli: opts.cli ?? "claude",
     placement: opts.placement,
@@ -46,19 +48,18 @@ function agentJob(opts: { cli?: string; placement?: string; schedule?: string } 
     name: "Daily",
     schedule: opts.schedule ?? '{"every":60}',
   })!;
-  return { org, project, agent, job };
+  return { project, agent, job };
 }
 
 function workflowJob(opts: { placement?: string } = {}) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const wf = createWorkflow(org.id, project.id, {
+  const project = createProject("Site")!;
+  const wf = createWorkflow(project.id, {
     name: "Sync",
     schedule: '{"every":60}',
     workflow: { runtime: "bash", content: "echo sync" },
     placement: opts.placement,
   })!;
-  return { org, project, wf };
+  return { project, wf };
 }
 
 function makeJobDue(jobId: string) {
@@ -142,6 +143,23 @@ describe("claimNextRun: exec token", () => {
 
     const run = getRunById(payload.run.id) as Record<string, unknown>;
     expect(run.exec_token_hash).toBeUndefined();
+  });
+
+  it("never leaks the hash through any run-list query", () => {
+    const { agent, job } = agentJob();
+    makeJobDue(job.id);
+    claim(); // mints the exec token → exec_token_hash is set on the run row
+
+    const surfaces: Record<string, unknown>[][] = [
+      listRunsByJob(job.id) as Record<string, unknown>[],
+      listRunsByAgent(agent.id) as Record<string, unknown>[],
+      listRunningRuns() as Record<string, unknown>[],
+      listRunsHistory({ statuses: ["running"] }).runs as Record<string, unknown>[],
+    ];
+    for (const rows of surfaces) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row.exec_token_hash).toBeUndefined();
+    }
   });
 
   it("keeps the token valid on a terminal run (for the runner's trailing postrun)", () => {
@@ -239,15 +257,14 @@ describe("claimNextRun: lock unit (serialize per unit)", () => {
   });
 });
 
-// ── Parallelism across distinct units, unbounded by org ───────────────────────
+// ── Parallelism across distinct units, unbounded by project ───────────────────
 
-describe("claimNextRun: parallel across distinct units / orgs", () => {
-  it("claims distinct agents from different orgs independently", () => {
+describe("claimNextRun: parallel across distinct units / projects", () => {
+  it("claims distinct agents from different projects independently", () => {
     const a = agentJob();
     makeJobDue(a.job.id);
-    // A second org with its own agent + due job.
-    const org2 = createOrg("Beta")!;
-    const project2 = createProject(org2.id, "Site")!;
+    // A second project with its own agent + due job.
+    const project2 = createProject("Other Site")!;
     const agent2 = createAgent(project2.id, "Worker2", undefined, { cli: "claude" });
     const job2 = createJob(project2.id, agent2.id, { name: "Daily", schedule: '{"every":60}' })!;
     makeJobDue(job2.id);
@@ -257,7 +274,7 @@ describe("claimNextRun: parallel across distinct units / orgs", () => {
     const second = claim(runner)!;
     expect(first).toBeTruthy();
     expect(second).toBeTruthy();
-    // Two different agents claimed despite being in different orgs.
+    // Two different agents claimed despite being in different projects.
     const agents = new Set([first.run.id, second.run.id]);
     expect(agents.size).toBe(2);
     expect(claim(runner)).toBeNull();
@@ -301,8 +318,7 @@ describe("claimNextRun: capabilities", () => {
   });
 
   it("an agent with no CLI configured is not claimable by a CLI runner", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "External"); // cli = null
     const job = createJob(project.id, agent.id, { name: "Daily", schedule: '{"every":60}' })!;
     makeJobDue(job.id);
@@ -332,14 +348,22 @@ describe("claimNextRun: remote scope", () => {
     expect(claim(ok, { ...ALL_CAPS, labels: ["gpu"] })).toBeTruthy();
   });
 
-  it("an org-scoped remote runner only claims its org's work", () => {
+  it("an agent-scoped remote runner only claims its own agent's work", () => {
     const a = agentJob();
     makeJobDue(a.job.id);
-    const other = createOrg("Beta")!;
-    const runner = localRunner({ tier: "remote", labels: ["local"], scope: { orgId: other.id } });
-    expect(claim(runner)).toBeNull(); // a.job is in org Acme, not Beta
-    const acme = localRunner({ tier: "remote", labels: ["local"], scope: { orgId: a.org.id } });
-    expect(claim(acme)).toBeTruthy();
+    const other = createAgent(a.project.id, "Other", undefined, { cli: "claude" });
+    const runner = localRunner({
+      tier: "remote",
+      labels: ["local"],
+      scope: { agentId: other.id },
+    });
+    expect(claim(runner)).toBeNull(); // the due job belongs to a different agent
+    const scoped = localRunner({
+      tier: "remote",
+      labels: ["local"],
+      scope: { agentId: a.agent.id },
+    });
+    expect(claim(scoped)).toBeTruthy();
   });
 
   it("an agent-scoped remote runner never claims workflow work", () => {

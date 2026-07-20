@@ -6,21 +6,23 @@ import {
   createDoc,
   createEnvVar,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createTable,
+  getJobById,
   insertRows,
   linkDocToJob,
   linkEnvVarToJob,
   linkTableToJob,
   toggleDocPinned,
   toggleEnvVarPinned,
+  toggleTablePinned,
+  updateJob,
 } from "@/lib/db/queries";
-import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // ---------------------------------------------------------------------------
-// Setup / Teardown — fresh in-memory v2 DB per test
+// Setup / Teardown — fresh in-memory DB per test
 // ---------------------------------------------------------------------------
 
 function freshDb(): Database.Database {
@@ -40,127 +42,206 @@ afterEach(() => {
   resetDb();
 });
 
+const SCHEDULE = '{"every":60}';
+
+function fixture() {
+  const project = createProject("Website")!;
+  const agent = createAgent(project.id, "Dev");
+  const job = createJob(project.id, agent.id, { name: "Build", schedule: SCHEDULE })!;
+  return { project, agent, job };
+}
+
 // ---------------------------------------------------------------------------
-// Resource injection — attachment-driven: a run carries only the resources
-// linked to its job (job_docs / job_env_vars / job_tables), never the
-// org/project tiers at large. Pinned docs/vars/tables reach a job by auto-attaching at
-// job create. Tables are read references: name + id only, no rows/columns.
+// Run-bundle composition: pinned resources of the job's OWN project inject
+// automatically, then resources explicitly linked via job_docs / job_env_vars /
+// job_tables (any project) in link-table rowid order — on a name collision the
+// later assignment wins. Tables are read references: name + id only, no rows
+// or columns.
 // ---------------------------------------------------------------------------
 
 describe("run payload resource injection", () => {
-  it("injects only job-linked resources; unlinked org/project resources are excluded", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
-    const agent = createAgent(project.id, "Dev");
-    const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
+  it("injects pinned own-project resources plus linked ones; everything else is excluded", () => {
+    const { project, agent, job } = fixture();
 
-    // Env vars: one org-level + one project-level linked, the rest unlinked.
-    createEnvVar(org.id, null, "ORG_UNLINKED", "org-unlinked-val");
-    createEnvVar(org.id, project.id, "PROJ_UNLINKED", "proj-unlinked-val");
-    const linkedOrgVar = createEnvVar(org.id, null, "ORG_LINKED", "org-linked-val")!;
-    const linkedProjVar = createEnvVar(org.id, project.id, "PROJ_LINKED", "proj-linked-val")!;
-    linkEnvVarToJob(job.id, linkedOrgVar.id);
-    linkEnvVarToJob(job.id, linkedProjVar.id);
+    // Env vars: one pinned, one linked, one plain — only the first two inject.
+    const pinnedVar = createEnvVar(project.id, "PINNED_VAR", "pinned-val")!;
+    toggleEnvVarPinned(pinnedVar.id);
+    const linkedVar = createEnvVar(project.id, "LINKED_VAR", "linked-val")!;
+    linkEnvVarToJob(job.id, linkedVar.id);
+    createEnvVar(project.id, "PLAIN_VAR", "plain-val");
 
-    // Docs: one linked, one unlinked.
-    const linkedDoc = createDoc(org.id, project.id, "Linked Doc", "linked doc body")!;
-    createDoc(org.id, null, "Unlinked Doc", "unlinked doc body");
+    // Docs: same trio.
+    const pinnedDoc = createDoc(project.id, "Pinned Doc", "pinned body")!;
+    toggleDocPinned(pinnedDoc.id);
+    const linkedDoc = createDoc(project.id, "Linked Doc", "linked body")!;
     linkDocToJob(job.id, linkedDoc.id);
+    createDoc(project.id, "Plain Doc", "plain body");
 
-    // Tables: one linked, one unlinked. Rows exist but must NOT be injected.
-    const linkedDb = createTable(org.id, project.id, "linked_table", [{ name: "v", type: "TEXT" }]);
-    insertRows(linkedDb.id, [{ v: "linked-row" }]);
-    const unlinkedDb = createTable(org.id, null, "unlinked_table", [{ name: "v", type: "TEXT" }]);
-    insertRows(unlinkedDb.id, [{ v: "unlinked-row" }]);
-    linkTableToJob(job.id, linkedDb.id);
+    // Tables: same trio. Rows exist but must NOT be injected.
+    const pinnedTable = createTable(project.id, "pinned_table", [{ name: "v", type: "TEXT" }]);
+    toggleTablePinned(pinnedTable.id);
+    const linkedTable = createTable(project.id, "linked_table", [{ name: "v", type: "TEXT" }]);
+    insertRows(linkedTable.id, [{ v: "linked-row" }]);
+    linkTableToJob(job.id, linkedTable.id);
+    createTable(project.id, "plain_table", [{ name: "v", type: "TEXT" }]);
 
     const run = createRun(job.id, agent.id)!;
     const payload = buildRunPayload(run.id)!;
-    expect(payload).toBeTruthy();
 
-    // Env: only linked vars (either tier) appear; unlinked never do.
-    expect(payload.env.ORG_LINKED).toBe("org-linked-val");
-    expect(payload.env.PROJ_LINKED).toBe("proj-linked-val");
-    expect(payload.env.ORG_UNLINKED).toBeUndefined();
-    expect(payload.env.PROJ_UNLINKED).toBeUndefined();
+    expect(payload.env).toEqual({ PINNED_VAR: "pinned-val", LINKED_VAR: "linked-val" });
 
-    // Docs: only the linked one, with content carried through.
-    expect(payload.docs.map((d) => d.id)).toEqual([linkedDoc.id]);
-    expect(payload.docs[0].content).toBe("linked doc body");
+    expect(payload.docs.map((d) => d.id).sort()).toEqual([pinnedDoc.id, linkedDoc.id].sort());
+    expect(payload.docs.find((d) => d.id === linkedDoc.id)?.content).toBe("linked body");
 
-    // Tables: linked one only, exposed as name + id — no columns, no rows.
-    expect(payload.tables.linked_table).toEqual({ id: linkedDb.id });
-    expect(payload.tables.unlinked_table).toBeUndefined();
+    // Tables: exposed as name → { id } — no columns, no rows.
+    expect(payload.tables).toEqual({
+      pinned_table: { id: pinnedTable.id },
+      linked_table: { id: linkedTable.id },
+    });
   });
 
-  it("links only the resources passed to createJob — pinning has no server-side effect", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
-    const agent = createAgent(project.id, "Dev");
+  it("pinned resources of ANOTHER project never inject — pinning is project-local", () => {
+    const { agent, job } = fixture();
+    const other = createProject("Other")!;
 
-    // Pinning is a dashboard creation-time default (the New Job dialog
-    // pre-checks pinned items); the server links exactly what it's given.
-    const pinnedDoc = createDoc(org.id, null, "Pinned Doc", "pinned body")!;
-    toggleDocPinned(pinnedDoc.id);
-    const explicitDoc = createDoc(org.id, project.id, "Explicit Doc", "explicit body")!;
-    const pinnedVar = createEnvVar(org.id, project.id, "PINNED_VAR", "pinned-val")!;
-    toggleEnvVarPinned(pinnedVar.id);
-
-    // Pass only the explicit doc — the pinned doc and pinned var are NOT passed.
-    const job = createJob(project.id, agent.id, {
-      name: "Build",
-      schedule: '{"every":60}',
-      docIds: [explicitDoc.id],
-    })!;
+    const foreignPinnedDoc = createDoc(other.id, "Foreign Pinned", "f")!;
+    toggleDocPinned(foreignPinnedDoc.id);
+    const foreignPinnedVar = createEnvVar(other.id, "FOREIGN_VAR", "f")!;
+    toggleEnvVarPinned(foreignPinnedVar.id);
+    const foreignPinnedTable = createTable(other.id, "foreign_table", [
+      { name: "v", type: "TEXT" },
+    ]);
+    toggleTablePinned(foreignPinnedTable.id);
 
     const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
-    // Only the explicitly-passed doc is linked; the pinned-but-unpassed
-    // doc/var are excluded (no server-side auto-attach).
-    expect(payload.docs.map((d) => d.id)).toEqual([explicitDoc.id]);
-    expect(payload.env.PINNED_VAR).toBeUndefined();
+    expect(payload.env).toEqual({});
+    expect(payload.docs).toEqual([]);
+    expect(payload.tables).toEqual({});
   });
 
-  it("does not inject resources from another project or any unlinked resource", () => {
-    const org = createOrg("Acme")!;
-    const projA = createProject(org.id, "A")!;
-    const projB = createProject(org.id, "B")!;
-    const agentA = createAgent(projA.id, "DevA");
-    const jobA = createJob(projA.id, agentA.id, { name: "JA", schedule: '{"every":60}' })!;
+  it("cross-project links are legal and inject like any other link", () => {
+    const { agent, job } = fixture();
+    const other = createProject("Other")!;
 
-    // Org- and project-level resources of every kind, none linked to jobA.
-    createEnvVar(org.id, null, "ORG_VAR", "org-val");
-    createDoc(org.id, null, "Org Doc", "org body");
-    const orgDb = createTable(org.id, null, "org_data", [{ name: "v", type: "TEXT" }]);
-    insertRows(orgDb.id, [{ v: "x" }]);
-
-    createEnvVar(org.id, projA.id, "A_VAR", "a-val");
-    createDoc(org.id, projA.id, "A Doc", "a body");
-    createEnvVar(org.id, projB.id, "B_VAR", "b-val");
-    createDoc(org.id, projB.id, "B Doc", "b body");
-
-    const payloadA = buildRunPayload(createRun(jobA.id, agentA.id)!.id)!;
-
-    // Nothing is auto-injected — not org-level, not own-project, not project B.
-    expect(payloadA.env).toEqual({});
-    expect(payloadA.docs).toEqual([]);
-    expect(payloadA.tables).toEqual({});
-  });
-
-  it("project-level table overrides an org-level table of the same name", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Website")!;
-    const agent = createAgent(project.id, "Dev");
-    const job = createJob(project.id, agent.id, { name: "B", schedule: '{"every":60}' })!;
-
-    // An org-level and a project-level table share the logical name "shared",
-    // both linked to a project job. The payload keys tables by name, so the
-    // project-level one must win (project-over-org override).
-    const orgTable = createTable(org.id, null, "shared", [{ name: "v", type: "TEXT" }]);
-    const projTable = createTable(org.id, project.id, "shared", [{ name: "v", type: "TEXT" }]);
-    linkTableToJob(job.id, orgTable.id);
-    linkTableToJob(job.id, projTable.id);
+    const foreignDoc = createDoc(other.id, "Foreign Doc", "foreign body")!;
+    const foreignVar = createEnvVar(other.id, "FOREIGN_VAR", "foreign-val")!;
+    const foreignTable = createTable(other.id, "foreign_table", [{ name: "v", type: "TEXT" }]);
+    linkDocToJob(job.id, foreignDoc.id);
+    linkEnvVarToJob(job.id, foreignVar.id);
+    linkTableToJob(job.id, foreignTable.id);
 
     const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
-    expect(payload.tables.shared).toEqual({ id: projTable.id });
+    expect(payload.docs.map((d) => d.id)).toEqual([foreignDoc.id]);
+    expect(payload.env.FOREIGN_VAR).toBe("foreign-val");
+    expect(payload.tables.foreign_table).toEqual({ id: foreignTable.id });
+  });
+
+  it("a doc that is both pinned and linked appears once", () => {
+    const { project, agent, job } = fixture();
+    const doc = createDoc(project.id, "Both", "body")!;
+    toggleDocPinned(doc.id);
+    linkDocToJob(job.id, doc.id);
+
+    const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
+    expect(payload.docs.map((d) => d.id)).toEqual([doc.id]);
+  });
+
+  it("unlinking a resource stops it being injected", () => {
+    const { project, agent, job } = fixture();
+    const doc = createDoc(project.id, "Doc", "body")!;
+    linkDocToJob(job.id, doc.id);
+    expect(buildRunPayload(createRun(job.id, agent.id)!.id)!.docs.map((d) => d.id)).toEqual([
+      doc.id,
+    ]);
+
+    updateJob(job.id, { docIds: [] });
+    expect(buildRunPayload(createRun(job.id, agent.id)!.id)!.docs).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Name-collision precedence: composition assigns pinned first, then linked in
+// link order — the later assignment wins.
+// ---------------------------------------------------------------------------
+
+describe("name-collision precedence", () => {
+  it("a linked env var overrides a pinned same-name var from the job's project", () => {
+    const { project, agent, job } = fixture();
+    const other = createProject("Other")!;
+
+    const pinned = createEnvVar(project.id, "API_BASE", "https://own.example")!;
+    toggleEnvVarPinned(pinned.id);
+    const linked = createEnvVar(other.id, "API_BASE", "https://linked.example")!;
+    linkEnvVarToJob(job.id, linked.id);
+
+    const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
+    expect(payload.env.API_BASE).toBe("https://linked.example");
+  });
+
+  it("between two linked tables of one logical name, the later link wins", () => {
+    const { project, agent } = fixture();
+    const other = createProject("Other")!;
+    // Both projects own a table with the logical name "shared"; the physical
+    // table_name is globally unique via the id suffix, so both can exist.
+    const tableA = createTable(project.id, "shared", [{ name: "v", type: "TEXT" }]);
+    const tableB = createTable(other.id, "shared", [{ name: "v", type: "TEXT" }]);
+
+    const jobAB = createJob(project.id, agent.id, { name: "AB", schedule: SCHEDULE })!;
+    linkTableToJob(jobAB.id, tableA.id);
+    linkTableToJob(jobAB.id, tableB.id);
+    expect(buildRunPayload(createRun(jobAB.id, agent.id)!.id)!.tables.shared).toEqual({
+      id: tableB.id,
+    });
+
+    // Reverse link order on a sibling job — the other table wins there.
+    const jobBA = createJob(project.id, agent.id, { name: "BA", schedule: SCHEDULE })!;
+    linkTableToJob(jobBA.id, tableB.id);
+    linkTableToJob(jobBA.id, tableA.id);
+    expect(buildRunPayload(createRun(jobBA.id, agent.id)!.id)!.tables.shared).toEqual({
+      id: tableA.id,
+    });
+  });
+
+  it("between two linked env vars of one name, link order decides — not creation order", () => {
+    const { agent, job } = fixture();
+    const otherA = createProject("Other A")!;
+    const otherB = createProject("Other B")!;
+    const older = createEnvVar(otherA.id, "TOKEN", "older")!;
+    const newer = createEnvVar(otherB.id, "TOKEN", "newer")!;
+
+    // Link the newer var first, the older second: the older (later link) wins.
+    linkEnvVarToJob(job.id, newer.id);
+    linkEnvVarToJob(job.id, older.id);
+
+    const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
+    expect(payload.env.TOKEN).toBe("older");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Link atomicity — createJob/updateJob link resources inside one transaction;
+// a bad resource id (FK violation) rolls the whole write back.
+// ---------------------------------------------------------------------------
+
+describe("link atomicity", () => {
+  it("a createJob with an unknown doc id rolls back — no job row left behind", () => {
+    const { project, agent } = fixture();
+    expect(() =>
+      createJob(project.id, agent.id, { name: "Bad", schedule: SCHEDULE, docIds: ["nope"] }),
+    ).toThrow(/FOREIGN KEY/);
+    const count = getDb().prepare(`SELECT COUNT(*) as n FROM jobs`).get() as { n: number };
+    expect(count.n).toBe(1); // only the fixture's job remains
+  });
+
+  it("an updateJob with an unknown doc id rolls back — name and existing links survive", () => {
+    const { project, job } = fixture();
+    const doc = createDoc(project.id, "Doc", "body")!;
+    linkDocToJob(job.id, doc.id);
+
+    expect(() => updateJob(job.id, { name: "renamed", docIds: ["nope"] })).toThrow(/FOREIGN KEY/);
+
+    const after = getJobById(job.id)!;
+    expect(after.name).toBe("Build"); // the whole update rolled back, not just the links
+    expect(after.docs.map((d: { id: string }) => d.id)).toEqual([doc.id]);
   });
 });

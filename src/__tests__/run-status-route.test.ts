@@ -3,10 +3,8 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
 import {
-  addMembership,
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createSession,
@@ -66,14 +64,12 @@ function statusBody(status: string): ReqInit {
 }
 
 function fixture() {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Site")!;
-  const editor = createUser("e@x.com", "pw", "Editor")!;
-  addMembership(editor.id, org.id, "editor");
+  const project = createProject("Site")!;
+  const user = createUser("e@x.com", "pw", "Eve")!;
   const agent = createAgent(project.id, "Dev");
   const job = createJob(project.id, agent.id, { name: "AJ", schedule: '{"every":60}' })!;
   const run = createRun(job.id, agent.id)!; // born 'running'
-  return { org, project, editor, agent, job, run };
+  return { project, user, agent, job, run };
 }
 
 function statusActivity(runId: string) {
@@ -84,11 +80,11 @@ function statusActivity(runId: string) {
 
 describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
   it("returns 409 (not 400) for a valid status that is an illegal transition", async () => {
-    const { run, editor } = fixture();
+    const { run, user } = fixture();
     // running -> done is legal; done -> running is not.
     updateRunStatus(run.id, "done");
     const res = await runStatusPUT(
-      userReq(editor.id, "http://x/", statusBody("running")),
+      userReq(user.id, "http://x/", statusBody("running")),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(409);
@@ -99,9 +95,9 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
   });
 
   it("still returns 400 for a value outside the status enum", async () => {
-    const { run, editor } = fixture();
+    const { run, user } = fixture();
     const res = await runStatusPUT(
-      userReq(editor.id, "http://x/", statusBody("bogus")),
+      userReq(user.id, "http://x/", statusBody("bogus")),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(400);
@@ -109,10 +105,10 @@ describe("PUT /api/runs/:id/status — lifecycle guard (HTTP layer)", () => {
   });
 
   it("permits the done -> failed override edge reserved for the postrun gate", async () => {
-    const { run, editor } = fixture();
+    const { run, user } = fixture();
     updateRunStatus(run.id, "done");
     const res = await runStatusPUT(
-      userReq(editor.id, "http://x/", statusBody("failed")),
+      userReq(user.id, "http://x/", statusBody("failed")),
       ctx({ id: run.id }),
     );
     expect(res.status).toBe(200);
@@ -159,8 +155,7 @@ describe("PUT /api/runs/:id/status — activity logging", () => {
 
 describe("kill advances the schedule", () => {
   it("a killed run rolls next_run_at forward, like the other terminal states", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
+    const project = createProject("Site")!;
     const agent = createAgent(project.id, "Dev");
     const job = createJob(project.id, agent.id, { name: "Daily", schedule: '{"every":60}' })!;
     // Make the job overdue so the advance is observable as a jump to the future.

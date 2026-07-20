@@ -27,20 +27,10 @@ describe("scoped()", () => {
   it("returns the path unchanged when no scope is given", () => {
     expect(scoped("/api/runs")).toBe("/api/runs");
     expect(scoped("/api/runs", {})).toBe("/api/runs");
-    expect(scoped("/api/runs", { orgId: null, projectId: null })).toBe("/api/runs");
+    expect(scoped("/api/runs", { projectId: null })).toBe("/api/runs");
   });
 
-  it("appends orgId only", () => {
-    expect(scoped("/api/runs", { orgId: "o1" })).toBe("/api/runs?orgId=o1");
-  });
-
-  it("appends both orgId and projectId", () => {
-    expect(scoped("/api/runs", { orgId: "o1", projectId: "p1" })).toBe(
-      "/api/runs?orgId=o1&projectId=p1",
-    );
-  });
-
-  it("appends projectId only", () => {
+  it("appends the projectId", () => {
     expect(scoped("/api/agents", { projectId: "p1" })).toBe("/api/agents?projectId=p1");
   });
 
@@ -50,10 +40,8 @@ describe("scoped()", () => {
     );
   });
 
-  it("ignores nullish scope values", () => {
-    expect(scoped("/api/runs", { orgId: undefined, projectId: "p1" })).toBe(
-      "/api/runs?projectId=p1",
-    );
+  it("ignores a nullish projectId", () => {
+    expect(scoped("/api/runs", { projectId: undefined })).toBe("/api/runs");
   });
 });
 
@@ -66,14 +54,14 @@ describe("qk factory", () => {
   });
 
   it("carries the scope id in the list-key tail", () => {
-    const key = qk.runs.list({ orgId: "o1", projectId: "p1" });
+    const key = qk.runs.list({ projectId: "p1" });
     expect(key[0]).toBe("runs");
-    expect(key[key.length - 1]).toEqual({ orgId: "o1", projectId: "p1" });
+    expect(key[key.length - 1]).toEqual({ projectId: "p1" });
   });
 
-  it("normalizes missing scope to nulls so identity is by value", () => {
-    expect(qk.docs.list()).toEqual(["docs", "list", { orgId: null, projectId: null }]);
-    expect(qk.docs.list({})).toEqual(["docs", "list", { orgId: null, projectId: null }]);
+  it("normalizes a missing scope to null so identity is by value", () => {
+    expect(qk.docs.list()).toEqual(["docs", "list", { projectId: null }]);
+    expect(qk.docs.list({})).toEqual(["docs", "list", { projectId: null }]);
   });
 
   it("nests detail keys under the domain prefix for prefix invalidation", () => {

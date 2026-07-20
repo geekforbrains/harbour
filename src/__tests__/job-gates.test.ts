@@ -4,7 +4,6 @@ import {
   buildRunPayload,
   createAgent,
   createJob,
-  createOrg,
   createProject,
   createRun,
   createWorkflow,
@@ -39,8 +38,7 @@ afterEach(() => {
 });
 
 function agentJob(data: Parameters<typeof createJob>[2]) {
-  const org = createOrg("Acme")!;
-  const project = createProject(org.id, "Website")!;
+  const project = createProject("Website")!;
   const agent = createAgent(project.id, "Dev");
   return createJob(project.id, agent.id, data)!;
 }
@@ -109,9 +107,8 @@ describe("updateJob: prerun gate", () => {
 // ---------------------------------------------------------------------------
 describe("createWorkflow: gate storage", () => {
   it("persists workflow_runtime + workflow_script", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo hi" },
@@ -155,9 +152,8 @@ describe("buildRunPayload: gate shape", () => {
   });
 
   it("aliases command and workflow to the same gate object for a workflow run", () => {
-    const org = createOrg("Acme")!;
-    const project = createProject(org.id, "Site")!;
-    const wf = createWorkflow(org.id, project.id, {
+    const project = createProject("Site")!;
+    const wf = createWorkflow(project.id, {
       name: "Sync",
       schedule: '{"every":60}',
       workflow: { runtime: "bash", content: "echo sync" },

@@ -8,14 +8,16 @@ import { hashToken } from "@/lib/db/tokens";
 import { verifyPassword as serverVerify } from "@/lib/db/users";
 import {
   hashPassword as cliHash,
-  insertInstanceAdmin,
-  instanceAdminExists,
+  insertUser,
   provisionLocalRunner,
+  userExists,
 } from "../../bin/lib/bootstrap.mjs";
 
 const CLI = path.resolve(__dirname, "../../bin/harbour.mjs");
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
+// Mirrors the users + runners DDL from src/lib/db/schema.ts — the same tables
+// bootstrap.mjs creates on a fresh install (parity asserted below).
 function memDb(): Database.Database {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
@@ -25,7 +27,6 @@ function memDb(): Database.Database {
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT,
       display_name TEXT NOT NULL,
-      is_instance_admin INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -46,15 +47,15 @@ function memDb(): Database.Database {
 }
 
 describe("CLI bootstrap helpers", () => {
-  it("instanceAdminExists flips once an admin is inserted", () => {
+  it("userExists flips once a user is inserted", () => {
     const db = memDb();
-    expect(instanceAdminExists(db)).toBe(false);
-    insertInstanceAdmin(db, {
+    expect(userExists(db)).toBe(false);
+    insertUser(db, {
       email: "a@example.com",
       displayName: "A",
       password: "supersecret123",
     });
-    expect(instanceAdminExists(db)).toBe(true);
+    expect(userExists(db)).toBe(true);
   });
 
   it("CLI-produced hashes verify with the server's argon2id verifier (parity)", () => {
@@ -99,7 +100,7 @@ describe("CLI bootstrap helpers", () => {
   });
 });
 
-describe("CLI `harbour admin create` (subprocess)", () => {
+describe("CLI `harbour user create` (subprocess)", () => {
   let home: string;
 
   beforeEach(() => {
@@ -109,11 +110,11 @@ describe("CLI `harbour admin create` (subprocess)", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  function run(args: string[]) {
+  function run(args: string[], extraEnv: Record<string, string> = {}) {
     try {
       const stdout = execFileSync("node", [CLI, ...args], {
         cwd: REPO_ROOT,
-        env: { ...process.env, HARBOUR_HOME: home },
+        env: { ...process.env, HARBOUR_HOME: home, ...extraEnv },
         encoding: "utf-8",
       });
       return { code: 0, stdout, stderr: "" };
@@ -123,32 +124,40 @@ describe("CLI `harbour admin create` (subprocess)", () => {
     }
   }
 
-  it("creates the first instance admin and auto-provisions the local runner", () => {
+  it("creates the first user and auto-provisions the local runner", () => {
     const r = run([
-      "admin",
+      "user",
       "create",
       "--email",
-      "admin@example.com",
+      "user@example.com",
       "--name",
-      "Admin",
+      "User",
       "--password",
       "supersecret123",
     ]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain("Instance admin created");
+    expect(r.stdout).toContain("User created: user@example.com");
     expect(r.stdout).toContain("Local runner provisioned");
     // The runner token is on disk — a fresh install can run work immediately.
     expect(fs.readFileSync(path.join(home, "runner.token"), "utf-8").trim()).toMatch(/^hbrn_/);
   });
 
+  it("accepts the password from HARBOUR_USER_PASSWORD", () => {
+    const r = run(["user", "create", "--email", "user@example.com", "--name", "User"], {
+      HARBOUR_USER_PASSWORD: "supersecret123",
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("User created: user@example.com");
+  });
+
   it("rejects a password under 12 characters", () => {
     const r = run([
-      "admin",
+      "user",
       "create",
       "--email",
-      "admin@example.com",
+      "user@example.com",
       "--name",
-      "Admin",
+      "User",
       "--password",
       "elevenchars",
     ]);
@@ -156,26 +165,26 @@ describe("CLI `harbour admin create` (subprocess)", () => {
     expect(r.stderr + r.stdout).toContain("at least 12 characters");
   });
 
-  it("refuses to create a second instance admin without --force", () => {
+  it("refuses to create a second user without --force", () => {
     const first = run([
-      "admin",
+      "user",
       "create",
       "--email",
-      "admin@example.com",
+      "user@example.com",
       "--name",
-      "Admin",
+      "User",
       "--password",
       "supersecret123",
     ]);
     expect(first.code).toBe(0);
 
     const second = run([
-      "admin",
+      "user",
       "create",
       "--email",
-      "admin2@example.com",
+      "user2@example.com",
       "--name",
-      "Admin2",
+      "User2",
       "--password",
       "supersecret123",
     ]);
@@ -184,12 +193,12 @@ describe("CLI `harbour admin create` (subprocess)", () => {
 
     // --force overrides.
     const forced = run([
-      "admin",
+      "user",
       "create",
       "--email",
-      "admin2@example.com",
+      "user2@example.com",
       "--name",
-      "Admin2",
+      "User2",
       "--password",
       "supersecret123",
       "--force",
