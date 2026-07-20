@@ -1,62 +1,62 @@
 import { NextResponse } from "next/server";
-import { withProjectAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
-import { optionalBoolean, optionalString, readJson, requireNonEmptyString } from "@/lib/http";
+import {
+  optionalBoolean,
+  optionalString,
+  readJson,
+  requireNonEmptyString,
+  resolveProjectId,
+} from "@/lib/http";
 import { InvalidNameError, NameCollisionError } from "@/lib/slug";
 
-export const GET = withProjectAuth(
-  async (req) => {
-    const projectId = req.nextUrl.searchParams.get("projectId")!;
-    return NextResponse.json(listAgents(projectId));
-  },
-  { role: "viewer" },
-);
+export const GET = withAuthenticatedUser(async (req) => {
+  const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
+  return NextResponse.json(listAgents(projectId));
+});
 
-export const POST = withProjectAuth(
-  async (req) => {
-    const projectId = req.nextUrl.searchParams.get("projectId")!;
-    const body = await readJson(req);
-    const name = requireNonEmptyString(body.name, "name");
-    const description = optionalString(body.description, "description");
-    const model = optionalString(body.model, "model");
-    const color = optionalString(body.color, "color");
-    const eager = optionalBoolean(body.eager, "eager");
-    const placement = optionalString(body.placement, "placement");
-    const thinking = optionalString(body.thinking, "thinking");
-    const cli = body.cli;
-    if (!cli) {
-      return NextResponse.json({ error: "cli is required" }, { status: 400 });
+export const POST = withAuthenticatedUser(async (req) => {
+  const body = await readJson(req);
+  const projectId = resolveProjectId(req, body);
+  const name = requireNonEmptyString(body.name, "name");
+  const description = optionalString(body.description, "description");
+  const model = optionalString(body.model, "model");
+  const color = optionalString(body.color, "color");
+  const eager = optionalBoolean(body.eager, "eager");
+  const placement = optionalString(body.placement, "placement");
+  const thinking = optionalString(body.thinking, "thinking");
+  const cli = body.cli;
+  if (!cli) {
+    return NextResponse.json({ error: "cli is required" }, { status: 400 });
+  }
+  const cliError = validateCli(cli);
+  if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
+  const thinkingError = validateThinking(cli, thinking);
+  if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
+
+  let agent: ReturnType<typeof createAgent>;
+  try {
+    agent = createAgent(projectId, name, description, {
+      cli: cli as string,
+      model,
+      thinking,
+      color,
+      eager: !!eager,
+      placement: placement ?? undefined,
+    });
+  } catch (err) {
+    if (err instanceof NameCollisionError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    const cliError = validateCli(cli);
-    if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
-    const thinkingError = validateThinking(cli, thinking);
-    if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
-
-    let agent: ReturnType<typeof createAgent>;
-    try {
-      agent = createAgent(projectId, name, description, {
-        cli: cli as string,
-        model,
-        thinking,
-        color,
-        eager: !!eager,
-        placement: placement ?? undefined,
-      });
-    } catch (err) {
-      if (err instanceof NameCollisionError) {
-        return NextResponse.json({ error: err.message }, { status: 409 });
-      }
-      if (err instanceof InvalidNameError) {
-        return NextResponse.json({ error: err.message }, { status: 400 });
-      }
-      throw err;
+    if (err instanceof InvalidNameError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
+    throw err;
+  }
 
-    // No per-agent runner config to write: the unified runner claims this
-    // agent's work via POST /api/runner/claim (the DB `runners` table is the
-    // registry), and cli/model/thinking are resolved live from the claim payload.
-    return NextResponse.json(agent, { status: 201 });
-  },
-  { role: "editor" },
-);
+  // No per-agent runner config to write: the unified runner claims this
+  // agent's work via POST /api/runner/claim (the DB `runners` table is the
+  // registry), and cli/model/thinking are resolved live from the claim payload.
+  return NextResponse.json(agent, { status: 201 });
+});

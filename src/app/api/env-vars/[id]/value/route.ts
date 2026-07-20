@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import { withResourceAuth } from "@/lib/auth";
+import { withAuthenticatedUser } from "@/lib/auth";
 import { getEnvVarById, getEnvVarDecryptedValue } from "@/lib/db/queries";
 
-// Reveals a decrypted secret — require editor, not viewer.
-export const GET = withResourceAuth("env_var", "id", { role: "editor" })(
-  async (_req, _auth, { params }) => {
-    const { id } = await params;
-    const envVar = getEnvVarById(id);
-    if (!envVar) return NextResponse.json({ error: "Env var not found" }, { status: 404 });
+export const GET = withAuthenticatedUser(async (_req, _auth, { params }) => {
+  const { id } = await params;
+  const envVar = getEnvVarById(id);
+  if (!envVar) return NextResponse.json({ error: "Env var not found" }, { status: 404 });
 
-    const value = getEnvVarDecryptedValue(id);
-    return NextResponse.json({ value });
-  },
-);
+  const value = getEnvVarDecryptedValue(id);
+  return NextResponse.json({ value });
+});
