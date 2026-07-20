@@ -4,7 +4,7 @@ import { expect, test as setup } from "@playwright/test";
 // all other e2e tests (the canonical Playwright auth pattern).
 setup("authenticate", async ({ page }) => {
   await page.goto("/login");
-  await page.fill("#email", "admin@e2e.local");
+  await page.fill("#email", "user@e2e.local");
   await page.fill("#password", "e2e-test-password");
   await page.getByRole("button", { name: /sign in/i }).click();
   await page.waitForURL("/");

@@ -1,3 +1,6 @@
+// One-off generator for the icons already committed in public/. `sharp` is
+// deliberately NOT a project dependency — to (re)run this, install it
+// temporarily: `npm i --no-save sharp && node scripts/generate-icons.mjs`.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";

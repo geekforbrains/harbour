@@ -551,8 +551,8 @@ export const WORKSPACE_SEGMENT_RE = /^[a-z0-9-]+$/;
 
 /**
  * Resolve (and create) a workspace directory from pre-slugged path segments:
- * ensureWorkingDir(["acme", "website", "dev-agent"]) →
- * ~/.harbour/workspaces/acme/website/dev-agent.
+ * ensureWorkingDir(["website", "dev-agent"]) →
+ * ~/.harbour/workspaces/website/dev-agent.
  *
  * Segments are validated, never transformed: re-slugifying runner-side could
  * map two distinct server slugs onto one directory, silently reintroducing

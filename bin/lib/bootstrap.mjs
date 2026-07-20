@@ -1,15 +1,15 @@
-// CLI bootstrap: create the first instance admin on a fresh harbour install.
+// CLI bootstrap: create the first user on a fresh harbour install.
 //
 // Bootstrap is a CLI flow (not a web page) — the operator has shell access on
 // the host, so first-run setup belongs there with no unauthenticated web route
-// to lock down. `harbour setup` is interactive; `harbour admin create` takes
-// flags. Both refuse to run once an instance admin exists (use --force to add
-// an extra one anyway).
+// to lock down. `harbour setup` is interactive; `harbour user create` takes
+// flags. Both refuse to run once a user exists (use --force to add an extra
+// one anyway).
 //
 // This module talks to the SQLite DB directly with better-sqlite3 + the same
 // argon2id hashing the server uses, so it works whether or not the Next.js
 // server is running. It only needs the `users` table; the server creates the
-// full v2 schema on its first connection. The CREATE here is idempotent and
+// full schema on its first connection. The CREATE here is idempotent and
 // byte-identical to src/lib/db/schema.ts so a CLI-bootstrapped DB matches a
 // server-bootstrapped one.
 
@@ -69,9 +69,8 @@ function openDb() {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
-      password_hash TEXT,
+      password_hash TEXT,                 -- NULLABLE: created without one, set-password link not yet consumed
       display_name TEXT NOT NULL,
-      is_instance_admin INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -79,12 +78,12 @@ function openDb() {
     CREATE TABLE IF NOT EXISTS runners (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      token_hash TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,       -- sha256 of the bearer token (hbrn_…)
       tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
-      labels TEXT NOT NULL DEFAULT '[]',
-      capabilities TEXT,
-      scope TEXT,
-      last_polled_at INTEGER,
+      labels TEXT NOT NULL DEFAULT '[]',     -- JSON: placement labels this token is authorized to serve
+      capabilities TEXT,                     -- JSON {kinds,clis,labels}: last-advertised host capabilities (health/display)
+      scope TEXT,                            -- JSON {agentId?} or NULL (unscoped — local tier)
+      last_polled_at INTEGER,                -- updated on every claim/peek; drives the health surface
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -94,22 +93,22 @@ function openDb() {
   return db;
 }
 
-/** True if any instance admin already exists. */
-export function instanceAdminExists(db) {
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE is_instance_admin = 1`).get();
+/** True if any user already exists. */
+export function userExists(db) {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM users`).get();
   return row.n > 0;
 }
 
 /**
- * Insert an instance admin. Throws on duplicate email. argon2id hash matches the
+ * Insert a user. Throws on duplicate email. argon2id hash matches the
  * server's verifier. Exported so tests can exercise it against an in-memory DB.
  */
-export function insertInstanceAdmin(db, { email, displayName, password }) {
+export function insertUser(db, { email, displayName, password }) {
   const id = crypto.randomUUID();
   const passwordHash = hashSync(password, ARGON2_OPTS);
   db.prepare(
-    `INSERT INTO users (id, email, password_hash, display_name, is_instance_admin)
-     VALUES (?, ?, ?, ?, 1)`,
+    `INSERT INTO users (id, email, password_hash, display_name)
+     VALUES (?, ?, ?, ?)`,
   ).run(id, email, passwordHash, displayName);
   return id;
 }
@@ -118,7 +117,7 @@ export function insertInstanceAdmin(db, { email, displayName, password }) {
  * Provision the local runner if one doesn't exist yet: insert a `tier='local'`
  * row into the registry and write its token to ~/.harbour/runner.token (0600).
  * Idempotent — a second call is a no-op once a local runner exists, so it's safe
- * to run on every setup / admin-create. This is what makes a fresh install "just
+ * to run on every setup / user-create. This is what makes a fresh install "just
  * work": no minting, no connect blobs. Returns { provisioned, id }.
  */
 export function provisionLocalRunner(db) {
@@ -174,10 +173,10 @@ function promptHidden(rl, question) {
 }
 
 /**
- * Shared creation path: validate, guard against an existing admin (unless
+ * Shared creation path: validate, guard against an existing user (unless
  * forced), insert. Returns { id, email }.
  */
-function createAdmin({ email, displayName, password, force }) {
+function createUser({ email, displayName, password, force }) {
   if (!isValidEmail(email)) throw new Error("A valid email is required.");
   if (!displayName?.trim()) throw new Error("A display name is required.");
   if (!password || password.length < 12)
@@ -185,15 +184,15 @@ function createAdmin({ email, displayName, password, force }) {
 
   const db = openDb();
   try {
-    if (!force && instanceAdminExists(db)) {
+    if (!force && userExists(db)) {
       throw new Error(
-        "An instance admin already exists. Bootstrap is first-run only. " +
+        "A user already exists. Bootstrap is first-run only. " +
           "Add more users from the dashboard's Users page, or pass --force to override.",
       );
     }
     const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
     if (existing) throw new Error(`A user with email ${email} already exists.`);
-    const id = insertInstanceAdmin(db, { email, displayName: displayName.trim(), password });
+    const id = insertUser(db, { email, displayName: displayName.trim(), password });
     return { id, email };
   } finally {
     db.close();
@@ -207,17 +206,17 @@ export async function runSetup(argv = []) {
   try {
     // Early guard so we don't ask for input we can't use.
     const db = openDb();
-    const exists = instanceAdminExists(db);
+    const exists = userExists(db);
     db.close();
     if (exists && !force) {
       console.error(
-        "An instance admin already exists. Bootstrap is first-run only.\n" +
+        "A user already exists. Bootstrap is first-run only.\n" +
           "Add more users from the dashboard's Users page, or run with --force to override.",
       );
       process.exit(1);
     }
 
-    console.log("Harbour first-run setup — create the instance admin.\n");
+    console.log("Harbour first-run setup — create your first user.\n");
     const email = (await prompt(rl, "Email: ")).trim();
     const displayName = (await prompt(rl, "Display name: ")).trim();
     // Loop on the password pair: a typo or mismatch warns and re-prompts from
@@ -237,8 +236,8 @@ export async function runSetup(argv = []) {
       break;
     }
 
-    const { email: created } = createAdmin({ email, displayName, password, force });
-    console.log(`\nInstance admin created: ${created}`);
+    const { email: created } = createUser({ email, displayName, password, force });
+    console.log(`\nUser created: ${created}`);
 
     // Auto-provision the local runner so a fresh install "just works".
     const rdb = openDb();
@@ -249,7 +248,9 @@ export async function runSetup(argv = []) {
       rdb.close();
     }
     if (provisioned.provisioned) {
-      console.log("Local runner provisioned — token at ~/.harbour/runner.token (0600).");
+      console.log(
+        `Local runner provisioned — token at ${path.join(harbourHome(), "runner.token")} (0600).`,
+      );
       const answer = (
         await prompt(rl, "Install the runner service to poll for work every 60s? [Y/n]: ")
       )
@@ -264,7 +265,7 @@ export async function runSetup(argv = []) {
       }
     }
 
-    console.log("\nLog in at the dashboard, then create your first org, project, and users.");
+    console.log("\nLog in at the dashboard, then create your first project.");
   } finally {
     rl.close();
   }
@@ -294,31 +295,33 @@ function parseFlags(argv) {
   return out;
 }
 
-/** `harbour admin create --email .. --name .. --password ..` — non-interactive. */
-export async function runAdminCreate(argv = []) {
+/** `harbour user create --email .. --name .. --password ..` — non-interactive. */
+export async function runUserCreate(argv = []) {
   const flags = parseFlags(argv);
   const email = flags.email;
   const displayName = flags.name || flags["display-name"];
-  const password = flags.password || process.env.HARBOUR_ADMIN_PASSWORD;
+  const password = flags.password || process.env.HARBOUR_USER_PASSWORD;
   const force = !!flags.force;
 
   if (!email || !displayName || !password) {
     console.error(
-      "Usage: harbour admin create --email <email> --name <display name> --password <password> [--force]\n" +
-        "       (password may also come from HARBOUR_ADMIN_PASSWORD)",
+      "Usage: harbour user create --email <email> --name <display name> --password <password> [--force]\n" +
+        "       (password may also come from HARBOUR_USER_PASSWORD)",
     );
     process.exit(1);
   }
 
   try {
-    const { email: created } = createAdmin({ email, displayName, password, force });
-    console.log(`Instance admin created: ${created}`);
+    const { email: created } = createUser({ email, displayName, password, force });
+    console.log(`User created: ${created}`);
     // Auto-provision the local runner (no service install in the non-interactive
     // path — the caller schedules it with `harbour install` when ready).
     const rdb = openDb();
     try {
       if (provisionLocalRunner(rdb).provisioned) {
-        console.log("Local runner provisioned — token at ~/.harbour/runner.token (0600).");
+        console.log(
+          `Local runner provisioned — token at ${path.join(harbourHome(), "runner.token")} (0600).`,
+        );
       }
     } finally {
       rdb.close();

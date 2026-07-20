@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Playwright webServer command: reset the isolated e2e Harbour home, seed the
-// instance admin, then start a dev server on the e2e port. Keeping reset +
+// first user, then start a dev server on the e2e port. Keeping reset +
 // seed + start in one script avoids ordering races between Playwright's
 // globalSetup and webServer startup.
 import { spawn, spawnSync } from "node:child_process";
@@ -24,12 +24,12 @@ const seed = spawnSync(
   "node",
   [
     "bin/harbour.mjs",
-    "admin",
+    "user",
     "create",
     "--email",
-    "admin@e2e.local",
+    "user@e2e.local",
     "--name",
-    "E2E Admin",
+    "E2E User",
     "--password",
     "e2e-test-password",
   ],

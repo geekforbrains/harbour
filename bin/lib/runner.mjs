@@ -86,7 +86,7 @@ Upload an attachment (file) to this run:
 Download an attachment file (use the url shown in the Attachments section):
   curl -H "Authorization: Bearer ${apiKey}" -o /tmp/file.png "<attachment url>"
 
-Full API spec (docs, databases, etc): ${guideUrl}
+Full API spec (docs, tables, etc): ${guideUrl}
 `;
 }
 
@@ -299,7 +299,7 @@ export function buildPrompt(payload, apiKey, isResume) {
   // given (no rows/columns inlined). The agent reads rows via `read_rows` and
   // writes via `insert_rows`/update/delete, all targeted by the table id (see the
   // API section). Without this block the agent has no way to learn its table ids:
-  // the list endpoint is org-scoped and rejects the run's exec token.
+  // the list endpoint rejects the run's exec token.
   if (payload.tables && Object.keys(payload.tables).length > 0) {
     prompt += `## Tables\n\nStructured SQLite tables attached to this job, keyed by name. Use the \`id\` shown here to read rows (\`read_rows\`: GET \`.../api/tables/<id>/rows\`) and write them (\`insert_rows\`: POST, plus PUT/DELETE \`.../rows/<_id>\`) — see the Harbour API section for the full URLs and auth. Don't open the database file directly.\n\n`;
     for (const [name, info] of Object.entries(payload.tables)) {
@@ -850,7 +850,7 @@ export async function processNextRun(payload, { url, execToken }) {
 
   // ---- Workspace resolution (issue #40) -------------------------------------
   // Workspaces mirror the data-model hierarchy on disk —
-  // ~/.harbour/workspaces/<org-slug>/<project-slug>/<agent-slug>/ — built from
+  // ~/.harbour/workspaces/<project-slug>/<agent-slug>/ — built from
   // the payload's `workspace` block of server-assigned, immutable slugs.
   // Resolution ladder:
   //   1. A resumed session's pinned cwd, verbatim. Claude CLI sessions are
@@ -874,13 +874,8 @@ export async function processNextRun(payload, { url, execToken }) {
       mkdirSync(workingDir, { recursive: true });
     } else if (existingSession) {
       workingDir = ensureWorkingDir([legacySlug]);
-    } else if (
-      ws &&
-      typeof ws.org === "string" &&
-      typeof ws.project === "string" &&
-      typeof ws.agent === "string"
-    ) {
-      workingDir = ensureWorkingDir([ws.org, ws.project, ws.agent]);
+    } else if (ws && typeof ws.project === "string" && typeof ws.agent === "string") {
+      workingDir = ensureWorkingDir([ws.project, ws.agent]);
     } else {
       console.warn(
         `  [${agentName}] Server sent no workspace block (predates workspace scoping) — using the legacy flat workspace layout.`,

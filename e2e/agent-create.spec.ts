@@ -5,17 +5,10 @@ import { expect, test } from "@playwright/test";
 // "Dev Agent") is rejected with a 409 — and the create dialog must surface the
 // server's message inline instead of swallowing it.
 
-test("agent create dialog surfaces the server's name-collision error", async ({
-  page,
-  baseURL,
-}) => {
-  // Seed org → project → first agent over the API with the logged-in session.
+test("agent create dialog surfaces the server's name-collision error", async ({ page }) => {
+  // Seed project → first agent over the API with the logged-in session.
   // (remote: true skips local-runner registration; the collision is the point.)
-  const orgRes = await page.request.post("/api/orgs", { data: { name: "Slug E2E Org" } });
-  expect(orgRes.ok()).toBeTruthy();
-  const org = await orgRes.json();
-
-  const projectRes = await page.request.post(`/api/projects?orgId=${org.id}`, {
+  const projectRes = await page.request.post("/api/projects", {
     data: { name: "Slug E2E Project" },
   });
   expect(projectRes.ok()).toBeTruthy();
@@ -33,8 +26,7 @@ test("agent create dialog surfaces the server's name-collision error", async ({
   const installed = tools.find((t) => t.installed);
   test.skip(!installed, "no agent CLI installed on this machine");
 
-  // Activate the seeded org/project the way the switcher would persist them.
-  await page.context().addCookies([{ name: "harbour_org", value: org.id, url: baseURL }]);
+  // Activate the seeded project the way the switcher would persist it.
   await page.addInitScript(
     (id: string) => localStorage.setItem("harbour_active_project", id),
     project.id,

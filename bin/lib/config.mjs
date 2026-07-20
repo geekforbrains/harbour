@@ -67,12 +67,6 @@ export function saveRunnerCredentials({ token, url }) {
   if (url) fs.writeFileSync(runnerUrlFile(), `${url.replace(/\/$/, "")}\n`);
 }
 
-export function clearRunnerCredentials() {
-  for (const f of [runnerTokenFile(), runnerUrlFile()]) {
-    if (fs.existsSync(f)) fs.rmSync(f);
-  }
-}
-
 // Session tracking: run_id -> { sessionId, cli, cwd }
 export function loadSessions() {
   const file = sessionsFile();
