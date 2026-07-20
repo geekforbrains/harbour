@@ -14,9 +14,9 @@ export type StalledPlacement = { placement: string; count: number };
 export function useRunnerHealth(opts?: { enabled?: boolean }) {
   const s = useScope();
   return useQuery<{ stalled: StalledPlacement[] }>({
-    queryKey: ["runner-health", s.orgId, s.projectId ?? null],
+    queryKey: ["runner-health", s.projectId ?? null],
     queryFn: () => apiFetch<{ stalled: StalledPlacement[] }>(scoped("/api/runs/health", s)),
-    enabled: (opts?.enabled ?? true) && !!s.orgId,
+    enabled: opts?.enabled ?? true,
     refetchInterval: 15_000,
   });
 }

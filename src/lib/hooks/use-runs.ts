@@ -19,7 +19,7 @@ export function useRuns(opts?: { enabled?: boolean; refetchInterval?: number }) 
   return useQuery<RunsBundle>({
     queryKey: qk.runs.list(scope),
     queryFn: () => apiFetch<RunsBundle>(scoped("/api/runs", scope)),
-    enabled: (opts?.enabled ?? true) && !!scope.orgId,
+    enabled: opts?.enabled ?? true,
     refetchInterval: opts?.refetchInterval,
   });
 }
@@ -33,18 +33,8 @@ export function useWaitingCount(opts?: { enabled?: boolean; refetchInterval?: nu
       const data = await apiFetch<unknown>(scoped("/api/runs?filter=waiting", scope));
       return Array.isArray(data) ? data.length : 0;
     },
-    enabled: (opts?.enabled ?? true) && !!scope.orgId,
+    enabled: opts?.enabled ?? true,
     refetchInterval: opts?.refetchInterval,
-  });
-}
-
-/** Paginated run history. Pass extra filter params already serialized into `query`. */
-export function useRunsHistory(query: string, opts?: { enabled?: boolean }) {
-  const scope = useScope();
-  return useQuery({
-    queryKey: [...qk.runs.history(scope), query],
-    queryFn: () => apiFetch(scoped(`/api/runs/history${query ? `?${query}` : ""}`, scope)),
-    enabled: (opts?.enabled ?? true) && !!scope.orgId,
   });
 }
 

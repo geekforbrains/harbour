@@ -5,16 +5,22 @@ import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
 
-export type EnvVar = { id: string; name: string; pinned: number; [key: string]: unknown };
+export type EnvVar = {
+  id: string;
+  name: string;
+  pinned: number;
+  project_name?: string;
+  [key: string]: unknown;
+};
 
-/** List env vars in scope (org-level + project-level when a project is active). */
+/** List env vars — the active project's, or all projects when none is active. */
 export function useEnvVars(scope?: Scope, opts?: { enabled?: boolean }) {
   const active = useScope();
   const s = scope ?? active;
   return useQuery<EnvVar[]>({
     queryKey: qk.envVars.list(s),
     queryFn: () => apiFetch<EnvVar[]>(scoped("/api/env-vars", s)),
-    enabled: (opts?.enabled ?? true) && !!s.orgId,
+    enabled: opts?.enabled ?? true,
   });
 }
 

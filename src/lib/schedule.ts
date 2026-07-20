@@ -266,7 +266,3 @@ export function getNextRunTime(schedule: string, from?: Date, timezone?: string)
 
   return null;
 }
-
-export function isValidSchedule(schedule: unknown): boolean {
-  return normalizeSchedule(schedule) !== null;
-}

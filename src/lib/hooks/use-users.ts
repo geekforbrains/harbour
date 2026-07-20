@@ -4,24 +4,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 
-export type UserMembership = {
-  org_id: string;
-  org_name: string;
-  role: "editor" | "viewer";
-};
-
 export type UserRow = {
   id: string;
   email: string;
   display_name: string;
-  is_instance_admin: number;
   /** True until a set-password link is consumed (password_hash still NULL). */
   pending: boolean;
   created_at: number;
-  memberships: UserMembership[];
 };
 
-/** Instance-admin-only: list all users (with their org memberships). */
+/** List all users. */
 export function useUsers(opts?: { enabled?: boolean }) {
   return useQuery<UserRow[]>({
     queryKey: qk.users.list(),
@@ -34,24 +26,8 @@ export function useUsers(opts?: { enabled?: boolean }) {
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; displayName: string; isInstanceAdmin?: boolean }) =>
+    mutationFn: (body: { email: string; displayName: string }) =>
       apiFetch<UserRow>("/api/users", { method: "POST", body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
-  });
-}
-
-/** Update a user (toggle instance_admin, rename). */
-export function useUpdateUser() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...body
-    }: {
-      id: string;
-      displayName?: string;
-      isInstanceAdmin?: boolean;
-    }) => apiFetch<UserRow>(`/api/users/${id}`, { method: "PUT", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
   });
 }
@@ -80,32 +56,5 @@ export function useSetPasswordLink() {
   return useMutation({
     mutationFn: (userId: string) =>
       apiFetch<SetPasswordLink>(`/api/users/${userId}/set-password-link`, { method: "POST" }),
-  });
-}
-
-/** Add (or change the role of) a user's membership in an org. */
-export function useAddMembership() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      orgId,
-      userId,
-      role,
-    }: {
-      orgId: string;
-      userId: string;
-      role: "editor" | "viewer";
-    }) => apiFetch(`/api/orgs/${orgId}/members`, { method: "POST", body: { userId, role } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
-  });
-}
-
-/** Remove a user's membership from an org. */
-export function useRemoveMembership() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ orgId, userId }: { orgId: string; userId: string }) =>
-      apiFetch(`/api/orgs/${orgId}/members/${userId}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users.all }),
   });
 }

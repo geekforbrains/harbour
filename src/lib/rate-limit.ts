@@ -66,14 +66,19 @@ export function createRateLimiter(opts: { limit: number; windowMs: number }): Ra
 }
 
 /**
- * Best-effort client IP: first hop of x-forwarded-for (set by the reverse
- * proxy in production), else "unknown". Direct connections without a proxy all
- * share the "unknown" bucket — acceptable for a single-operator install.
+ * Best-effort client IP for rate-limit bucketing: the LAST hop of
+ * x-forwarded-for, else "unknown". The last entry is the one appended by the
+ * nearest proxy (Caddy, in the recommended production setup) and is the only
+ * one the client can't forge — trusting the first hop would let an attacker
+ * mint a fresh rate-limit bucket per request by rotating a fake header.
+ * Direct connections without a proxy share the "unknown" bucket — acceptable
+ * for a single-operator install.
  */
 export function clientIp(req: { headers: { get(name: string): string | null } }): string {
   const forwarded = req.headers.get("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  return first || "unknown";
+  const hops = forwarded?.split(",") ?? [];
+  const last = hops[hops.length - 1]?.trim();
+  return last || "unknown";
 }
 
 // Shared limiters for the two intentionally-public auth routes.

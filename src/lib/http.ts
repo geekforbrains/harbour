@@ -1,3 +1,4 @@
+import { getProjectById } from "./db/projects";
 import { DEFAULT_RUNTIME, type Gate, isRuntime, RUNTIMES } from "./runtimes";
 
 // Request parsing + input validation helpers shared by API route handlers.
@@ -139,6 +140,26 @@ export function optionalGate(value: unknown, name: string): Gate | null | undefi
   if (value === undefined) return undefined;
   if (value === null) return null;
   return parseGate(value, name);
+}
+
+/**
+ * Resolve the target project for a create route: body `projectId` → `?projectId=`
+ * query → (when the caller is an agent executor) the agent's own project.
+ * Missing → 400 "projectId is required"; unknown → 404 "Project not found".
+ * The single home for this ladder so the contract can't drift between routes.
+ */
+export function resolveProjectId(
+  req: Request,
+  body: Record<string, unknown>,
+  auth?: { type: string; projectId?: string },
+): string {
+  const projectId =
+    optionalString(body.projectId, "projectId") ??
+    new URL(req.url).searchParams.get("projectId") ??
+    (auth?.type === "agent" ? (auth.projectId ?? null) : null);
+  if (!projectId) throw new HttpError("projectId is required", 400);
+  if (!getProjectById(projectId)) throw new HttpError("Project not found", 404);
+  return projectId;
 }
 
 /** Require a value drawn from a fixed set. */

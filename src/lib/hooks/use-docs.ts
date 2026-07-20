@@ -5,16 +5,22 @@ import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
 
-export type Doc = { id: string; title: string; pinned: number; [key: string]: unknown };
+export type Doc = {
+  id: string;
+  title: string;
+  pinned: number;
+  project_name?: string;
+  [key: string]: unknown;
+};
 
-/** List docs in scope (org-level + project-level when a project is active). */
+/** List docs — the active project's, or all projects when none is active. */
 export function useDocs(scope?: Scope, opts?: { enabled?: boolean }) {
   const active = useScope();
   const s = scope ?? active;
   return useQuery<Doc[]>({
     queryKey: qk.docs.list(s),
     queryFn: () => apiFetch<Doc[]>(scoped("/api/docs", s)),
-    enabled: (opts?.enabled ?? true) && !!s.orgId,
+    enabled: opts?.enabled ?? true,
   });
 }
 

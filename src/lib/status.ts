@@ -23,16 +23,6 @@ import {
  *   bg     — tint background behind a boxed icon
  *   text   — badge text color (richer shade for legibility on the tint)
  */
-export type RunStatusName =
-  | "scheduled"
-  | "running"
-  | "waiting"
-  | "pending"
-  | "done"
-  | "failed"
-  | "killed"
-  | "skipped";
-
 export type StatusStyle = {
   label: string;
   icon: LucideIcon;

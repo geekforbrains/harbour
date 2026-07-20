@@ -1,11 +1,10 @@
 /**
  * Typed React Query key factory.
  *
- * Every org/project-scoped list key carries the scope id in its TAIL, so the
- * scope-aware caches are siblings under a stable prefix. Switching org/project
- * is then a prefix invalidation (`qk.runs.all`) that catches every scoped
- * variant — no hand-listed key arrays (the v1 `project-switcher` 7-key list is
- * gone).
+ * Every project-scoped list key carries the scope id in its TAIL, so the
+ * scope-aware caches are siblings under a stable prefix. Switching project is
+ * then a prefix invalidation (`qk.runs.all`) that catches every scoped variant
+ * — no hand-listed key arrays.
  *
  * Convention:
  *   qk.<domain>.all                       -> ["<domain>"]                     (prefix: invalidates everything in the domain)
@@ -18,24 +17,14 @@
 import type { Scope } from "./client";
 
 /** Stable, serializable scope tail. Keeps key identity by value, not reference. */
-function scopeKey(scope?: Scope): { orgId: string | null; projectId: string | null } {
-  return {
-    orgId: scope?.orgId ?? null,
-    projectId: scope?.projectId ?? null,
-  };
+function scopeKey(scope?: Scope): { projectId: string | null } {
+  return { projectId: scope?.projectId ?? null };
 }
 
 export const qk = {
-  orgs: {
-    all: ["orgs"] as const,
-    list: () => ["orgs", "list"] as const,
-  },
-
   projects: {
     all: ["projects"] as const,
-    // Projects are listed per-org (org from the active-org cookie/param).
-    list: (scope?: Scope) => ["projects", "list", scopeKey(scope)] as const,
-    detail: (id: string) => ["projects", "detail", id] as const,
+    list: () => ["projects", "list"] as const,
   },
 
   agents: {
@@ -65,9 +54,7 @@ export const qk = {
     list: (scope?: Scope) => ["runs", "list", scopeKey(scope)] as const,
     // A single named filter ("waiting" | "recent" | "waiting-count").
     filter: (name: string, scope?: Scope) => ["runs", "filter", name, scopeKey(scope)] as const,
-    history: (scope?: Scope) => ["runs", "history", scopeKey(scope)] as const,
     detail: (id: string) => ["runs", "detail", id] as const,
-    output: (id: string) => ["runs", "detail", id, "output"] as const,
   },
 
   docs: {
@@ -101,24 +88,18 @@ export const qk = {
     timezones: () => ["settings", "timezones"] as const,
   },
 
-  adminApiKeys: {
-    all: ["admin-api-keys"] as const,
-    list: () => ["admin-api-keys", "list"] as const,
-  },
-
-  system: {
-    uploadConfig: () => ["system", "upload-config"] as const,
-    cliTools: () => ["system", "cli-tools"] as const,
+  apiKeys: {
+    all: ["api-keys"] as const,
+    list: () => ["api-keys", "list"] as const,
   },
 } as const;
 
 /**
- * Domain prefixes that carry scope and should be invalidated on an
- * org/project switch. Used by the org/project switcher to refetch everything
- * scoped without naming individual keys.
+ * Domain prefixes that carry scope and should be invalidated on a project
+ * switch. Used by the project switcher to refetch everything scoped without
+ * naming individual keys.
  */
 export const SCOPED_DOMAINS = [
-  qk.projects.all,
   qk.agents.all,
   qk.jobs.all,
   qk.runs.all,

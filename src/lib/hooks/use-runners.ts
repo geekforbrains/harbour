@@ -11,7 +11,7 @@ export type Runner = {
   tier: "local" | "remote";
   labels: string[];
   capabilities: { kinds: string[]; clis: string[]; labels: string[] } | null;
-  scope: { orgId?: string; agentId?: string } | null;
+  scope: { agentId?: string } | null;
   last_polled_at: number | null;
   /** In-flight runs this runner is currently executing (the execution-pool view). */
   running_count?: number;
@@ -22,10 +22,7 @@ export type Runner = {
 /** What a successful mint returns — the plaintext token + a ready connect command. */
 export type MintedRunner = Runner & { token: string; connect: string };
 
-/**
- * The runner registry is instance-level (execution is org-agnostic), so these
- * are admin-only and not scoped to a project/org.
- */
+/** The runner registry is instance-level, so these are not project-scoped. */
 export function useRunners(opts?: { enabled?: boolean }) {
   return useQuery<Runner[]>({
     queryKey: qk.runners.list(),
@@ -37,7 +34,7 @@ export function useRunners(opts?: { enabled?: boolean }) {
 export function useCreateRunner() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; labels?: string[]; scope?: Record<string, string> }) =>
+    mutationFn: (body: { name: string; labels?: string[]; scope?: { agentId?: string } }) =>
       apiFetch<MintedRunner>("/api/runners", { method: "POST", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.runners.all }),
   });

@@ -17,20 +17,18 @@ export type Agent = {
   color?: string | null;
   eager: number | null;
   remote?: number | null;
+  project_name?: string;
   [key: string]: unknown;
 };
 
-/**
- * List agents in scope. The `/api/agents` route is project-scoped and requires
- * a projectId, so this is only enabled when a project is active.
- */
+/** List agents — the active project's, or all projects when none is active. */
 export function useAgents(scope?: Scope, opts?: { enabled?: boolean }) {
   const active = useScope();
   const s = scope ?? active;
   return useQuery<Agent[]>({
     queryKey: qk.agents.list(s),
     queryFn: () => apiFetch<Agent[]>(scoped("/api/agents", s)),
-    enabled: (opts?.enabled ?? true) && !!s.projectId,
+    enabled: opts?.enabled ?? true,
   });
 }
 

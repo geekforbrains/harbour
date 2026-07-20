@@ -6,14 +6,12 @@
  *  - includes credentials (the `harbour_session` cookie)
  *  - throws a typed {@link ApiError} on any non-2xx response
  *
- * Org/project scoping is a query-param concern. `scoped()` injects the active
- * scope into a path so callers never hand-build `?orgId=...&projectId=...`.
+ * Project scoping is a query-param concern. `scoped()` injects the active
+ * scope into a path so callers never hand-build `?projectId=...`.
  */
 
 export type Scope = {
-  /** Active org. `null`/`undefined` = no org scope (instance-admin "All orgs" or unscoped route). */
-  orgId?: string | null;
-  /** Active project. `null`/`undefined` = no project filter (org-wide). */
+  /** Active project. `null`/`undefined` = no project filter (all projects). */
   projectId?: string | null;
 };
 
@@ -112,18 +110,16 @@ export async function apiFetch<T = unknown>(
 }
 
 /**
- * Inject the active scope into a path as query params. Only defined scope ids
- * are appended, so an unscoped call (`scoped(path, {})`) returns the path
+ * Inject the active scope into a path as query params. Only a defined project
+ * id is appended, so an unscoped call (`scoped(path, {})`) returns the path
  * unchanged. Preserves any query string already present on `path`.
  *
- *   scoped("/api/runs", { orgId: "o1" })            -> "/api/runs?orgId=o1"
- *   scoped("/api/runs", { orgId: "o1", projectId: "p" }) -> "/api/runs?orgId=o1&projectId=p"
- *   scoped("/api/agents?limit=5", { projectId: "p" })    -> "/api/agents?limit=5&projectId=p"
+ *   scoped("/api/runs", { projectId: "p" })           -> "/api/runs?projectId=p"
+ *   scoped("/api/agents?limit=5", { projectId: "p" }) -> "/api/agents?limit=5&projectId=p"
  */
 export function scoped(path: string, scope: Scope = {}): string {
   const [base, existingQuery = ""] = path.split("?");
   const params = new URLSearchParams(existingQuery);
-  if (scope.orgId) params.set("orgId", scope.orgId);
   if (scope.projectId) params.set("projectId", scope.projectId);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;

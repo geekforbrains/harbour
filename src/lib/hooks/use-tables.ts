@@ -5,16 +5,22 @@ import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
 
-export type TableEntry = { id: string; name: string; pinned: number; [key: string]: unknown };
+export type TableEntry = {
+  id: string;
+  name: string;
+  pinned: number;
+  project_name?: string;
+  [key: string]: unknown;
+};
 
-/** List tables in scope (org-level + project-level when a project is active). */
+/** List tables — the active project's, or all projects when none is active. */
 export function useTables(scope?: Scope, opts?: { enabled?: boolean }) {
   const active = useScope();
   const s = scope ?? active;
   return useQuery<TableEntry[]>({
     queryKey: qk.tables.list(s),
     queryFn: () => apiFetch<TableEntry[]>(scoped("/api/tables", s)),
-    enabled: (opts?.enabled ?? true) && !!s.orgId,
+    enabled: opts?.enabled ?? true,
   });
 }
 

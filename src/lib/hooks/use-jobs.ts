@@ -5,18 +5,14 @@ import { apiFetch, type Scope, scoped } from "@/lib/api/client";
 import { qk } from "@/lib/api/keys";
 import { useScope } from "@/lib/hooks/use-project-filter";
 
-/**
- * List jobs in scope. Workflow jobs are dual-tier: with a project active the
- * list is that project's jobs plus org-level workflows (project_id IS NULL);
- * org-wide (no project) it's org-level workflows only.
- */
+/** List jobs — the active project's, or all projects when none is active. */
 export function useJobs(scope?: Scope, opts?: { enabled?: boolean }) {
   const active = useScope();
   const s = scope ?? active;
   return useQuery<unknown[]>({
     queryKey: qk.jobs.list(s),
     queryFn: () => apiFetch<unknown[]>(scoped("/api/jobs", s)),
-    enabled: (opts?.enabled ?? true) && !!s.orgId,
+    enabled: opts?.enabled ?? true,
   });
 }
 
@@ -38,18 +34,15 @@ export function useJobRuns(id: string, opts?: { enabled?: boolean }) {
 
 /**
  * Create a deterministic workflow (no agent). For agent jobs, POST to
- * /api/agents/:id/jobs. Scope is fixed at creation: `orgLevel` posts without a
- * projectId, creating an org-level workflow (project_id IS NULL).
+ * /api/agents/:id/jobs. Creation requires a concrete project: the active one,
+ * or a `projectId` in the body (which takes precedence).
  */
 export function useCreateWorkflowJob() {
   const qc = useQueryClient();
-  const { orgId, projectId } = useScope();
+  const { projectId } = useScope();
   return useMutation({
-    mutationFn: (vars: { body: Record<string, unknown>; orgLevel?: boolean }) =>
-      apiFetch<{ id: string }>(
-        scoped("/api/jobs", vars.orgLevel ? { orgId } : { orgId, projectId }),
-        { method: "POST", body: vars.body },
-      ),
+    mutationFn: (body: Record<string, unknown>) =>
+      apiFetch<{ id: string }>(scoped("/api/jobs", { projectId }), { method: "POST", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs.all }),
   });
 }
