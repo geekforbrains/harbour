@@ -37,6 +37,10 @@
 
 ### Removed
 
+- **Gemini CLI is no longer an agent provider.** New and updated agents accept
+  only `claude` or `codex`; the dashboard no longer detects or offers Gemini,
+  and the bundled runner no longer advertises, launches, resumes, or parses it.
+  Existing Gemini-backed agent rows are not migrated or supported.
 - **Captain, the in-browser CLI console, is removed** — the `/captain` dashboard
   page and message UI, the `/api/captain` conversation routes, the server-side
   process manager/providers/workspace libs, the Captain settings panel and nav

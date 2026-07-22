@@ -309,12 +309,10 @@ describe("claimNextRun: capabilities", () => {
   });
 
   it("does not claim an agent run whose CLI the runner doesn't advertise", () => {
-    const { job } = agentJob({ cli: "gemini" });
+    const { job } = agentJob({ cli: "codex" });
     makeJobDue(job.id);
-    // runner advertises only claude/codex
-    expect(claim(localRunner(), { ...ALL_CAPS, clis: ["claude", "codex"] })).toBeNull();
-    // ...and claims once gemini is advertised
-    expect(claim(localRunner(), { ...ALL_CAPS, clis: ["gemini"] })).toBeTruthy();
+    expect(claim(localRunner(), { ...ALL_CAPS, clis: ["claude"] })).toBeNull();
+    expect(claim(localRunner(), { ...ALL_CAPS, clis: ["codex"] })).toBeTruthy();
   });
 
   it("an agent with no CLI configured is not claimable by a CLI runner", () => {

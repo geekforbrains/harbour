@@ -295,7 +295,7 @@ function OutputLine({ event }: { event: OutputEvent }) {
   }
 }
 
-function getResumeCommand(cli: string, sessionId: string, cwd?: string | null): string {
+function getResumeCommand(cli: string, sessionId: string, cwd?: string | null): string | null {
   let resume: string;
   switch (cli) {
     case "claude":
@@ -304,11 +304,8 @@ function getResumeCommand(cli: string, sessionId: string, cwd?: string | null): 
     case "codex":
       resume = `codex exec resume ${sessionId}`;
       break;
-    case "gemini":
-      resume = `gemini --resume ${sessionId}`;
-      break;
     default:
-      resume = `${cli} --resume ${sessionId}`;
+      return null;
   }
   return cwd ? `cd ${cwd} && ${resume}` : resume;
 }
@@ -324,9 +321,11 @@ function ResumeCommand({
 }) {
   const [copied, setCopied] = useState(false);
   const command = getResumeCommand(cli, sessionId, cwd);
+  if (!command) return null;
+  const resumeCommand: string = command;
 
   function handleCopy() {
-    navigator.clipboard.writeText(command);
+    navigator.clipboard.writeText(resumeCommand);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -334,7 +333,7 @@ function ResumeCommand({
   return (
     <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 font-mono text-xs">
       <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-      <code className="flex-1 truncate text-muted-foreground select-all">{command}</code>
+      <code className="flex-1 truncate text-muted-foreground select-all">{resumeCommand}</code>
       <button
         type="button"
         onClick={handleCopy}

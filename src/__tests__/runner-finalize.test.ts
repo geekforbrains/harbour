@@ -201,7 +201,7 @@ describe("resolveFinalizeMode", () => {
   });
 
   it("all shipped providers advertise resume capability", () => {
-    for (const cli of ["claude", "codex", "gemini"]) {
+    for (const cli of ["claude", "codex"]) {
       expect(getProvider(cli).canResume).toBe(true);
     }
   });

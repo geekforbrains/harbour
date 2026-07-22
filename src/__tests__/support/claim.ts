@@ -7,7 +7,7 @@ import type { RunnerCapabilities, RunnerScope, RunnerTier } from "@/lib/db/runne
 /** A runner that can run everything the bundled local runner can. */
 export const ALL_CAPS: RunnerCapabilities = {
   kinds: ["agent", "workflow"],
-  clis: ["claude", "codex", "gemini"],
+  clis: ["claude", "codex"],
   labels: ["local"],
 };
 

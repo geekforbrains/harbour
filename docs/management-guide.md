@@ -8,7 +8,7 @@ You have API access to a Harbour instance — the control plane for AI agents do
 
 Key concepts:
 - **Projects** — the top-level containers. Every agent, job, doc, table, and env var lives in exactly one project.
-- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code, Codex, or Gemini.
+- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code or Codex.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into the runs of jobs they're pinned for or attached to.
@@ -90,8 +90,8 @@ Content-Type: application/json
 }
 ```
 
-`projectId` (body or `?projectId=` query), `name`, and `cli` are required. `cli` is `claude`, `codex`, or `gemini`. Agent names are unique per project, under the same slug rules as projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
-- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is **not** validated — any string is accepted, since the CLIs take arbitrary model ids. `thinking` **is** validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`, none for `gemini` (it takes no thinking level); an unknown level is a 400. Empty/omitted means the CLI default.
+`projectId` (body or `?projectId=` query), `name`, and `cli` are required. `cli` is `claude` or `codex`. Agent names are unique per project, under the same slug rules as projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
+- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is **not** validated — any string is accepted, since the CLIs take arbitrary model ids. `thinking` **is** validated per CLI — `low`/`medium`/`high`/`xhigh`/`max` for `claude`, `low`/`medium`/`high`/`xhigh` for `codex`; an unknown level is a 400. Empty/omitted means the CLI default.
 - `eager` (boolean) — **legacy/no-op.** Still accepted and stored for compatibility, but the unified runner drains all due work each cycle regardless, so it no longer changes behavior. Omit it.
 - `placement` (string) — routes this agent's runs to a runner. Defaults to `local`: the auto-provisioned local runner claims the work. Set a label (e.g. `gpu`) to pin the agent to a specific machine — its runs then go only to a remote runner enrolled for that label (mint one via `POST /api/runners` and connect it on that host; see **Runners** below).
 - `color` — identity hue (falls back to a name-derived color if omitted)

@@ -16,10 +16,9 @@ import {
 } from "../../bin/lib/providers.mjs";
 
 // These tests assert the argv shape produced by each provider's buildCommand.
-// They guard against silent flag drift in the upstream CLIs (issue #24 was
-// caused by Gemini 0.40 dropping --thinking and Codex 0.128 dropping
-// --reasoning-effort). When upgrading a CLI, update both the provider and
-// these expectations together so the change is visible in review.
+// They guard against silent flag drift in the upstream CLIs. When upgrading a
+// CLI, update both the provider and these expectations together so the change
+// is visible in review.
 
 const CWD = "/tmp/test-workspace";
 const PROMPT = "do the thing";
@@ -139,12 +138,6 @@ describe("sanitizeThinking (issue #39)", () => {
     expect(sanitizeThinking("claude", undefined)).toEqual({ thinking: null, dropped: null });
   });
 
-  it("silently drops any level for a cli with no thinking flag", () => {
-    // Gemini ignores thinking entirely — dropping a stale value is not worth
-    // a warning on every run.
-    expect(sanitizeThinking("gemini", "high")).toEqual({ thinking: null, dropped: null });
-  });
-
   it("silently drops for an unknown cli", () => {
     expect(sanitizeThinking("cursor", "high")).toEqual({ thinking: null, dropped: null });
   });
@@ -162,44 +155,9 @@ describe("provider thinkingLevels match CLI_CONFIG", () => {
   }
 });
 
-describe("gemini provider (issue #24)", () => {
-  const gemini = getProvider("gemini");
-
-  it("does NOT use the removed --thinking flag", () => {
-    const cmd = gemini.buildCommand(PROMPT, "gemini-2.5-pro", CWD, null, true, "low");
-    expect(cmd.args).not.toContain("--thinking");
-  });
-
-  it("includes --skip-trust for headless mode in non-trusted workspaces", () => {
-    const cmd = gemini.buildCommand(PROMPT, "gemini-2.5-pro", CWD, null, true, null);
-    expect(cmd.args).toContain("--skip-trust");
-  });
-
-  it("ignores any thinking value the caller passes", () => {
-    // Existing agents may have a stale `thinking` saved in the DB; the runner
-    // still passes it to buildCommand. The provider must drop it silently.
-    const cmd = gemini.buildCommand(PROMPT, "gemini-2.5-pro", CWD, null, true, "high");
-    expect(cmd.args).not.toContain("--thinking");
-    expect(cmd.args).not.toContain("high");
-  });
-
-  it("passes the prompt and model", () => {
-    const cmd = gemini.buildCommand(PROMPT, "gemini-2.5-pro", CWD, null, true, null);
-    expect(cmd.args).toContain("--prompt");
-    const pIdx = cmd.args.indexOf("--prompt");
-    expect(cmd.args[pIdx + 1]).toBe(PROMPT);
-    expect(cmd.args).toContain("-m");
-    expect(cmd.args).toContain("gemini-2.5-pro");
-    expect(cmd.args).toContain("--yolo");
-    expect(cmd.args).toContain("-o");
-    expect(cmd.args).toContain("stream-json");
-  });
-
-  it("passes --resume for existing sessions", () => {
-    const cmd = gemini.buildCommand(PROMPT, "gemini-2.5-pro", CWD, "session-uuid", false, null);
-    expect(cmd.args).toContain("--resume");
-    const rIdx = cmd.args.indexOf("--resume");
-    expect(cmd.args[rIdx + 1]).toBe("session-uuid");
+describe("removed providers", () => {
+  it("does not expose gemini", () => {
+    expect(() => getProvider("gemini")).toThrow("Unknown CLI provider: gemini");
   });
 });
 
@@ -355,7 +313,7 @@ describe("detectCapabilities — honest CLI detection", () => {
   });
 
   it("does not advertise CLIs that are not on PATH", () => {
-    // An empty temp dir as the entire PATH holds none of claude/codex/gemini
+    // An empty temp dir as the entire PATH holds neither claude nor codex
     // (system dirs can't be trusted — dev machines have the CLIs installed).
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), "hb-nopath-"));
     try {

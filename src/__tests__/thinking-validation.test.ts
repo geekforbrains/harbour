@@ -68,6 +68,7 @@ describe("validateCli", () => {
 
   it("rejects an unknown or missing cli", () => {
     expect(validateCli("cursor")).toMatch(/cursor/);
+    expect(validateCli("gemini")).toMatch(/gemini/);
     expect(validateCli(null)).toBeTruthy();
     expect(validateCli(undefined)).toBeTruthy();
   });
@@ -86,7 +87,6 @@ describe("validateThinking", () => {
     expect(validateThinking("claude", "")).toBeNull();
     expect(validateThinking("claude", null)).toBeNull();
     expect(validateThinking("claude", undefined)).toBeNull();
-    expect(validateThinking("gemini", "")).toBeNull();
   });
 
   it("rejects a level the cli does not accept, naming the valid ones", () => {
@@ -94,10 +94,6 @@ describe("validateThinking", () => {
     expect(error).toMatch(/off/);
     expect(error).toMatch(/low/);
     expect(validateThinking("codex", "max")).toBeTruthy();
-  });
-
-  it("rejects any level for a cli with no thinking flag", () => {
-    expect(validateThinking("gemini", "high")).toBeTruthy();
   });
 
   it("rejects a level when there is no valid cli to validate against", () => {
@@ -132,6 +128,19 @@ describe("POST /api/agents — config validation", () => {
     );
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/cursor/);
+  });
+
+  it("rejects the removed gemini cli", async () => {
+    const { project } = fixture();
+    const res = await agentsPOST(
+      userReq(`http://x/api/agents?projectId=${project.id}`, "POST", {
+        name: "Dev",
+        cli: "gemini",
+      }),
+      ctx({}),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("gemini");
   });
 
   it("accepts a valid cli + thinking", async () => {

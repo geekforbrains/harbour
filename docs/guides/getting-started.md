@@ -29,7 +29,11 @@ For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 —
 
 ## First agent and first job
 
-The dashboard is now up and you have a project. Every agent picks a CLI tool (Claude Code, Codex, or Gemini) at creation, but the wire contract is plain HTTP — so this walkthrough drives the claim loop with curl from your terminal, exactly the way a runner does. (The [bundled runner](#let-the-bundled-runner-do-it) below does this for you.)
+The dashboard is now up and you have a project. Every agent picks a CLI tool
+(Claude Code or Codex) at creation, but the wire contract is plain HTTP — so
+this walkthrough drives the claim loop with curl from your terminal, exactly
+the way a runner does. (The [bundled runner](#let-the-bundled-runner-do-it)
+below does this for you.)
 
 ### 1. Create an agent
 
@@ -67,7 +71,7 @@ A runner advertises its **capabilities** — which run kinds and CLIs it can exe
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","gemini"],"labels":["local"]}}' \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex"],"labels":["local"]}}' \
   "$HARBOUR_URL/api/runner/claim?peek=true"
 ```
 
@@ -77,7 +81,7 @@ Now claim it for real (drop `?peek=true`):
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","gemini"],"labels":["local"]}}' \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex"],"labels":["local"]}}' \
   "$HARBOUR_URL/api/runner/claim"
 ```
 
@@ -104,7 +108,6 @@ Make sure the CLI you want is on your PATH and authenticated:
 
 - [Claude Code](https://claude.ai/claude-code) — `claude` in your shell
 - [Codex](https://github.com/openai/codex) — `codex`
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `gemini`
 
 ### 2. Create the agent
 

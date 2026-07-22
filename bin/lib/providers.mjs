@@ -388,98 +388,6 @@ const PROVIDERS = {
       return { content: lastMessage.trim(), sessionId };
     },
   },
-
-  gemini: {
-    canResume: true,
-    // Gemini takes no thinking level at all (see buildCommand) — kept in sync
-    // with CLI_CONFIG (see claude.thinkingLevels above).
-    thinkingLevels: [],
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
-      // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
-      // by model selection) and requires --skip-trust for headless mode in
-      // non-trusted workspace dirs (otherwise exits code 55).
-      const args = ["--prompt", prompt, "--yolo", "--skip-trust", "-o", "stream-json"];
-      if (model) args.push("-m", model);
-      if (sessionId) {
-        args.push("--resume", sessionId);
-      }
-      return { binary: resolveBinary("gemini"), args, cwd: workingDir };
-    },
-    parseLine(line) {
-      try {
-        const obj = JSON.parse(line);
-        const events = [];
-
-        if (obj.type === "init" && obj.session_id) {
-          events.push({ event_type: "info", content: `Model: ${obj.model}` });
-          return { events, sessionId: obj.session_id };
-        }
-
-        if (obj.type === "message" && obj.role === "assistant" && obj.content) {
-          events.push({ event_type: "text_delta", content: obj.content });
-        }
-
-        if (obj.type === "tool_use") {
-          events.push({
-            event_type: "tool_start",
-            content: obj.parameters ? JSON.stringify(obj.parameters) : null,
-            tool_name: obj.tool_name || null,
-          });
-        }
-
-        if (obj.type === "tool_result") {
-          events.push({
-            event_type: "tool_end",
-            content: obj.output || null,
-            tool_name: null,
-          });
-        }
-
-        if (obj.type === "result") {
-          const stats = obj.stats;
-          events.push({
-            event_type: "result",
-            content: stats
-              ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms`
-              : null,
-          });
-        }
-
-        return { events };
-      } catch {
-        return { events: [] };
-      }
-    },
-    // Only use the last assistant turn as the activity summary. Gemini streams
-    // multiple assistant message deltas across turns — early ones are narration
-    // before tool calls, the final turn is the actual summary. We reset on
-    // tool_result boundaries so we capture only the post-tool response.
-    parseResult(stdout) {
-      const lines = stdout.trim().split("\n");
-      let sessionId = null;
-      let content = "";
-
-      for (const line of lines) {
-        try {
-          const obj = JSON.parse(line);
-          if (obj.type === "init" && obj.session_id) {
-            sessionId = obj.session_id;
-          }
-          if (obj.type === "tool_result") {
-            content = ""; // reset — next assistant messages are the final turn
-          }
-          if (obj.type === "message" && obj.role === "assistant" && obj.content) {
-            content += obj.content;
-          }
-        } catch {
-          /* Not JSON — skip stderr noise */
-        }
-      }
-
-      if (!content.trim()) content = stdout;
-      return { content: content.trim(), sessionId };
-    },
-  },
 };
 
 export function getProvider(cli) {
@@ -493,7 +401,7 @@ export const KNOWN_CLIS = Object.keys(PROVIDERS);
 
 /**
  * Detect what this host can execute, advertised on every claim (Runner Protocol).
- *   clis   — installed CLIs (claude/codex/gemini) found on PATH.
+ *   clis   — installed CLIs (claude/codex) found on PATH.
  *   kinds  — always "workflow" (shell gates need only bash/python/node); plus
  *            "agent" when at least one CLI is present.
  *   labels — placement labels this runner serves; default ["local"], overridable
@@ -516,8 +424,7 @@ export function detectCapabilities() {
  * CLI version drift — is dropped so the run proceeds on the CLI default.
  *
  * Returns { thinking, dropped }: `dropped` carries the discarded value when
- * it's worth warning about, i.e. only for CLIs that take a level at all
- * (gemini ignores thinking entirely, so dropping a stale value is silent).
+ * it's worth warning about, i.e. only for known CLIs that take a level.
  */
 export function sanitizeThinking(cli, thinking) {
   if (!thinking) return { thinking: null, dropped: null };

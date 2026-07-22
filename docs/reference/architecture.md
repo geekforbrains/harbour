@@ -237,8 +237,8 @@ writes the token (0600) and URL. The local runner's token is provisioned by
 **Providers.** `claude` runs `--output-format stream-json --verbose`, with
 `--dangerously-skip-permissions` *unless* the agent workspace has a valid
 `.claude/settings.json` with a `permissions` object (then the permission system
-runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`;
-`gemini` runs `--yolo --skip-trust -o stream-json`. All three normalize to the event vocab
+runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`.
+Both normalize to the event vocab
 `text_delta`/`thinking`/`tool_start`/`tool_end`/`info`/`result`/`error`, batched
 to the server every ~750ms and replayed to the dashboard via SSE.
 

@@ -6,7 +6,10 @@ A runner is **any process that implements the [Runner Protocol](../runner-guide.
 
 ## Why you'd want this
 
-The runner is the thing that actually spawns the CLI tool (Claude Code, Codex, Gemini) and runs your workflow scripts. The CLI runs as a subprocess on the runner's host. Anything that depends on the local environment lives with the runner, not the server:
+The runner is the thing that actually spawns the CLI tool (Claude Code or
+Codex) and runs your workflow scripts. The CLI runs as a subprocess on the
+runner's host. Anything that depends on the local environment lives with the
+runner, not the server:
 
 - **iOS / Xcode builds** need a Mac. The harbour server can sit on a Linux box; the runner sits on the Mac.
 - **GPU jobs** need the machine with the GPU. Co-locate the runner there.
@@ -140,7 +143,7 @@ The split is straightforward but worth being explicit about.
 **On the remote machine:**
 
 - The runner process itself.
-- The CLI tool subprocess — Claude Code, Codex, or Gemini, whichever the agent picked.
+- The CLI tool subprocess — Claude Code or Codex, whichever the agent picked.
 - Working directories at `~/.harbour/workspaces/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
 - **Gate runtimes.** Prerun/postrun gate scripts are `{ runtime, content }` gists stored in Harbour; the runner materializes each body into `~/.harbour/workflows/<scripts_dir>` from the claim payload and runs it there — nothing to hand-place or sync. You only need the gate's **runtime** installed on the remote: `bash`, `python3`, or `node`, depending on which the gate uses.
 - Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the claim payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.

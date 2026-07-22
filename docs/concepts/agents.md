@@ -8,7 +8,7 @@ Every agent in Harbour runs in one of two places, decided entirely by its `place
 
 | Where | What it is | How it works |
 |---|---|---|
-| **Local** | A built-in CLI (Claude Code, Codex, or Gemini CLI) claimed by the runner on this host | The local `harbour run` launchd job claims work from Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
+| **Local** | A built-in CLI (Claude Code or Codex) claimed by the runner on this host | The local `harbour run` launchd job claims work from Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
 | **Remote** | The same built-in CLI, but pinned to a runner on another machine | The agent's [placement](#remote-agents) names a label; a remote runner you've enrolled for that label claims and drives its runs exactly as the local one does. |
 
 The work a run carries and the callbacks it owes back are identical either way — the only difference is which runner host claims it, decided by the agent's `placement` (see [Remote agents](#remote-agents)).
@@ -29,9 +29,9 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
-| `cli` | `claude`, `codex`, or `gemini` (harbour only) |
+| `cli` | `claude` or `codex` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.5`) |
-| `thinking` | Default reasoning effort — `low`/`medium`/`high`/`xhigh`/`max` for Claude, up to `xhigh` for Codex, none for Gemini (validated per CLI in `cli-config.ts`) |
+| `thinking` | Default reasoning effort — `low`/`medium`/`high`/`xhigh`/`max` for Claude, up to `xhigh` for Codex (validated per CLI in `cli-config.ts`) |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
 
 `model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`).
@@ -81,15 +81,19 @@ Eager is a legacy concept — the runner no longer needs it. Each `harbour run` 
 
 ### CLI providers
 
-The three built-in CLIs each have their own command shape. From `bin/lib/providers.mjs`:
+The two built-in CLIs each have their own command shape. From `bin/lib/providers.mjs`:
 
 | CLI | Binary | Key flags | Resume mechanism |
 |---|---|---|---|
 | Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages` (plus `--dangerously-skip-permissions` unless the workspace has a valid `.claude/settings.json` — see [Per-agent permissions](#per-agent-permissions-claude-code)) | `--session-id <uuid>` (new) or `--resume <uuid>` |
 | Codex | `codex` | `exec --dangerously-bypass-approvals-and-sandbox --json` | `exec resume <thread_id>` |
-| Gemini CLI | `gemini` | `--prompt <p> --yolo --skip-trust -o stream-json` | `--resume <session_id>` |
 
-Model selection: Claude uses `--model`, Codex and Gemini use `-m`. Thinking/reasoning depth: Claude uses `--effort <level>`, Codex uses `-c model_reasoning_effort=<level>` (the top-level `--reasoning-effort` flag was removed in Codex 0.128). Gemini dropped its `--thinking` flag in 0.40 — reasoning depth is controlled by model selection now, so the dashboard hides the thinking selector for Gemini agents. The runner picks the per-job override if set, otherwise the agent default; it just passes the string through, so what's accepted depends on the underlying tool.
+Model selection: Claude uses `--model`; Codex uses `-m`. Thinking/reasoning depth:
+Claude uses `--effort <level>`; Codex uses
+`-c model_reasoning_effort=<level>` (the top-level `--reasoning-effort` flag was
+removed in Codex 0.128). The runner picks the per-job override if set, otherwise
+the agent default; it just passes the string through, so what's accepted depends
+on the underlying tool.
 
 For Claude only, the runner pre-generates a session UUID before spawning so `PUT /api/runs/:id/session` can record the session ID up front — that lets the dashboard surface the session even while the CLI is still booting.
 
@@ -121,7 +125,8 @@ Effective `settings.json` for headless agents:
 
 This works well together with the workspace `bin/` PATH injection above: per-agent wrapper scripts (e.g. an `auth-curl` shim that internally reads env vars and execs `curl`) keep `$VAR` references out of the LLM-emitted command, where `dontAsk` mode would otherwise auto-deny them.
 
-Codex and Gemini ship with their own bypass flags (`--dangerously-bypass-approvals-and-sandbox` and `--yolo --skip-trust`); the per-workspace opt-in is Claude-only today.
+Codex ships with its own `--dangerously-bypass-approvals-and-sandbox` flag; the
+per-workspace opt-in is Claude-only today.
 
 ### Streaming and kill
 
@@ -172,5 +177,5 @@ Docs, secrets, and tables live in a project, but job links may cross projects �
 - `src/lib/db/runs.ts` — `claimNextRun` / `claimableLabels`: placement-to-label routing and remote-token scoping.
 - `src/app/api/runners/route.ts` + `[id]/route.ts` — mint (`POST`), list (`GET`), and revoke (`DELETE`) remote runner credentials; `src/lib/db/runners.ts` is the registry.
 - `bin/lib/runner.mjs` — the runner: `runPool` (claim, drain, dispatch), then spawn, stream, kill, finalize per run.
-- `bin/lib/providers.mjs` — Claude, Codex, and Gemini command builders and JSONL parsers; `detectCapabilities` and `resolveRunConfig`.
+- `bin/lib/providers.mjs` — Claude and Codex command builders and JSONL parsers; `detectCapabilities` and `resolveRunConfig`.
 - `bin/lib/connect.mjs` — the `harbour connect <blob>` flow for enrolling a remote runner.

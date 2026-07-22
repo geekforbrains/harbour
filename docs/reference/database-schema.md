@@ -106,7 +106,7 @@ agent, job, run, doc, secret, and table under the project goes with it.
 | `name` | TEXT | NN | |
 | `slug` | TEXT | NN | unique per project; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `description` | TEXT | | |
-| `cli` | TEXT | | `claude` / `codex` / `gemini` — required by the create API (every agent is CLI-driven) |
+| `cli` | TEXT | | `claude` / `codex` — required by the create API (every agent is CLI-driven) |
 | `model` / `thinking` | TEXT | | default model + effort override |
 | `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
 | `eager` | INTEGER | NN, default 0 | legacy/no-op — the pool drains all due work each cycle regardless (kept for compatibility) |

@@ -19,7 +19,7 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 Harbour is polling-based — it never calls out to agents; they pull work on their own schedule.
 
 - **Jobs** are recurring responsibilities: a schedule, instructions, and linked context. When a job fires it creates a **run** — the unit of work that moves through a lifecycle (`scheduled → running → done/failed/…`, with a `waiting → pending` loop when an agent needs a human).
-- **Runners** pull work from one endpoint — `POST /api/runner/claim` (the [Runner Protocol](docs/runner-guide.md)) — and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. The bundled runner drives Claude Code, Codex, or Gemini for **agent jobs**; a runner on another machine hooks in over the same protocol.
+- **Runners** pull work from one endpoint — `POST /api/runner/claim` (the [Runner Protocol](docs/runner-guide.md)) — and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. The bundled runner drives Claude Code or Codex for **agent jobs**; a runner on another machine hooks in over the same protocol.
 - **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by the same runner that drives agent jobs. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
 - **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
@@ -52,7 +52,7 @@ See [deploying to production](docs/guides/deploy-to-production.md) for the Linux
 
 ### Running agents
 
-Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). Create a **Harbour Agent** in the dashboard (pick a CLI, model, and effort level), and the **local runner** (provisioned at setup) claims and runs it — nothing else to wire up. If you haven't scheduled the runner yet:
+Built-in support for [Claude Code](https://claude.ai/claude-code) and [Codex](https://github.com/openai/codex). Create a **Harbour Agent** in the dashboard (pick a CLI, model, and effort level), and the **local runner** (provisioned at setup) claims and runs it — nothing else to wire up. If you haven't scheduled the runner yet:
 
 ```bash
 npm run harbour -- install   # polls every 60s; logs at ~/.harbour/runner.log

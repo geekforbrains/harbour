@@ -12,7 +12,7 @@ Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. Yo
 
 - **Node 24 LTS** (e.g. via [NodeSource](https://github.com/nodesource/distributions): `curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs`)
 - **A domain you control**, with an A record you can point at the host.
-- Whatever AI CLIs your agents use (Claude Code, Codex, Gemini CLI) — installed later, under the service user.
+- Whatever AI CLIs your agents use (Claude Code or Codex) — installed later, under the service user.
 
 Create a dedicated user. By default the runner launches Claude Code with `--dangerously-skip-permissions` (it's omitted only when an agent's workspace has a valid `.claude/settings.json` with a `permissions` object), and Claude Code refuses that flag when running as root — so both services run unprivileged:
 
@@ -150,7 +150,6 @@ Each CLI needs an interactive auth flow once, as the `harbour` user (the runner 
 su - harbour
 claude   # OAuth device-code flow — or: export ANTHROPIC_API_KEY=...
 codex    # Browser sign-in — or: export OPENAI_API_KEY=...
-gemini   # OAuth device-code flow — or: export GEMINI_API_KEY=...
 exit
 # If the runner was started before the CLI was authed, kick it:
 systemctl restart harbour-runner
@@ -162,7 +161,6 @@ For API-key auth instead of OAuth, either put the keys in `/home/harbour/.bashrc
 [Service]
 Environment=ANTHROPIC_API_KEY=...
 Environment=OPENAI_API_KEY=...
-Environment=GEMINI_API_KEY=...
 ```
 
 ### 7. Updating

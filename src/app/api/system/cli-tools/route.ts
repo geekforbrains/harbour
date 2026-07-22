@@ -7,7 +7,6 @@ import { withAuthenticatedUser } from "@/lib/auth";
 const CLI_TOOLS = [
   { id: "claude", name: "Claude", binary: "claude", versionFlag: "--version" },
   { id: "codex", name: "Codex", binary: "codex", versionFlag: "--version" },
-  { id: "gemini", name: "Gemini", binary: "gemini", versionFlag: "--version" },
 ];
 
 // Extend PATH with common user binary locations that may not be in the server's PATH

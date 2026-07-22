@@ -81,7 +81,7 @@ function claimBody(caps?: Partial<{ kinds: string[]; clis: string[]; labels: str
   return JSON.stringify({
     capabilities: {
       kinds: caps?.kinds ?? ["agent", "workflow"],
-      clis: caps?.clis ?? ["claude", "codex", "gemini"],
+      clis: caps?.clis ?? ["claude", "codex"],
       labels: caps?.labels ?? ["local"],
     },
   });

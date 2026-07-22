@@ -65,7 +65,7 @@ What Harbour must let people and agents do. For endpoint- and schema-level
 detail, see [docs/reference](reference/).
 
 **Agents**
-- Create a Harbour agent (Claude Code, Codex, or Gemini) run by a local or
+- Create a Harbour agent (Claude Code or Codex) run by a local or
   remote CLI runner.
 - Set per-agent model, thinking/effort, and **identity color** — chosen from a
   curated palette, not auto-assigned.

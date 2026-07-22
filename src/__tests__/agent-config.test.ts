@@ -16,7 +16,7 @@ import { getProvider, resolveRunConfig, sanitizeThinking } from "../../bin/lib/p
 // runner resolves them (job override > agent default), and each CLI provider
 // turns that into the right argv. The runner config is identity-only, so
 // changing a model in the dashboard must reach the runner via the payload
-// alone — these tests lock that contract for all three CLIs.
+// alone — these tests lock that contract for every supported CLI.
 
 function freshDb(): Database.Database {
   const db = new Database(":memory:");
@@ -170,18 +170,6 @@ describe("payload -> command, all CLIs", () => {
     const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, null, true, thinking);
     expect(cmd.args[cmd.args.indexOf("-m") + 1]).toBe("gpt-5");
     expect(cmd.args).toContain("model_reasoning_effort=medium");
-  });
-
-  it("gemini: model via -m, effort dropped (controlled by model)", () => {
-    const payload = {
-      agent: { cli: "gemini", model: "gemini-2.5-pro", thinking: "high" },
-      job: {},
-    };
-    const { cli, model, thinking } = resolveRunConfig(payload);
-    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, null, true, thinking);
-    expect(cmd.args[cmd.args.indexOf("-m") + 1]).toBe("gemini-2.5-pro");
-    expect(cmd.args).not.toContain("--thinking");
-    expect(cmd.args).not.toContain("--effort");
   });
 
   it("an unknown thinking level is dropped before the command, not passed as a flag (issue #39)", () => {

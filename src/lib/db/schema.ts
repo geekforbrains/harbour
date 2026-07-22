@@ -151,7 +151,7 @@ export function initializeSchema(db: Database.Database) {
       name TEXT NOT NULL,
       slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
       description TEXT,
-      cli TEXT,                           -- 'claude' | 'codex' | 'gemini'
+      cli TEXT,                           -- 'claude' | 'codex'
       model TEXT,
       thinking TEXT,
       color TEXT,                         -- stored identity hue (user-selectable; name-hash fallback when null)
