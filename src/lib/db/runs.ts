@@ -1044,6 +1044,50 @@ export function runningCountsByRunner(): Record<string, number> {
 }
 
 /**
+ * Runners that polled within the live window, each with its claim eligibility
+ * precomputed. Shared by {@link stalledPlacements} (queued-run surface) and
+ * {@link hasLiveRunnerForAgent} (pre-flight, no queued run required) so both
+ * agree on what "live" and "eligible" mean.
+ */
+function liveEligibleRunners(): { eligibility: ClaimEligibility; scope: RunnerScope }[] {
+  const nowS = Math.floor(Date.now() / 1000);
+  const live: { eligibility: ClaimEligibility; scope: RunnerScope }[] = [];
+  for (const runner of listRunners()) {
+    if (!runner.last_polled_at || nowS - runner.last_polled_at > RUNNER_LIVE_WINDOW_S) continue;
+    if (!runner.capabilities) continue;
+    live.push({
+      eligibility: claimEligibility(
+        { id: runner.id, tier: runner.tier, labels: runner.labels, scope: runner.scope },
+        runner.capabilities,
+      ),
+      scope: runner.scope,
+    });
+  }
+  return live;
+}
+
+/**
+ * Whether a live runner could claim agent work for this placement + CLI right
+ * now — the same eligibility rules {@link stalledPlacements} uses, but without
+ * requiring a queued run to check against. Drives the "Agent Created" dialog:
+ * a brand-new agent has no jobs/runs yet, so the queued-work surface can't
+ * answer this, even though the question ("is anything listening?") is the same.
+ */
+export function hasLiveRunnerForAgent(opts: {
+  placement: string;
+  cli: string;
+  agentId: string;
+}): boolean {
+  return liveEligibleRunners().some(
+    ({ eligibility: e, scope }) =>
+      e.labels.includes(opts.placement) &&
+      e.canAgent &&
+      e.clis.includes(opts.cli) &&
+      (!scope?.agentId || scope.agentId === opts.agentId),
+  );
+}
+
+/**
  * The anti-silent-stall surface: placements with queued work (scheduled/pending
  * runs) that NO live runner could claim. Mandatory per the PLAN — without it, a
  * run pinned to an absent label/capability sits forever with no signal. A runner
@@ -1083,19 +1127,7 @@ export function stalledPlacements(projectId?: string): { placement: string; coun
   // advertised labels would let an over-advertising runner suppress the banner
   // while the claim endpoint refuses the work; ignoring scope/kind would let an
   // agent-scoped runner suppress it for work it can never claim.)
-  const nowS = Math.floor(Date.now() / 1000);
-  const live: { eligibility: ClaimEligibility; scope: RunnerScope }[] = [];
-  for (const runner of listRunners()) {
-    if (!runner.last_polled_at || nowS - runner.last_polled_at > RUNNER_LIVE_WINDOW_S) continue;
-    if (!runner.capabilities) continue;
-    live.push({
-      eligibility: claimEligibility(
-        { id: runner.id, tier: runner.tier, labels: runner.labels, scope: runner.scope },
-        runner.capabilities,
-      ),
-      scope: runner.scope,
-    });
-  }
+  const live = liveEligibleRunners();
 
   const stalled = new Map<string, number>();
   for (const p of pending) {

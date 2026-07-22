@@ -103,6 +103,7 @@ There is **no** signup route.
 | PUT / DELETE | `/api/agents/:id` | `withAuthenticatedUser` | Update / delete |
 | GET / POST | `/api/agents/:id/jobs` | `withAuthenticatedUser` | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withAuthenticatedUser` | Run history |
+| GET | `/api/agents/:id/runner-status` | `withAuthenticatedUser` | `{ live }` — is a live runner already serving this agent's placement + CLI, independent of any queued run |
 | POST | `/api/agents/:id/tables` | `withAgentOrUser` | Convenience: create a table, optionally link to a job + seed rows |
 
 Agent responses include `llm_connection_id` and metadata-only

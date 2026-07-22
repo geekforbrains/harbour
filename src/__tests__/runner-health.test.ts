@@ -7,6 +7,7 @@ import {
   createRunner,
   createWorkflow,
   getRunById,
+  hasLiveRunnerForAgent,
   runningCountsByRunner,
   stalledPlacements,
   touchRunnerPolled,
@@ -165,6 +166,125 @@ describe("stalledPlacements (absent-runner surface)", () => {
       touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["codex"], labels: ["gpu"] });
       expect(stalledPlacements(project.id)).toEqual([{ placement: "gpu", count: 1 }]);
     });
+  });
+});
+
+describe("hasLiveRunnerForAgent (pre-flight, no queued run required)", () => {
+  function devAgent(project: { id: string }, placement = "gpu", name = "Dev") {
+    return createAgent(project.id, name, undefined, { cli: "claude", placement })!;
+  }
+
+  it("is false with no runners registered at all", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is true once a live runner advertises the placement + CLI", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const runner = createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(true);
+  });
+
+  it("is false when the runner has never polled (no capabilities yet)", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is false once the only matching runner's poll goes stale", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const runner = createRunner({ name: "GPU box", tier: "remote", labels: ["gpu"] });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+    getDb()
+      .prepare(`UPDATE runners SET last_polled_at = ? WHERE id = ?`)
+      .run(Math.floor(Date.now() / 1000) - 600, runner.id);
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is false when a remote runner advertises the label but isn't authorized for it", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    // Authorized only for 'cpu'; advertising 'gpu' too doesn't count — the
+    // claim path would refuse it, so this must not read as available either.
+    const runner = createRunner({ name: "CPU box", tier: "remote", labels: ["cpu"] });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["cpu", "gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is true for a local-tier runner even without an authorized label list", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project, "local");
+    const runner = createRunner({ name: "Local pool", tier: "local" });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["local"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(true);
+  });
+
+  it("is false when the only live runner lacks the agent's CLI", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const runner = createRunner({ name: "Codex box", tier: "remote", labels: ["gpu"] });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["codex"], labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is false when the only live runner only advertises the workflow kind", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const runner = createRunner({ name: "WF box", tier: "remote", labels: ["gpu"] });
+    touchRunnerPolled(runner.id, { kinds: ["workflow"], clis: [], labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is false when a runner scoped to a different agent is the only one live", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const other = devAgent(project, "gpu", "Ops");
+    const runner = createRunner({
+      name: "Other-only box",
+      tier: "remote",
+      labels: ["gpu"],
+      scope: { agentId: other.id },
+    });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(false);
+  });
+
+  it("is true when a runner scoped to this agent is live", () => {
+    const project = createProject("Site")!;
+    const agent = devAgent(project);
+    const runner = createRunner({
+      name: "Dev-only box",
+      tier: "remote",
+      labels: ["gpu"],
+      scope: { agentId: agent.id },
+    });
+    touchRunnerPolled(runner.id, { kinds: ["agent"], clis: ["claude"], labels: ["gpu"] });
+    expect(
+      hasLiveRunnerForAgent({ placement: agent.placement, cli: agent.cli, agentId: agent.id }),
+    ).toBe(true);
   });
 });
 

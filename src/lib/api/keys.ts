@@ -33,6 +33,7 @@ export const qk = {
     detail: (id: string) => ["agents", "detail", id] as const,
     jobs: (id: string) => ["agents", "detail", id, "jobs"] as const,
     runs: (id: string) => ["agents", "detail", id, "runs"] as const,
+    runnerStatus: (id: string) => ["agents", "detail", id, "runner-status"] as const,
   },
 
   jobs: {

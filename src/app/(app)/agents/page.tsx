@@ -35,7 +35,7 @@ import { resolveAgentColor } from "@/lib/agent-color";
 import { apiFetch } from "@/lib/api/client";
 import { CLI_CONFIG, type CliTool, mergeSupportedCliTools } from "@/lib/cli-config";
 import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
-import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
+import { useAgentRunnerStatus, useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
 import { useCreateLlmConnection, useLlmConnections } from "@/lib/hooks/use-llm-connections";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
@@ -76,6 +76,9 @@ export default function AgentsPage() {
     id: string;
     name: string;
   } | null>(null);
+  const { data: newAgentRunnerStatus } = useAgentRunnerStatus(newAgent?.id ?? "", {
+    enabled: !!newAgent,
+  });
   const [placement, setPlacement] = useState("");
 
   // CLI tool selection — every v2 agent is a harbour CLI agent; cli is required.
@@ -332,20 +335,23 @@ export default function AgentsPage() {
           </DialogHeader>
 
           {newAgent ? (
-            // The runner advertising this agent's placement picks it up on its
-            // next poll — no further setup needed here.
+            // A live runner already serving this agent's placement + CLI needs
+            // no further explanation — it just picks the work up on its next
+            // poll. Only surface setup guidance when nothing is listening yet.
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 <strong>{newAgent.name}</strong> is ready. The runner picks it up on its next poll —
                 no further setup needed.
               </p>
-              <p className="text-xs text-muted-foreground">
-                If no local runner is installed yet, run{" "}
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                  npm run harbour -- install
-                </code>{" "}
-                on this machine. Runners for other placements are minted in Settings → Runners.
-              </p>
+              {newAgentRunnerStatus && !newAgentRunnerStatus.live && (
+                <p className="text-xs text-muted-foreground">
+                  If no local runner is installed yet, run{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                    npm run harbour -- install
+                  </code>{" "}
+                  on this machine. Runners for other placements are minted in Settings → Runners.
+                </p>
+              )}
               <DialogFooter>
                 <Button onClick={handleCloseCreate}>Done</Button>
               </DialogFooter>

@@ -63,6 +63,17 @@ export function useAgentRuns(id: string, limit = 50, opts?: { enabled?: boolean 
   });
 }
 
+/** Is a runner already live for this agent's placement + CLI? Drives the
+ * "Agent Created" dialog's copy — skip the setup guidance when one's already
+ * listening. */
+export function useAgentRunnerStatus(id: string, opts?: { enabled?: boolean }) {
+  return useQuery<{ live: boolean }>({
+    queryKey: qk.agents.runnerStatus(id),
+    queryFn: () => apiFetch<{ live: boolean }>(`/api/agents/${id}/runner-status`),
+    enabled: (opts?.enabled ?? true) && !!id,
+  });
+}
+
 export function useCreateAgent() {
   const qc = useQueryClient();
   const { projectId } = useScope();
