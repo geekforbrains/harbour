@@ -124,7 +124,7 @@ stable labels for each item):
 | Authorization | Flat trust: every authenticated user can do everything (no roles); agents act only on their own run; runners share one credential type | Done |
 | Onboarding | Shell-based first-run user (no web signup); argon2id password hashing; token set-password links | Done (v2) |
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
-| Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
+| Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 8-char minimum |
 | Secrets at rest | Env-var secrets are encrypted with AES-256-GCM | Done |
 | Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Partial — OpenCode uses the allowlist; Claude/Codex generalization remains H4 |
 | LLM provider credentials | Encrypt reusable connection keys at rest; expose metadata in normal APIs; decrypt into runner-private claim control data; disable project OpenCode config; document the runner host, global config/plugins, and spawned agent as trusted; redact captured output as defense-in-depth | Done |
