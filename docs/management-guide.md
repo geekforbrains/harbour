@@ -509,7 +509,7 @@ Toggles pinned status. A pinned env var is injected into every run of its projec
 ```
 GET /api/settings
 ```
-Sensitive values come back masked.
+Returns the instance timezone and recent-run display limits.
 
 ### Update Settings
 ```
@@ -519,7 +519,7 @@ Content-Type: application/json
 { "timezone": "America/New_York", "recent_runs_limit": "20" }
 ```
 
-Values are strings. `timezone` is the instance-wide schedule timezone (when unset, the server's own timezone applies); `recent_runs_limit` caps the dashboard's recent-runs list; `recent_runs_per_job` (default `"3"`) caps how many successful runs one job may occupy in that list — failed/killed runs are never capped, and skipped runs don't appear there at all.
+Values are strings. Unknown setting keys are rejected. `timezone` is the instance-wide schedule timezone (when unset, the server's own timezone applies); `recent_runs_limit` caps the dashboard's recent-runs list; `recent_runs_per_job` (default `"3"`) caps how many successful runs one job may occupy in that list — failed/killed runs are never capped, and skipped runs don't appear there at all.
 
 ### List Timezones
 ```

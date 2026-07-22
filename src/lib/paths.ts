@@ -55,10 +55,6 @@ export function maxUploadBytes(): number {
   return maxUploadMb() * 1024 * 1024;
 }
 
-export function processedDir(runId: string, attachmentId: string): string {
-  return path.join(runUploadsDir(runId), "processed", attachmentId);
-}
-
 export function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

@@ -40,7 +40,6 @@ Files land under `~/.harbour/uploads/runs/<run-id>/` (or under `HARBOUR_UPLOADS_
   runs/
     <run-id>/
       <uuid>__sanitized-name.png
-      processed/<attachment-id>/...   ← video processing artifacts
 ```
 
 A UUID prefix in the storage filename keeps two uploads with the same original name from colliding. The original (sanitized) name is stored separately in the row's `filename` column for display.
@@ -89,32 +88,6 @@ DELETE /api/runs/:id/attachments/:aid           — delete row + on-disk file
 GET    /api/runs/:id/attachments/:aid/file      — download a file attachment
 ```
 
-## Video processing pipeline
-
-Video files attached to runs can be auto-processed into a transcript + screenshot storyboard so an agent gets a usable summary in the run payload instead of a multi-megabyte binary.
-
-It's opt-in: `video_auto_process` setting must be `"true"`. When enabled, every uploaded file whose mime type starts with `video/` (or matches a known video extension) kicks off `processVideoAttachment(attachmentId, runId)` fire-and-forget.
-
-State machine in `attachment_processing`:
-
-```
-queued → processing → done
-                    → failed
-```
-
-The pipeline:
-
-1. **ffprobe** to read duration.
-2. **ffmpeg** at `fps=1/<interval>` (default 5s, `video_screenshot_interval` setting) writing JPEGs into `~/.harbour/uploads/runs/<run-id>/processed/<attachment-id>/screenshots/`. Capped at 500 frames as a safety belt.
-3. **ffmpeg** strips the audio to MP3.
-4. **Transcript** via the configured provider — `whisper` (local CLI), `openai` (Whisper API), `gemini` (Gemini 2.0 Flash), or `off`. Returns timestamped segments.
-5. **Storyboard** assembly — interleaved `[Screenshot N — MM:SS — <url>]` markers with the matching transcript snippet for each window.
-6. Status flips to `done`. Transcript path and screenshot count get written back to the row.
-
-When a runner claims the run, the payload builder enriches each video attachment with a `processing` block — status, screenshot URL prefix, duration, and an inline transcript or storyboard capped at `TRANSCRIPT_CAP` (5000 chars). Anything larger needs a separate fetch via the screenshots/transcript endpoints.
-
-If `ffmpeg` isn't on the PATH, the pipeline records a system activity message on the run ("Video processing skipped — ffmpeg not found") and exits cleanly. The video remains accessible as the original file.
-
 ## Source-of-truth pointers
 
 If you're hunting in code:
@@ -123,6 +96,5 @@ If you're hunting in code:
 - `src/lib/upload.ts` — Busboy multipart streaming, `sanitizeFilename`, the temp-then-rename atomicity, `UploadError` with status codes.
 - `src/lib/upload-client.ts` — `uploadFileToRun`, `createEmbedAttachment`, `deleteAttachment`, `attachmentsUrlFor`.
 - `src/lib/attachments-serialize.ts` — `SerializedAttachment` and how the file URL is built.
-- `src/lib/paths.ts` — `runUploadsDir`, `maxUploadMb` (default 500), `processedDir`.
-- `src/lib/video-processing.ts` — the ffprobe/ffmpeg/whisper pipeline, storyboard generation, `readStoryboard`/`readTranscript` for run-payload injection.
-- `src/lib/db/schema.ts` — the `run_attachments` and `attachment_processing` tables.
+- `src/lib/paths.ts` — `runUploadsDir` and `maxUploadMb` (default 500).
+- `src/lib/db/schema.ts` — the `run_attachments` table.

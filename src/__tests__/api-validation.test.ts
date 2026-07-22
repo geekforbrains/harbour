@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as agentJobsPOST } from "@/app/api/agents/[id]/jobs/route";
 import { PUT as jobPUT } from "@/app/api/jobs/[id]/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
+import { GET as settingsGET, PUT as settingsPUT } from "@/app/api/settings/route";
 import { POST as tablesPOST } from "@/app/api/tables/route";
 import {
   createAgent,
@@ -13,7 +14,7 @@ import {
   createWorkflow,
   getJobById,
 } from "@/lib/db/queries";
-import { initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
 
 // Integration coverage for the input-validation convention: every mutation
 // endpoint either accepts valid input or rejects bad input with a clean 4xx —
@@ -205,5 +206,42 @@ describe("POST /api/tables validation", () => {
     );
     const res = await tablesPOST(req, ctx({}));
     expect(res.status).toBeLessThan(300);
+  });
+});
+
+describe("/api/settings validation", () => {
+  function settingsPutReq(userId: string, body: unknown): NextRequest {
+    const sessionId = createSession(userId);
+    const headers = new Headers();
+    headers.set("cookie", `harbour_session=${sessionId}`);
+    return new NextRequest("http://localhost/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+      headers,
+    });
+  }
+
+  it("rejects unknown setting keys", async () => {
+    const { user } = fixture();
+    const res = await settingsPUT(settingsPutReq(user.id, { unknown_setting: "value" }), ctx({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects non-string setting values", async () => {
+    const { user } = fixture();
+    const res = await settingsPUT(settingsPutReq(user.id, { recent_runs_limit: 20 }), ctx({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("does not return unsupported rows left in the settings table", async () => {
+    const { user } = fixture();
+    getDb().prepare(`INSERT INTO settings (key, value) VALUES ('legacy_setting', 'secret')`).run();
+    const sessionId = createSession(user.id);
+    const req = new NextRequest("http://localhost/api/settings", {
+      headers: { cookie: `harbour_session=${sessionId}` },
+    });
+    const res = await settingsGET(req, ctx({}));
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty("legacy_setting");
   });
 });

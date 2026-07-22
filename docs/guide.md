@@ -156,7 +156,7 @@ You don't see that selection — you just receive the chosen run, already flippe
       "Set a short run title via set_title before doing anything else — this is how humans identify the run on the dashboard.",
       "Set status to waiting if you need human input to continue (the run pauses until a human replies). The harness drives a dedicated finalize turn after your work, so you don't need to remember to set done/failed at the end.",
       "Post activity messages to log progress — these are visible on the dashboard.",
-      "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
+      "Attachments belong to the run thread — files (multipart) or URL embeds (JSON {url}).",
       "Full API spec available at the guide endpoint."
     ]
   }

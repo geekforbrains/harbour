@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -88,14 +88,19 @@ describe("processNextWorkflow orchestration", () => {
   }
 
   // Mock the run-lifecycle endpoints (kill/status/activity) the executor calls.
-  function install(opts: { killRequested?: boolean } = {}) {
+  function install(opts: { killRequested?: boolean | (() => boolean) } = {}) {
     statusPuts = [];
     activityPosts = [];
     let currentStatus = "running";
     const fetchMock = async (u: string, init: { method?: string; body?: string } = {}) => {
       const method = init.method || "GET";
-      if (/\/kill$/.test(u))
-        return res({ kill_requested: !!opts.killRequested, status: currentStatus });
+      if (/\/kill$/.test(u)) {
+        const killRequested =
+          typeof opts.killRequested === "function"
+            ? opts.killRequested()
+            : Boolean(opts.killRequested);
+        return res({ kill_requested: killRequested, status: currentStatus });
+      }
       if (/\/status$/.test(u) && method === "GET") return res({ status: currentStatus });
       if (/\/status$/.test(u) && method === "PUT") {
         const b = JSON.parse(init.body || "{}");
@@ -175,10 +180,13 @@ describe("processNextWorkflow orchestration", () => {
   it("a kill landing as a clean command still exits 0 does NOT clobber success", async () => {
     // The command traps SIGTERM and exits 0 well before the SIGKILL grace, so
     // wfResult.code === 0 while the kill flag is set — success must win.
-    install({ killRequested: true });
-    const r = await processNextWorkflow(payloadFor("trap '' TERM; sleep 0.4; exit 0"), creds, {
-      killPollIntervalMs: 50,
-    });
+    const ready = join(home, "clean-exit-ready");
+    install({ killRequested: () => existsSync(ready) });
+    const r = await processNextWorkflow(
+      payloadFor(`trap '' TERM; touch "${ready}"; sleep 0.4; exit 0`),
+      creds,
+      { killPollIntervalMs: 50 },
+    );
     expect(statusPuts.at(-1)).toBe("done");
     expect(r.outcome).toBe("done");
   }, 10_000);

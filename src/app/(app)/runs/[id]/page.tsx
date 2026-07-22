@@ -1,19 +1,12 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Ban,
   Bot,
   Check,
   CheckCheck,
-  ChevronDown,
-  ChevronRight,
   Cog,
   Copy,
-  FileText,
-  Film,
-  Image as ImageIcon,
-  Loader2,
   MoreVertical,
   Play,
   RotateCcw,
@@ -56,25 +49,6 @@ import { useRun, useRunMutations } from "@/lib/hooks/use-runs";
 import { timeAgo } from "@/lib/time";
 import { detectEmbedProvider } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
-
-const VIDEO_EXTENSIONS = new Set([
-  ".mp4",
-  ".mov",
-  ".avi",
-  ".mkv",
-  ".webm",
-  ".m4v",
-  ".wmv",
-  ".flv",
-  ".ogv",
-]);
-function isVideoAttachment(a: SerializedAttachment): boolean {
-  if (a.kind !== "file") return false;
-  if (a.mime_type?.startsWith("video/")) return true;
-  if (!a.filename) return false;
-  const ext = a.filename.slice(a.filename.lastIndexOf(".")).toLowerCase();
-  return VIDEO_EXTENSIONS.has(ext);
-}
 
 type Activity = {
   id: string;
@@ -346,198 +320,6 @@ function ResumeCommand({
           <Copy className="h-3.5 w-3.5" />
         )}
       </button>
-    </div>
-  );
-}
-
-type ProcessingRecord = {
-  id: string;
-  attachment_id: string;
-  run_id: string;
-  status: "queued" | "processing" | "done" | "failed";
-  transcript_path: string | null;
-  screenshots_dir: string | null;
-  screenshot_count: number;
-  screenshot_interval: number | null;
-  duration_seconds: number | null;
-  error: string | null;
-};
-
-type Screenshot = {
-  index: number;
-  timestamp: number;
-  url: string;
-};
-
-function VideoProcessingInfo({
-  runId,
-  attachment,
-}: {
-  runId: string;
-  attachment: SerializedAttachment;
-}) {
-  const [triggering, setTriggering] = useState(false);
-  const [screenshotsOpen, setScreenshotsOpen] = useState(false);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const queryClient = useQueryClient();
-
-  const { data: processing, error: procError } = useQuery<ProcessingRecord | null>({
-    queryKey: ["processing", attachment.id],
-    queryFn: async () => {
-      try {
-        return await apiFetch<ProcessingRecord>(
-          `/api/runs/${runId}/attachments/${attachment.id}/processing`,
-        );
-      } catch {
-        return null;
-      }
-    },
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      if (d && (d.status === "queued" || d.status === "processing")) return 3000;
-      return false;
-    },
-  });
-
-  const { data: screenshotsData } = useQuery<{
-    screenshots: Screenshot[];
-    total: number;
-    pages: number;
-  }>({
-    queryKey: ["screenshots", attachment.id],
-    queryFn: async () => {
-      try {
-        return await apiFetch<{ screenshots: Screenshot[]; total: number; pages: number }>(
-          `/api/runs/${runId}/attachments/${attachment.id}/screenshots?limit=20`,
-        );
-      } catch {
-        return { screenshots: [], total: 0, pages: 0 };
-      }
-    },
-    enabled: processing?.status === "done" && screenshotsOpen,
-  });
-
-  const { data: transcript } = useQuery<string>({
-    queryKey: ["transcript", attachment.id],
-    queryFn: async () => {
-      try {
-        return await apiFetch<string>(`/api/runs/${runId}/attachments/${attachment.id}/transcript`);
-      } catch {
-        return "";
-      }
-    },
-    enabled: processing?.status === "done" && !!processing?.transcript_path && transcriptOpen,
-  });
-
-  async function handleProcess() {
-    setTriggering(true);
-    try {
-      await apiFetch(`/api/runs/${runId}/attachments/${attachment.id}/processing`, {
-        method: "POST",
-      });
-    } catch {
-      /* ignore */
-    }
-    queryClient.invalidateQueries({ queryKey: ["processing", attachment.id] });
-    setTriggering(false);
-  }
-
-  if (processing === undefined && !procError) return null;
-
-  if (!processing) {
-    return (
-      <div className="mt-1">
-        <Button variant="outline" size="sm" onClick={handleProcess} disabled={triggering}>
-          <Film className="h-3.5 w-3.5 mr-1.5" />
-          {triggering ? "Queuing..." : "Process"}
-        </Button>
-      </div>
-    );
-  }
-
-  if (processing.status === "queued" || processing.status === "processing") {
-    return (
-      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Processing video...
-      </div>
-    );
-  }
-
-  if (processing.status === "failed") {
-    return (
-      <div className="mt-1 space-y-1">
-        <p className="text-xs text-red-600 dark:text-red-400">
-          Processing failed{processing.error ? `: ${processing.error}` : ""}
-        </p>
-        <Button variant="outline" size="sm" onClick={handleProcess} disabled={triggering}>
-          <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-          {triggering ? "Queuing..." : "Retry"}
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-1 space-y-1">
-      {processing.screenshot_count > 0 && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setScreenshotsOpen((v) => !v)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {screenshotsOpen ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <ImageIcon className="h-3 w-3" />
-            {processing.screenshot_count} screenshot{processing.screenshot_count !== 1 ? "s" : ""}
-          </button>
-          {screenshotsOpen && screenshotsData && (
-            <div className="flex gap-1.5 mt-1.5 overflow-x-auto pb-1">
-              {screenshotsData.screenshots.map((s) => (
-                <a key={s.index} href={s.url} target="_blank" rel="noreferrer" className="shrink-0">
-                  {/* biome-ignore lint/performance/noImgElement: dynamic video-screenshot URLs served by our API; next/image optimization adds no value here */}
-                  <img
-                    src={s.url}
-                    alt={`Screenshot at ${s.timestamp}s`}
-                    className="h-16 w-auto rounded border hover:border-primary transition-colors"
-                  />
-                </a>
-              ))}
-              {screenshotsData.pages > 1 && (
-                <span className="flex items-center text-xs text-muted-foreground px-2 shrink-0">
-                  +{screenshotsData.total - screenshotsData.screenshots.length} more
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      {processing.transcript_path && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setTranscriptOpen((v) => !v)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {transcriptOpen ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <FileText className="h-3 w-3" />
-            Transcript
-          </button>
-          {transcriptOpen && transcript !== undefined && (
-            <pre className="mt-1.5 text-xs bg-muted rounded-md border p-3 max-h-64 overflow-y-auto whitespace-pre-wrap">
-              {transcript || "No transcript content."}
-            </pre>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -841,11 +623,6 @@ export default function RunDetailPage() {
                       </div>
                     )}
                     <AttachmentList items={entryAttachments} />
-                    {entryAttachments
-                      .filter((a) => isVideoAttachment(a))
-                      .map((a) => (
-                        <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
-                      ))}
                   </div>
                 </div>
               );
@@ -862,11 +639,6 @@ export default function RunDetailPage() {
           <div className="space-y-1">
             <SectionHeader>Attachments</SectionHeader>
             <AttachmentList items={orphaned} />
-            {orphaned
-              .filter((a) => isVideoAttachment(a))
-              .map((a) => (
-                <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
-              ))}
           </div>
         );
       })()}

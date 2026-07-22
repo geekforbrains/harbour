@@ -251,22 +251,6 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    CREATE TABLE IF NOT EXISTS attachment_processing (
-      id TEXT PRIMARY KEY,
-      attachment_id TEXT NOT NULL UNIQUE REFERENCES run_attachments(id) ON DELETE CASCADE,
-      run_id TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('queued','processing','done','failed')),
-      transcript_path TEXT,
-      screenshots_dir TEXT,
-      screenshot_count INTEGER NOT NULL DEFAULT 0,
-      screenshot_interval INTEGER,
-      duration_seconds REAL,
-      error TEXT,
-      started_at INTEGER,
-      completed_at INTEGER,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
     -- ── Resources — project-owned ────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS docs (
@@ -349,9 +333,8 @@ export function initializeSchema(db: Database.Database) {
     -- ── Indexes ──────────────────────────────────────────────────────────
 
     -- (Single-column UNIQUE constraints — users.email, set_password_tokens /
-    -- runners token_hash, api_keys.api_key_hash, tables.table_name,
-    -- attachment_processing.attachment_id — already get implicit indexes; no
-    -- explicit twins needed.)
+    -- runners token_hash, api_keys.api_key_hash, and tables.table_name already
+    -- get implicit indexes; no explicit twins needed.)
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
@@ -374,8 +357,6 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
-    CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
-
     CREATE INDEX IF NOT EXISTS idx_docs_project ON docs(project_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_env_vars_project ON env_vars(project_id);

@@ -25,7 +25,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 - [Workflows](concepts/workflows.md) — deterministic shell-command jobs and agent prerun gates
 - [Projects](concepts/projects.md) — how projects organize work, and where everything lives
 - [Shared context](concepts/shared-context.md) — docs, tables, secrets, and pinning
-- [Attachments](concepts/attachments.md) — files and embeds, video processing
+- [Attachments](concepts/attachments.md) — files and embeds
 
 ## Guides — set it up
 

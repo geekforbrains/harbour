@@ -12,10 +12,6 @@ import { POST as jobTriggerPOST } from "@/app/api/jobs/[id]/trigger/route";
 import { POST as jobsPOST } from "@/app/api/jobs/route";
 import { POST as claimPOST } from "@/app/api/runner/claim/route";
 import { POST as activityPOST } from "@/app/api/runs/[id]/activity/route";
-import { GET as processingGET } from "@/app/api/runs/[id]/attachments/[aid]/processing/route";
-import { GET as screenshotFileGET } from "@/app/api/runs/[id]/attachments/[aid]/screenshots/[index]/file/route";
-import { GET as screenshotsGET } from "@/app/api/runs/[id]/attachments/[aid]/screenshots/route";
-import { GET as transcriptGET } from "@/app/api/runs/[id]/attachments/[aid]/transcript/route";
 import { DELETE as runDELETE, GET as runGET } from "@/app/api/runs/[id]/route";
 import { GET as runStatusGET, PUT as runStatusPUT } from "@/app/api/runs/[id]/status/route";
 import { GET as runsHistoryGET } from "@/app/api/runs/history/route";
@@ -24,9 +20,7 @@ import {
   createAgent,
   createDoc,
   createEnvVar,
-  createFileAttachment,
   createJob,
-  createProcessingRecord,
   createProject,
   createRun,
   createRunner,
@@ -684,68 +678,5 @@ describe("POST /api/runner/claim", () => {
       ctx({}),
     );
     expect(res.status).toBe(400);
-  });
-});
-
-describe("attachment processing sub-routes are confined to the run in the URL", () => {
-  // An exec token is pinned to its own run id, so the only way to exfiltrate
-  // another run's video artifacts would be passing a foreign attachment id
-  // under your own run id. Every processing sub-route must 404 on that.
-  function foreignAttachmentFixture() {
-    const { project, run } = fixture(); // run A — the caller's own run
-    const agentB = createAgent(project.id, "DevB");
-    const jobB = createJob(project.id, agentB.id, { name: "JB", schedule: '{"every":60}' })!;
-    const runB = createRun(jobB.id, agentB.id)!;
-    const att = createFileAttachment({
-      runId: runB.id,
-      filename: "demo.mp4",
-      storagePath: `${runB.id}/demo.mp4`,
-      mimeType: "video/mp4",
-      sizeBytes: 10,
-      uploader: { type: "agent", id: agentB.id, name: "DevB" },
-    });
-    createProcessingRecord(att.id, runB.id, 5);
-    return { run, runB, att };
-  }
-
-  it("processing GET 404s for a foreign attachment id, 200s for the owning run", async () => {
-    const { run, runB, att } = foreignAttachmentFixture();
-    const foreign = await processingGET(
-      bearerReq(execToken(run.id), "http://x/"),
-      ctx({ id: run.id, aid: att.id }),
-    );
-    expect(foreign.status).toBe(404);
-    const own = await processingGET(
-      bearerReq(execToken(runB.id), "http://x/"),
-      ctx({ id: runB.id, aid: att.id }),
-    );
-    expect(own.status).toBe(200);
-    expect((await own.json()).run_id).toBe(runB.id);
-  });
-
-  it("transcript, screenshots list, and screenshot file GET all 404 on a foreign attachment id", async () => {
-    const { run, att } = foreignAttachmentFixture();
-    // Give the processing row artifacts so only the run check can 404.
-    getDb()
-      .prepare(
-        `UPDATE attachment_processing SET transcript_path = 't.txt', screenshots_dir = 's' WHERE attachment_id = ?`,
-      )
-      .run(att.id);
-    const token = execToken(run.id);
-    const transcript = await transcriptGET(
-      bearerReq(token, "http://x/"),
-      ctx({ id: run.id, aid: att.id }),
-    );
-    expect(transcript.status).toBe(404);
-    const list = await screenshotsGET(
-      bearerReq(token, "http://x/"),
-      ctx({ id: run.id, aid: att.id }),
-    );
-    expect(list.status).toBe(404);
-    const file = await screenshotFileGET(
-      bearerReq(token, "http://x/"),
-      ctx({ id: run.id, aid: att.id, index: "0" }),
-    );
-    expect(file.status).toBe(404);
   });
 });

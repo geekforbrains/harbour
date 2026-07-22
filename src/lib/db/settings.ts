@@ -1,12 +1,19 @@
 import { getDb } from "./schema";
 
-export function getSetting(key: string): string | null {
+const SETTING_KEYS = ["timezone", "recent_runs_limit", "recent_runs_per_job"] as const;
+export type SettingKey = (typeof SETTING_KEYS)[number];
+
+export function isSettingKey(key: string): key is SettingKey {
+  return (SETTING_KEYS as readonly string[]).includes(key);
+}
+
+export function getSetting(key: SettingKey): string | null {
   const db = getDb();
   const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as any;
   return row?.value ?? null;
 }
 
-export function setSetting(key: string, value: string) {
+export function setSetting(key: SettingKey, value: string) {
   const db = getDb();
   db.prepare(
     `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?`,
@@ -20,7 +27,9 @@ export function getAllSettings(): Record<string, string> {
     value: string;
   }[];
   const result: Record<string, string> = {};
-  for (const row of rows) result[row.key] = row.value;
+  for (const row of rows) {
+    if (isSettingKey(row.key)) result[row.key] = row.value;
+  }
   return result;
 }
 
@@ -47,41 +56,4 @@ export function getRecentRunsPerJob(): number {
   const val = getSetting("recent_runs_per_job");
   const n = val ? parseInt(val, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 3;
-}
-
-// Video processing settings
-
-export function isVideoAutoProcessEnabled(): boolean {
-  return getSetting("video_auto_process") === "true";
-}
-
-export function getVideoScreenshotInterval(): number {
-  const val = getSetting("video_screenshot_interval");
-  const n = val ? parseInt(val, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 5;
-}
-
-export type TranscriptProvider = "off" | "whisper" | "openai" | "gemini";
-
-export function getVideoTranscriptProvider(): TranscriptProvider {
-  const val = getSetting("video_transcript_provider");
-  if (val === "whisper" || val === "openai" || val === "gemini") return val;
-  return "off";
-}
-
-export function getVideoTranscriptApiKey(provider: "openai" | "gemini"): string | null {
-  const key = provider === "openai" ? "video_openai_api_key" : "video_gemini_api_key";
-  return getSetting(key);
-}
-
-/** Settings keys that contain sensitive values and should be masked in API responses */
-const SENSITIVE_SETTINGS = new Set(["video_openai_api_key", "video_gemini_api_key"]);
-
-export function isSensitiveSetting(key: string): boolean {
-  return SENSITIVE_SETTINGS.has(key);
-}
-
-export function maskSettingValue(value: string): string {
-  if (value.length <= 8) return "••••••••";
-  return `••••••••${value.slice(-4)}`;
 }

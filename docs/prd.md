@@ -97,8 +97,7 @@ detail, see [docs/reference](reference/).
   tenancy or permission boundary.
 
 **Operator surface**
-- Per-run attachments (files + embeds) with optional video transcription and
-  storyboard generation.
+- Per-run attachments (files + embeds).
 - Dashboard for runs, jobs, agents, docs, tables, secrets, users, and settings.
 
 **APIs**
@@ -120,10 +119,10 @@ stable labels for each item):
 | Onboarding | Shell-based first-run user (no web signup); argon2id password hashing; token set-password links | Done (v2) |
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
 | Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
-| Secrets at rest | Env-var secrets are AES-256-GCM; sensitive settings (e.g. video API keys) encrypted the same way | Partial — settings encryption planned (M3) |
+| Secrets at rest | Env-var secrets are encrypted with AES-256-GCM | Done |
 | Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Planned (H4) |
 | DB column types | Runtime-allowlist `TEXT/INTEGER/REAL` — no SQL injection via a column type | Planned (C3) |
-| Settings writes | Allowlist writable keys | Planned (H1) |
+| Settings writes | Allowlist writable keys | Done — timezone and recent-run display limits only |
 | Row APIs | Clamp read limits, bound rows per insert, reject oversized bodies | Planned (M5) |
 | Uploads | Per-file cap, and reject when free disk is under 10% | Planned (H6) |
 | File paths | Verify served/deleted attachment paths stay under the uploads directory | Planned (M4) |

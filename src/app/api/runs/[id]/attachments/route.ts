@@ -10,11 +10,9 @@ import {
   type RunAttachment,
   type Uploader,
 } from "@/lib/db/queries";
-import { isVideoAutoProcessEnabled } from "@/lib/db/settings";
 import { optionalString, readJson, requireNonEmptyString } from "@/lib/http";
 import { publicBaseUrl } from "@/lib/request-url";
 import { receiveMultipartUploads, UploadError } from "@/lib/upload";
-import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
@@ -72,14 +70,6 @@ export const POST = withRunExecutorOrUser(async (req, auth, { params }) => {
         uploader,
       }),
     );
-
-    if (isVideoAutoProcessEnabled()) {
-      for (const att of created) {
-        if (isVideoFile(att.mime_type, att.filename)) {
-          processVideoAttachment(att.id, id);
-        }
-      }
-    }
 
     return NextResponse.json(
       created.map((r) => serializeAttachment(r, base)),

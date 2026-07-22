@@ -1,7 +1,7 @@
 # API
 
 The codebase-side route map: every route file, its HTTP methods, the auth
-wrapper, and a one-liner. **70 route files.**
+wrapper, and a one-liner. **65 route files.**
 
 The **on-the-wire contract** an agent reads at runtime — payload shapes, error
 envelopes, status semantics — lives in two source files served live by the
@@ -79,7 +79,7 @@ There is **no** signup route.
 | POST | `/api/users/:id/set-password-link` | Mint an invite / reset link |
 | GET / POST | `/api/api-keys` | List / create API keys (`hbr_` + 64 hex) |
 | DELETE | `/api/api-keys/:id` | Revoke |
-| GET / PUT | `/api/settings` | Read / bulk-set instance settings (sensitive values masked on read); holds the instance timezone |
+| GET / PUT | `/api/settings` | Read / bulk-set allowlisted instance settings; holds the instance timezone and recent-run display limits |
 | GET | `/api/management-guide` | Serve [management-guide.md](../management-guide.md) |
 
 ## Projects (`withAuthenticatedUser`)
@@ -177,10 +177,6 @@ attachments) or any authenticated user.
 | GET / POST | `/api/runs/:id/attachments` | `withRunExecutorOrUser` | List / upload file (multipart) or embed (JSON) |
 | DELETE | `/api/runs/:id/attachments/:aid` | `withRunExecutorOrUser` | Delete |
 | GET | `/api/runs/:id/attachments/:aid/file` | `withRunExecutorOrUser` | Download bytes |
-| GET / POST | `/api/runs/:id/attachments/:aid/processing` | `withRunExecutorOrUser` | Video processing status / (re)queue |
-| GET | `/api/runs/:id/attachments/:aid/screenshots` | `withRunExecutorOrUser` | Paginated frames |
-| GET | `/api/runs/:id/attachments/:aid/screenshots/:index/file` | `withRunExecutorOrUser` | One JPEG |
-| GET | `/api/runs/:id/attachments/:aid/transcript` | `withRunExecutorOrUser` | Transcript / storyboard (`?format=plain`) |
 
 ## Shared context
 
@@ -230,7 +226,6 @@ never workflows.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/settings/timezones` | Supported timezone list |
-| GET | `/api/settings/video-processing/check` | Probe ffmpeg / whisper / provider availability |
 | GET | `/api/system/cli-tools` | Detect installed CLI tools |
 | GET | `/api/system/upload-config` | `{max_upload_mb, max_upload_bytes}` |
 

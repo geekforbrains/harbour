@@ -6,7 +6,7 @@ One SQLite file (default `~/.harbour/harbour.db`), `journal_mode = WAL`,
 a drifted database fails startup verification (`verifySchema`) with a precise
 diff; a fresh database is the only supported path.
 
-- **22 tables**, **26 explicit indexes** (plus auto-indexes on PK / UNIQUE).
+- **21 tables**, **21 explicit indexes** (plus auto-indexes on PK / UNIQUE).
 - Timestamps are unix epoch seconds (`unixepoch()` defaults). Booleans are
   INTEGER 0/1. IDs are uuid TEXT **except** `run_output.id`, which is an
   AUTOINCREMENT integer used as an SSE cursor.
@@ -75,7 +75,7 @@ Single-use invite / reset links.
 | `consumed_at` | INTEGER | | single-use; consumed atomically in a txn |
 | `created_at` | INTEGER | NN | |
 
-Index: `idx_set_password_tokens_hash`.
+The `token_hash` UNIQUE constraint supplies its lookup index.
 
 ### `api_keys`
 Bearer keys (`hbr_` + 64 hex chars) that resolve to the **creator's** user
@@ -115,8 +115,7 @@ agent, job, run, doc, secret, and table under the project goes with it.
 
 There is no stored `type` column — every agent is CLI-driven and claimed by the
 unified runner (routed via `placement` + the `runners` registry, not per-agent
-config). Indexes: `idx_agents_project`,
-`idx_agents_project_slug(project_id, slug)` (UNIQUE).
+config). Index: `idx_agents_project_slug(project_id, slug)` (UNIQUE).
 
 ### `runners`
 The **instance-level runner registry** — one row per runner (the auto-provisioned
@@ -133,7 +132,7 @@ local runner plus any remote runners).
 | `last_polled_at` | INTEGER | | updated on every claim/peek; drives the health surface |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
-Index: `idx_runners_token(token_hash)` (UNIQUE).
+The `token_hash` UNIQUE constraint supplies its lookup index.
 
 ### `jobs`
 Static configuration for recurring work (agent or workflow).
@@ -185,14 +184,14 @@ A single execution of a job.
 | `created_at` / `updated_at` | INTEGER | NN | |
 
 Indexes: `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,
-`idx_runs_status`, `idx_runs_claimed_by`.
+`idx_runs_status`, `idx_runs_claimed_by`, and the partial `idx_runs_exec_token`.
 
 ### `run_activity`
 Ordered message log. On workflow runs this is runner output only
 (`workflow`/`system` authors), never a conversation.
 `id`, `run_id`, `author_type` (NN, CHECK in `agent`/`user`/`system`/`workflow`),
 `author_id`, `author_name`, `content`, `created_at`. Indexes:
-`idx_run_activity_run`, `idx_run_activity_run_time(run_id, created_at)`.
+`idx_run_activity_run_time(run_id, created_at)`.
 
 ### `run_output`
 Streamed CLI events; backs the SSE stream.
@@ -207,14 +206,6 @@ Files or embed URLs on a run.
 `mime_type`, `size_bytes`, `url`, `embed_provider`, `title`,
 `uploaded_by_type` (CHECK `user`/`agent`), `uploaded_by_id`, `uploaded_by_name`,
 `created_at`. Indexes: `idx_run_attachments_run`, `idx_run_attachments_activity`.
-
-### `attachment_processing`
-ffmpeg + whisper state for a video attachment. `attachment_id` is **UNIQUE**
-(one row per attachment; re-process deletes the old row first).
-`status` CHECK in (`queued`, `processing`, `done`, `failed`); `transcript_path`,
-`screenshots_dir`, `screenshot_count`, `screenshot_interval`,
-`duration_seconds` (REAL), `error`, `started_at`, `completed_at`. Indexes:
-`idx_attachment_processing_attachment`, `idx_attachment_processing_run`.
 
 ## Resources — project-owned
 
@@ -272,8 +263,8 @@ later assignment wins.
 ### `settings`
 `key` (PK), `value` (NN). **Instance-global KV** — holds the instance
 `timezone` (read only through `getTimezone()` in `src/lib/db/settings.ts`,
-falling back to the host timezone), recent-feed limits, and video-processing
-settings. There is **no** `signup_enabled` key (no web signup).
+falling back to the host timezone) and recent-feed limits. There is **no**
+`signup_enabled` key (no web signup).
 
 ## Notable invariants
 

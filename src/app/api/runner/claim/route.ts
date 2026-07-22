@@ -1,22 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { type SerializedAttachment, serializeAttachment } from "@/lib/attachments-serialize";
+import { serializeAttachment } from "@/lib/attachments-serialize";
 import { type RunnerAuth, withRunnerAuth } from "@/lib/auth";
-import {
-  claimNextRun,
-  getProcessingByAttachment,
-  peekClaim,
-  type RunAttachment,
-  touchRunnerPolled,
-} from "@/lib/db/queries";
+import { claimNextRun, peekClaim, type RunAttachment, touchRunnerPolled } from "@/lib/db/queries";
 import type { RunnerCapabilities } from "@/lib/db/runners";
 import { readJson } from "@/lib/http";
 import { publicBaseUrl } from "@/lib/request-url";
-import {
-  isVideoFile,
-  readStoryboard,
-  readTranscript,
-  TRANSCRIPT_CAP,
-} from "@/lib/video-processing";
 
 /**
  * The per-run `api` block. Endpoints are pre-resolved for this run; the runner
@@ -48,7 +36,7 @@ function buildApiSection(req: NextRequest, runId: string) {
       "Set a short run title via set_title before doing anything else — this is how humans identify the run on the dashboard.",
       "Set status to waiting if you need human input to continue (the run pauses until a human replies). The harness drives a dedicated finalize turn after your work, so you don't need to remember to set done/failed at the end.",
       "Post activity messages to log progress — these are visible on the dashboard.",
-      "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
+      "Attachments belong to the run thread — files (multipart) or URL embeds (JSON {url}).",
       "Full API spec available at the guide endpoint.",
     ],
   };
@@ -102,35 +90,13 @@ export const POST = withRunnerAuth(async (req, auth: RunnerAuth) => {
   if (!payload) return NextResponse.json({ run: null });
 
   const base = publicBaseUrl(req);
-  const serialized = (payload.attachments as RunAttachment[]).map((a) =>
-    serializeAttachment(a, base),
+  const attachments = (payload.attachments as RunAttachment[]).map((attachment) =>
+    serializeAttachment(attachment, base),
   );
-  const enriched = serialized.map((att: SerializedAttachment) => {
-    if (!isVideoFile(att.mime_type, att.filename)) return att;
-    const proc = getProcessingByAttachment(att.id);
-    if (!proc) return att;
-    const processing: Record<string, unknown> = {
-      status: proc.status,
-      screenshot_count: proc.screenshot_count,
-      screenshots_url: `${base}/api/runs/${payload.run.id}/attachments/${att.id}/screenshots`,
-      duration_seconds: proc.duration_seconds,
-    };
-    if (proc.status === "done") {
-      if (proc.screenshots_dir) {
-        const storyboard = readStoryboard(proc.screenshots_dir, base, TRANSCRIPT_CAP);
-        if (storyboard) processing.storyboard = storyboard;
-      }
-      if (proc.transcript_path) {
-        processing.transcript = readTranscript(proc.transcript_path, TRANSCRIPT_CAP);
-        processing.transcript_url = `${base}/api/runs/${payload.run.id}/attachments/${att.id}/transcript`;
-      }
-    }
-    return { ...att, processing };
-  });
 
   return NextResponse.json({
     ...payload,
-    attachments: enriched,
+    attachments,
     api: buildApiSection(req, payload.run.id),
   });
 });
