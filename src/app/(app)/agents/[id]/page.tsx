@@ -234,7 +234,13 @@ export default function AgentDetailPage() {
               setEditDesc(agent.description || "");
               setEditColor(agent.color || "");
               setEditModel(agent.model || "");
-              setEditThinking(agent.thinking || "");
+              // Select-type effort (claude/codex) always lands on a real
+              // option, even for an agent saved before this field was
+              // required. OpenCode's free-text variant stays optional.
+              const cliConfig = agent.cli ? CLI_CONFIG[agent.cli] : undefined;
+              const fallbackThinking =
+                cliConfig && cliConfig.thinkingInput !== "text" ? cliConfig.thinkingOptions[0] : "";
+              setEditThinking(agent.thinking || fallbackThinking);
               setEditPlacement(agent.placement || "local");
               setEditConnectionId(agent.llm_connection_id || agent.llm_connection?.id || "");
               setSettingsError(null);
@@ -504,7 +510,6 @@ export default function AgentDetailPage() {
                 thinking={editThinking}
                 onModelChange={setEditModel}
                 onThinkingChange={setEditThinking}
-                defaultThinkingLabel="Default"
                 modelPlaceholder={
                   agent.cli === "opencode" && editConnection
                     ? modelPlaceholderForProvider(editConnection.provider_id)

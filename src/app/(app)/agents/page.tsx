@@ -123,7 +123,10 @@ export default function AgentsPage() {
     setSelectedCli(cliId);
     const config = CLI_CONFIG[cliId];
     setSelectedModel(config?.models[0] || "");
-    setSelectedThinking("");
+    // Select-type effort (claude/codex) always starts on a real option — no
+    // blank "default" to silently submit. OpenCode's free-text variant stays
+    // optional, so it starts empty.
+    setSelectedThinking(config && config.thinkingInput !== "text" ? config.thinkingOptions[0] : "");
     setConnectionMode("existing");
     setSelectedConnectionId("");
     setConnectionDraft(createLlmConnectionDraft());
@@ -492,7 +495,6 @@ export default function AgentsPage() {
                   thinking={selectedThinking}
                   onModelChange={setSelectedModel}
                   onThinkingChange={setSelectedThinking}
-                  defaultThinkingLabel="Default"
                   modelPlaceholder={
                     isOpenCode && selectedProviderId
                       ? modelPlaceholderForProvider(selectedProviderId)
