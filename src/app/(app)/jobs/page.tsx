@@ -77,11 +77,7 @@ export default function JobsPage() {
       <ListState
         isEmpty={jobs.length === 0}
         emptyIcon={<Briefcase className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage={
-          activeProjectId
-            ? "No jobs yet. Create one to get started."
-            : "Select a project to create a job."
-        }
+        emptyMessage={newJobHint ?? "No jobs yet. Create one to get started."}
       >
         <div className="grid gap-2">
           {jobs.map((job) => {
