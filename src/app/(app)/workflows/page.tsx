@@ -59,7 +59,11 @@ export default function WorkflowsPage() {
       <ListState
         isEmpty={workflows.length === 0}
         emptyIcon={<Workflow className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No workflows yet. Create one to get started."
+        emptyMessage={
+          activeProjectId
+            ? "No workflows yet. Create one to get started."
+            : "Select a project to create a workflow."
+        }
       >
         <div className="grid gap-2">
           {workflows.map((wf) => (

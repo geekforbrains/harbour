@@ -66,7 +66,7 @@ agent-run's exec token (the executor acts as the run's agent).
 |---|---|---|
 | POST | `/api/auth/login` | Verify password, set `harbour_session` cookie. Rate-limited: 5 failed attempts per email+IP per 15 minutes → `429` |
 | POST | `/api/auth/logout` | Clear session cookie |
-| POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 12 chars). Rate-limited: 5 attempts per IP per hour → `429` |
+| POST | `/api/auth/set-password` | Redeem a single-use set-password token; sets password + session (min 8 chars). Rate-limited: 5 attempts per IP per hour → `429` |
 | GET | `/api/auth/me` | Identity echo: `{ type: "user", user }` for users, `{ type: "runner", runner }` / `{ type: "executor", run_id }` for tokens |
 | GET | `/api/guide` | Serve [guide.md](../guide.md) (worker-agent / CLI contract) |
 | GET | `/api/runner-guide` | Serve [runner-guide.md](../runner-guide.md) (the Runner Protocol) |

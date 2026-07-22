@@ -260,7 +260,11 @@ export default function AgentsPage() {
       <ListState
         isEmpty={agents.length === 0}
         emptyIcon={<Bot className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No agents yet. Create one to get started."
+        emptyMessage={
+          activeProjectId
+            ? "No agents yet. Create one to get started."
+            : "Select a project to create an agent."
+        }
       >
         <div className="grid gap-2">
           {agents.map((agent) => (

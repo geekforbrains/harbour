@@ -150,7 +150,9 @@ export default function LlmConnectionsPage() {
       <ListState
         isEmpty={connections.length === 0}
         emptyIcon={<Plug className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No LLM connections yet."
+        emptyMessage={
+          activeProjectId ? "No LLM connections yet." : "Select a project to create a connection."
+        }
       >
         <div className="space-y-2">
           {connections.map((connection) => (

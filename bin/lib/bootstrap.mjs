@@ -179,8 +179,7 @@ function promptHidden(rl, question) {
 function createUser({ email, displayName, password, force }) {
   if (!isValidEmail(email)) throw new Error("A valid email is required.");
   if (!displayName?.trim()) throw new Error("A display name is required.");
-  if (!password || password.length < 12)
-    throw new Error("Password must be at least 12 characters.");
+  if (!password || password.length < 8) throw new Error("Password must be at least 8 characters.");
 
   const db = openDb();
   try {
@@ -223,9 +222,9 @@ export async function runSetup(argv = []) {
     // the main password rather than exiting and discarding the email/name above.
     let password;
     for (;;) {
-      password = await promptHidden(rl, "Password (min 12 chars): ");
-      if (password.length < 12) {
-        console.error("⚠ Password must be at least 12 characters. Try again.");
+      password = await promptHidden(rl, "Password (min 8 chars): ");
+      if (password.length < 8) {
+        console.error("⚠ Password must be at least 8 characters. Try again.");
         continue;
       }
       const confirm = await promptHidden(rl, "Confirm password: ");

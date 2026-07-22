@@ -83,7 +83,7 @@ export default function DocsPage() {
       <ListState
         isEmpty={docs.length === 0}
         emptyIcon={<FileText className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No docs yet."
+        emptyMessage={activeProjectId ? "No docs yet." : "Select a project to create a doc."}
       >
         <div className="space-y-2">
           {docs.map((doc) => (

@@ -3,7 +3,7 @@ import { sessionCookieOptions } from "@/lib/auth";
 import { consumeSetPasswordToken, createSession, sessionTtlSeconds } from "@/lib/db/queries";
 import { clientIp, setPasswordLimiter } from "@/lib/rate-limit";
 
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 8;
 
 /**
  * Public endpoint to redeem a set-password / reset token. No auth wrapper: the

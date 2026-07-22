@@ -150,7 +150,7 @@ describe("CLI `harbour user create` (subprocess)", () => {
     expect(r.stdout).toContain("User created: user@example.com");
   });
 
-  it("rejects a password under 12 characters", () => {
+  it("rejects a password under 8 characters", () => {
     const r = run([
       "user",
       "create",
@@ -159,10 +159,10 @@ describe("CLI `harbour user create` (subprocess)", () => {
       "--name",
       "User",
       "--password",
-      "elevenchars",
+      "short12",
     ]);
     expect(r.code).toBe(1);
-    expect(r.stderr + r.stdout).toContain("at least 12 characters");
+    expect(r.stderr + r.stdout).toContain("at least 8 characters");
   });
 
   it("refuses to create a second user without --force", () => {

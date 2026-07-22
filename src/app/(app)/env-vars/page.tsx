@@ -93,7 +93,7 @@ export default function EnvVarsPage() {
       <ListState
         isEmpty={envVars.length === 0}
         emptyIcon={<KeyRound className="h-10 w-10 text-muted-foreground/40" />}
-        emptyMessage="No secrets yet."
+        emptyMessage={activeProjectId ? "No secrets yet." : "Select a project to create a secret."}
       >
         <div className="space-y-2">
           {envVars.map((ev) => (

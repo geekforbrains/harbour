@@ -80,11 +80,11 @@ describe("POST /api/auth/set-password", () => {
     const userId = makeUser();
     const { rawToken } = createSetPasswordToken(userId, null);
 
-    // 11 chars — one under the 12-character minimum.
+    // 7 chars — one under the 8-character minimum.
     const res = await callSetPassword(
       jsonReq("http://localhost/api/auth/set-password", {
         token: rawToken,
-        password: "elevenchars",
+        password: "short12",
       }),
     );
     expect(res.status).toBe(400);
