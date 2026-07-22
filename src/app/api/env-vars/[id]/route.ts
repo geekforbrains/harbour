@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { deleteEnvVar, getEnvVarById, updateEnvVar } from "@/lib/db/queries";
+import {
+  deleteEnvVar,
+  EnvVarInUseByLlmConnectionError,
+  getEnvVarById,
+  updateEnvVar,
+} from "@/lib/db/queries";
 import { optionalString, readJson } from "@/lib/http";
 
 export const GET = withAuthenticatedUser(async (_req, _auth, { params }) => {
@@ -33,6 +38,13 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
 export const DELETE = withAuthenticatedUser(async (_req, _auth, { params }) => {
   const { id } = await params;
   if (!getEnvVarById(id)) return NextResponse.json({ error: "Env var not found" }, { status: 404 });
-  deleteEnvVar(id);
+  try {
+    deleteEnvVar(id);
+  } catch (error) {
+    if (error instanceof EnvVarInUseByLlmConnectionError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
   return NextResponse.json({ ok: true });
 });

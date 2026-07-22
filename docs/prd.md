@@ -65,10 +65,13 @@ What Harbour must let people and agents do. For endpoint- and schema-level
 detail, see [docs/reference](reference/).
 
 **Agents**
-- Create a Harbour agent (Claude Code or Codex) run by a local or
+- Create a Harbour agent (Claude Code, Codex, or OpenCode) run by a local or
   remote CLI runner.
 - Set per-agent model, thinking/effort, and **identity color** — chosen from a
   curated palette, not auto-assigned.
+- Give OpenCode agents a reusable, project-scoped LLM connection for OpenAI,
+  Anthropic, OpenRouter, Ollama, or an OpenAI-compatible endpoint, with canonical
+  `provider/model` selection and per-job model/variant overrides.
 - Run an agent on a different machine (remote runner) with model/CLI config
   resolved live from Harbour.
 
@@ -89,6 +92,8 @@ detail, see [docs/reference](reference/).
 **Shared context**
 - Docs (versioned markdown), tables (agent-managed SQLite tables), and secrets
   (encrypted env vars), linkable to jobs and composed into each run's payload.
+- Reserve a project Secret as an OpenCode provider credential without adding its
+  plaintext to agent metadata or normal job context, even if pinned or linked.
 - Every resource lives in a project; job links may cross projects; pinning
   pre-selects an item as a default on new jobs in its project.
 
@@ -98,7 +103,8 @@ detail, see [docs/reference](reference/).
 
 **Operator surface**
 - Per-run attachments (files + embeds).
-- Dashboard for runs, jobs, agents, docs, tables, secrets, users, and settings.
+- Dashboard for runs, jobs, agents, LLM connections, docs, tables, secrets,
+  users, and settings.
 
 **APIs**
 - A worker wire contract ([guide.md](guide.md)) and a management wire contract
@@ -120,7 +126,8 @@ stable labels for each item):
 | Session cookie | `Secure` keyed to the connection protocol (works on localhost, secure behind TLS) | Done |
 | Login | Rate-limiting + lockout/backoff + stronger password policy (no 2FA — out of scope) | Done (v2) — 5 failed attempts / 15 min per email+IP on login, 5/hour per IP on set-password, 12-char minimum |
 | Secrets at rest | Env-var secrets are encrypted with AES-256-GCM | Done |
-| Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Planned (H4) |
+| Spawned-CLI env | Hand a spawned agent only an allowlist (PATH/HOME-type basics + Harbour connection vars) plus its job's secrets; strip everything else | Partial — OpenCode uses the allowlist; Claude/Codex generalization remains H4 |
+| LLM provider credentials | Encrypt reusable connection keys at rest; expose metadata in normal APIs; decrypt into runner-private claim control data; disable project OpenCode config; document the runner host, global config/plugins, and spawned agent as trusted; redact captured output as defense-in-depth | Done |
 | DB column types | Runtime-allowlist `TEXT/INTEGER/REAL` — no SQL injection via a column type | Planned (C3) |
 | Settings writes | Allowlist writable keys | Done — timezone and recent-run display limits only |
 | Row APIs | Clamp read limits, bound rows per insert, reject oversized bodies | Planned (M5) |

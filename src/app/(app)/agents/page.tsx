@@ -5,7 +5,16 @@ import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
 import { ListState } from "@/components/app/list-state";
-import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import {
+  buildLlmConnectionInput,
+  createLlmConnectionDraft,
+  LlmConnectionFields,
+  modelErrorForProvider,
+  modelPlaceholderForProvider,
+  modelSuggestionsForProvider,
+  validateLlmConnectionDraft,
+} from "@/components/app/llm-connection-form";
+import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
 import { ProjectBadge } from "@/components/app/project-badge";
 import { RowLink } from "@/components/app/row-link";
@@ -23,6 +32,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
+import { apiFetch } from "@/lib/api/client";
+import { CLI_CONFIG, type CliTool, mergeSupportedCliTools } from "@/lib/cli-config";
+import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
+import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
+import { useEnvVars } from "@/lib/hooks/use-env-vars";
+import { useCreateLlmConnection, useLlmConnections } from "@/lib/hooks/use-llm-connections";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { useRunnerHealth } from "@/lib/hooks/use-runner-health";
 import { timeAgo } from "@/lib/time";
 
 type Agent = {
@@ -39,23 +56,10 @@ type Agent = {
   last_activity: number | null;
 };
 
-type CliTool = {
-  id: string;
-  name: string;
-  installed: boolean;
-  version?: string;
-};
-
-import { apiFetch } from "@/lib/api/client";
-import { CLI_CONFIG } from "@/lib/cli-config";
-import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
-import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
-import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
-import { useRunnerHealth } from "@/lib/hooks/use-runner-health";
-
 export default function AgentsPage() {
   const activeProjectId = useActiveProjectId();
   const createAgent = useCreateAgent();
+  const createLlmConnection = useCreateLlmConnection();
 
   const { data: agentsData = [], isLoading: loading } = useAgents();
   const agents = agentsData as unknown as Agent[];
@@ -80,13 +84,32 @@ export default function AgentsPage() {
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedThinking, setSelectedThinking] = useState<string>("");
+  const [connectionMode, setConnectionMode] = useState<"existing" | "new">("existing");
+  const [selectedConnectionId, setSelectedConnectionId] = useState("");
+  const [connectionDraft, setConnectionDraft] = useState(createLlmConnectionDraft());
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const isOpenCode = selectedCli === "opencode";
+  const { data: llmConnections = [] } = useLlmConnections(undefined, {
+    enabled: showCreate && isOpenCode,
+  });
+  const { data: envVars = [] } = useEnvVars(undefined, {
+    enabled: showCreate && isOpenCode && connectionMode === "new",
+  });
+  const resolvedConnectionId = selectedConnectionId || llmConnections[0]?.id || "";
+  const selectedConnection = llmConnections.find(
+    (connection) => connection.id === resolvedConnectionId,
+  );
+  const selectedProviderId =
+    connectionMode === "new" ? connectionDraft.providerId.trim() : selectedConnection?.provider_id;
 
   async function loadCliTools() {
     setLoadingTools(true);
     try {
-      setCliTools(await apiFetch<CliTool[]>("/api/system/cli-tools"));
+      const detected = await apiFetch<CliTool[]>("/api/system/cli-tools");
+      setCliTools(mergeSupportedCliTools(detected));
     } catch {
-      // leave cliTools unchanged on failure
+      setCliTools(mergeSupportedCliTools([]));
     }
     setLoadingTools(false);
   }
@@ -101,18 +124,61 @@ export default function AgentsPage() {
     const config = CLI_CONFIG[cliId];
     setSelectedModel(config?.models[0] || "");
     setSelectedThinking("");
+    setConnectionMode("existing");
+    setSelectedConnectionId("");
+    setConnectionDraft(createLlmConnectionDraft());
+    setFormError(null);
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !selectedCli) return;
     setCreating(true);
+    setFormError(null);
+
+    let llmConnectionId: string | undefined;
+    if (selectedCli === "opencode") {
+      if (!selectedProviderId) {
+        setFormError("Select an LLM connection or create a new one.");
+        setCreating(false);
+        return;
+      }
+      const modelError = modelErrorForProvider(selectedProviderId, selectedModel);
+      if (modelError) {
+        setFormError(modelError);
+        setCreating(false);
+        return;
+      }
+      if (connectionMode === "new") {
+        const connectionError = validateLlmConnectionDraft(connectionDraft);
+        if (connectionError) {
+          setFormError(connectionError);
+          setCreating(false);
+          return;
+        }
+        try {
+          const connection = await createLlmConnection.mutateAsync(
+            buildLlmConnectionInput(connectionDraft),
+          );
+          llmConnectionId = connection.id;
+          setConnectionMode("existing");
+          setSelectedConnectionId(connection.id);
+        } catch (error) {
+          setFormError(mutationErrorMessage(error, "Failed to create LLM connection"));
+          setCreating(false);
+          return;
+        }
+      } else {
+        llmConnectionId = resolvedConnectionId;
+      }
+    }
 
     const body: Record<string, string | boolean> = { name, description, cli: selectedCli };
     if (color) body.color = color;
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
     if (placement.trim()) body.placement = placement.trim();
+    if (llmConnectionId) body.llm_connection_id = llmConnectionId;
 
     try {
       const data = await createAgent.mutateAsync(body);
@@ -141,6 +207,10 @@ export default function AgentsPage() {
     setSelectedThinking("");
     setCliTools([]);
     setPlacement("");
+    setConnectionMode("existing");
+    setSelectedConnectionId("");
+    setConnectionDraft(createLlmConnectionDraft());
+    setFormError(null);
   }
 
   if (loading) {
@@ -247,7 +317,7 @@ export default function AgentsPage() {
       </ListState>
 
       <Dialog open={showCreate} onOpenChange={handleCloseCreate}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] max-w-xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {newAgent ? "Agent Created" : !selectedCli ? "Select CLI Tool" : "New Agent"}
@@ -287,21 +357,28 @@ export default function AgentsPage() {
                     <button
                       type="button"
                       key={tool.id}
-                      onClick={() => tool.installed && handleCliSelect(tool.id)}
-                      disabled={!tool.installed}
-                      className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-                        tool.installed
-                          ? "hover:border-primary hover:bg-muted/50 cursor-pointer"
-                          : "opacity-50 cursor-not-allowed"
-                      }`}
+                      onClick={() => handleCliSelect(tool.id)}
+                      className="flex cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-muted/50"
                     >
                       <div className="flex-1">
                         <p className="text-sm font-medium">{tool.name}</p>
-                        {tool.installed && tool.version && (
+                        {tool.installed && tool.compatible !== false && tool.version && (
                           <p className="text-xs text-muted-foreground">v{tool.version}</p>
                         )}
+                        {tool.installed && tool.compatible === false && (
+                          <p className="text-xs text-amber-600">
+                            {tool.version ? `v${tool.version} · ` : ""}
+                            {tool.compatibilityReason || "Unsupported local version"}; a remote
+                            runner can still provide it.
+                          </p>
+                        )}
+                        {!tool.installed && (
+                          <p className="text-xs text-muted-foreground">
+                            Not detected here; a remote runner can provide it.
+                          </p>
+                        )}
                       </div>
-                      {tool.installed ? (
+                      {tool.installed && tool.compatible !== false ? (
                         <CheckCircle className="h-4 w-4 text-green-500" />
                       ) : (
                         <XCircle className="h-4 w-4 text-muted-foreground" />
@@ -342,7 +419,69 @@ export default function AgentsPage() {
                 />
               </div>
               <AgentColorPicker value={color} onChange={setColor} previewName={name} />
-              {CLI_CONFIG[selectedCli] && (
+              {isOpenCode && (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">LLM connection</p>
+                      <p className="text-xs text-muted-foreground">
+                        Provider endpoint and credentials used by OpenCode.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setConnectionMode(connectionMode === "new" ? "existing" : "new");
+                        setSelectedModel("");
+                        setFormError(null);
+                      }}
+                    >
+                      {connectionMode === "new" ? "Use existing" : "New connection"}
+                    </Button>
+                  </div>
+
+                  {connectionMode === "existing" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="agent-llm-connection">Connection</Label>
+                      <select
+                        id="agent-llm-connection"
+                        value={resolvedConnectionId}
+                        onChange={(event) => {
+                          setSelectedConnectionId(event.target.value);
+                          setSelectedModel("");
+                        }}
+                        className={SELECT_CLASS}
+                      >
+                        {llmConnections.length === 0 && (
+                          <option value="">No connections in this project</option>
+                        )}
+                        {llmConnections.map((connection) => (
+                          <option key={connection.id} value={connection.id}>
+                            {connection.name} ({connection.provider_id})
+                          </option>
+                        ))}
+                      </select>
+                      {llmConnections.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Create a connection here to continue.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <LlmConnectionFields
+                      draft={connectionDraft}
+                      onChange={(draft) => {
+                        if (draft.providerId !== connectionDraft.providerId) setSelectedModel("");
+                        setConnectionDraft(draft);
+                      }}
+                      secrets={envVars}
+                    />
+                  )}
+                </div>
+              )}
+              {CLI_CONFIG[selectedCli] && (!isOpenCode || selectedProviderId) && (
                 <ModelThinkingSelect
                   cli={selectedCli}
                   model={selectedModel}
@@ -350,8 +489,19 @@ export default function AgentsPage() {
                   onModelChange={setSelectedModel}
                   onThinkingChange={setSelectedThinking}
                   defaultThinkingLabel="Default"
+                  modelPlaceholder={
+                    isOpenCode && selectedProviderId
+                      ? modelPlaceholderForProvider(selectedProviderId)
+                      : undefined
+                  }
+                  modelSuggestions={
+                    isOpenCode && selectedProviderId
+                      ? modelSuggestionsForProvider(selectedProviderId)
+                      : undefined
+                  }
                 />
               )}
+              {formError && <p className="text-xs text-destructive">{formError}</p>}
               <div className="space-y-2">
                 <Label htmlFor="agent-placement">Placement</Label>
                 <Input
@@ -372,6 +522,10 @@ export default function AgentsPage() {
                     setSelectedCli(null);
                     setSelectedModel("");
                     setSelectedThinking("");
+                    setConnectionMode("existing");
+                    setSelectedConnectionId("");
+                    setConnectionDraft(createLlmConnectionDraft());
+                    setFormError(null);
                     createAgent.reset();
                   }}
                 >

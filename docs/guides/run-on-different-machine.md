@@ -6,8 +6,8 @@ A runner is **any process that implements the [Runner Protocol](../runner-guide.
 
 ## Why you'd want this
 
-The runner is the thing that actually spawns the CLI tool (Claude Code or
-Codex) and runs your workflow scripts. The CLI runs as a subprocess on the
+The runner is the thing that actually spawns the CLI tool (Claude Code, Codex,
+or OpenCode) and runs your workflow scripts. The CLI runs as a subprocess on the
 runner's host. Anything that depends on the local environment lives with the
 runner, not the server:
 
@@ -85,7 +85,7 @@ Traced through [`src/app/api/runners/route.ts`](../../src/app/api/runners/route.
 
 The minted token from step 2 is all a runner needs. Two paths:
 
-**A self-managed runner** — [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) or your own implementation in any language. Point it at the harbour URL with that token, have it advertise the label, and it claims over the [Runner Protocol](../runner-guide.md) like any other runner. Follow that project's own setup; the bundled-runner steps below (4–6) are Harbour's Node CLI and don't apply.
+**A self-managed runner** — [`harbour-agent`](https://github.com/geekforbrains/harbour-agent) or your own implementation in any language. Point it at the harbour URL with that token, have it advertise the label, and it claims over the [Runner Protocol](../runner-guide.md) like any other runner. Follow that project's own setup; the bundled-runner steps below (4–6) are Harbour's Node CLI and don't apply. A runner should advertise `opencode` only if it both has the binary and implements the OpenCode provider/private-runtime contract; protocol compatibility alone does not add that executor.
 
 **Harbour's bundled runner** (the rest of this guide) — the Node runner from this repo, run on the remote box. You don't build or run the harbour *server* there, just the `bin/` runner. It needs **Node 24 LTS** (this repo pins it):
 
@@ -96,6 +96,19 @@ npm install
 ```
 
 `npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs`, invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
+
+Install the agent CLI on this machine too. For OpenCode:
+
+```bash
+npm install -g opencode-ai
+opencode --version
+```
+
+Harbour requires OpenCode 1.17.12 or newer; older installations are not advertised as a runner capability. Claude Code and Codex use their normal login or runner-service API-key environment on the remote host. OpenCode does not: create/select its reusable connection in the project on the Harbour server, and let Harbour deliver that connection's Secret outside prompt-visible job context with each claim. Do not use OpenCode's `/connect` flow or set a runner-wide provider key for Harbour's OpenCode agents.
+
+The bundled runner disables repository-level OpenCode project config, but preserves the remote user's normal XDG locations. Runner-host/global OpenCode config and plugins, the runner user's filesystem, and the headless tool-capable agent remain trusted. The agent can read its provider key from the child environment, so use a dedicated budget- and rate-limited credential; output redaction is defense-in-depth, not containment.
+
+For Ollama and custom endpoints, remember that `base_url` is resolved by **this runner**. `http://127.0.0.1:11434/v1` means Ollama on the remote box, which is usually exactly what you want for a GPU runner. A URL reachable only from the Harbour server will not work here.
 
 ### 4. Connect the runner
 
@@ -143,14 +156,14 @@ The split is straightforward but worth being explicit about.
 **On the remote machine:**
 
 - The runner process itself.
-- The CLI tool subprocess — Claude Code or Codex, whichever the agent picked.
+- The CLI tool subprocess — Claude Code, Codex, or OpenCode, whichever the agent picked.
 - Working directories at `~/.harbour/workspaces/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
 - **Gate runtimes.** Prerun/postrun gate scripts are `{ runtime, content }` gists stored in Harbour; the runner materializes each body into `~/.harbour/workflows/<scripts_dir>` from the claim payload and runs it there — nothing to hand-place or sync. You only need the gate's **runtime** installed on the remote: `bash`, `python3`, or `node`, depending on which the gate uses.
-- Anything env vars and API keys reference. Env vars are decrypted by harbour and sent in the claim payload, so the runner has the plaintext at run time — but the *services* those keys point at must be reachable from the remote.
+- Anything env vars and API keys reference. Job Secrets are decrypted by Harbour into `env`; a Secret bound to an LLM connection is reserved for provider auth, excluded from normal job `env`, and decrypted separately into the private `runtime` claim block before being placed in the OpenCode child environment. The runner and spawned agent have the plaintext at run time, and the *services* those keys point at must be reachable from the remote. Use HTTPS or a private mesh between Harbour and the runner.
 
 **On the harbour server:**
 
-- The agent record, jobs, schedules, docs, env vars (encrypted), and run history.
+- The agent record, jobs, schedules, docs, LLM connections, Secrets (encrypted), and run history.
 - The encryption key at `<HARBOUR_HOME>/encryption.key`.
 - Database (`harbour.db`) and uploads.
 
@@ -174,6 +187,7 @@ If polls aren't producing runs:
 - **Do the labels line up?** The job's `placement` must match a label the runner *advertises* (`HARBOUR_RUNNER_LABELS`) **and** a label its token was *authorized* for at mint time. A mismatch leaves the work `scheduled` with nothing to claim it. Confirm the runner's advertised labels and last poll under **Settings → Runners**.
 - **Are jobs scheduled?** Check the agent's job list in the dashboard. A configured agent with no jobs polls forever and claims nothing.
 - **Does the service see the CLI?** A launchd/systemd service runs under a **fixed, minimal PATH — not your interactive shell's**. A CLI installed via a version manager (nvm, asdf, pyenv, volta) or exposed only through a shell alias is invisible to the service even though it works in your terminal. The runner advertises only CLIs it finds on PATH, so a missing one leaves that agent's runs `scheduled` with no runner to claim them (surfaced as an absent capability under **Settings → Runners**). `harbour status` prints the CLIs the *current shell* sees; the registry shows what the service actually advertised. Fix it by adding the CLI's directory to the service's PATH — `EnvironmentVariables` in the launchd plist, or `Environment=PATH=...` in the systemd unit — or install the CLI somewhere already on that PATH.
+- **Is the OpenCode connection valid from this host?** The agent needs a same-project connection, its model prefix must match that connection's provider ID, and the endpoint must be reachable from the remote runner. A connection, credential identity, provider, model, endpoint, protocol, or variant change deliberately invalidates a saved OpenCode resume and starts fresh; replacing only the value of the same Secret preserves it. Harbour posts an activity explaining a context reset.
 
 ## Next
 

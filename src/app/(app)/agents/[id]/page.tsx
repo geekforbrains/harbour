@@ -9,6 +9,7 @@ import {
   Calendar,
   Cpu,
   Folder,
+  Plug,
   Settings,
   Terminal,
   Trash2,
@@ -19,6 +20,11 @@ import { useState } from "react";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
 import { BackLink } from "@/components/app/back-link";
 import { EmptyState } from "@/components/app/empty-state";
+import {
+  modelErrorForProvider,
+  modelPlaceholderForProvider,
+  modelSuggestionsForProvider,
+} from "@/components/app/llm-connection-form";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
@@ -47,6 +53,7 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from "@/lib/hooks/use-agents";
+import { useLlmConnections } from "@/lib/hooks/use-llm-connections";
 import { statusStyle } from "@/lib/status";
 import { timeAgo } from "@/lib/time";
 
@@ -55,6 +62,7 @@ import { timeAgo } from "@/lib/time";
 // are minted in Settings → Runners, not per-agent.
 type Agent = {
   id: string;
+  project_id: string;
   name: string;
   /** Workspace folder segment — assigned at creation, immutable on rename. */
   slug?: string | null;
@@ -62,6 +70,13 @@ type Agent = {
   cli: string | null;
   model: string | null;
   thinking: string | null;
+  llm_connection_id: string | null;
+  llm_connection: {
+    id: string;
+    name: string;
+    kind: string;
+    provider_id: string;
+  } | null;
   color: string | null;
   eager: number | null;
   /** Runner label this agent's runs route to; defaults to "local". */
@@ -123,8 +138,31 @@ export default function AgentDetailPage() {
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editPlacement, setEditPlacement] = useState("");
+  const [editConnectionId, setEditConnectionId] = useState("");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  const { data: llmConnections = [] } = useLlmConnections(
+    { projectId: agent?.project_id },
+    { enabled: agent?.cli === "opencode" && !!agent.project_id },
+  );
+  const editConnection =
+    llmConnections.find((connection) => connection.id === editConnectionId) ??
+    (agent?.llm_connection?.id === editConnectionId ? agent.llm_connection : undefined);
 
   async function handleUpdateAgent() {
+    if (!agent) return;
+    setSettingsError(null);
+    if (agent.cli === "opencode") {
+      if (!editConnectionId || !editConnection) {
+        setSettingsError("Select an LLM connection.");
+        return;
+      }
+      const modelError = modelErrorForProvider(editConnection.provider_id, editModel);
+      if (modelError) {
+        setSettingsError(modelError);
+        return;
+      }
+    }
     try {
       await updateAgent.mutateAsync({
         name: editName,
@@ -133,6 +171,7 @@ export default function AgentDetailPage() {
         model: editModel,
         thinking: editThinking,
         placement: editPlacement.trim() || "local",
+        ...(agent.cli === "opencode" ? { llm_connection_id: editConnectionId } : {}),
       });
     } catch {
       return; // surfaced inline from updateAgent.error; leave dialog open
@@ -197,6 +236,8 @@ export default function AgentDetailPage() {
               setEditModel(agent.model || "");
               setEditThinking(agent.thinking || "");
               setEditPlacement(agent.placement || "local");
+              setEditConnectionId(agent.llm_connection_id || agent.llm_connection?.id || "");
+              setSettingsError(null);
               updateAgent.reset();
               setShowSettings(true);
             }}
@@ -216,6 +257,12 @@ export default function AgentDetailPage() {
           <div className="flex items-center gap-2 text-sm">
             <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-muted-foreground truncate">{agent.model}</span>
+          </div>
+        )}
+        {agent.cli === "opencode" && agent.llm_connection && (
+          <div className="flex items-center gap-2 text-sm">
+            <Plug className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate text-muted-foreground">{agent.llm_connection.name}</span>
           </div>
         )}
         <div className="flex items-center gap-2 text-sm">
@@ -426,6 +473,30 @@ export default function AgentDetailPage() {
               <Textarea value={editDesc} onChange={(e) => setEditDesc(e.target.value)} rows={2} />
             </div>
             <AgentColorPicker value={editColor} onChange={setEditColor} previewName={editName} />
+            {agent.cli === "opencode" && (
+              <div className="space-y-1">
+                <Label htmlFor="agent-edit-connection">LLM connection</Label>
+                <select
+                  id="agent-edit-connection"
+                  value={editConnectionId}
+                  onChange={(event) => {
+                    setEditConnectionId(event.target.value);
+                    setEditModel("");
+                  }}
+                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                >
+                  <option value="">Select a connection</option>
+                  {llmConnections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {connection.name} ({connection.provider_id})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Manage provider endpoints and keys under LLM Connections.
+                </p>
+              </div>
+            )}
             {agent.cli && CLI_CONFIG[agent.cli] && (
               <ModelThinkingSelect
                 cli={agent.cli}
@@ -434,6 +505,16 @@ export default function AgentDetailPage() {
                 onModelChange={setEditModel}
                 onThinkingChange={setEditThinking}
                 defaultThinkingLabel="Default"
+                modelPlaceholder={
+                  agent.cli === "opencode" && editConnection
+                    ? modelPlaceholderForProvider(editConnection.provider_id)
+                    : undefined
+                }
+                modelSuggestions={
+                  agent.cli === "opencode" && editConnection
+                    ? modelSuggestionsForProvider(editConnection.provider_id)
+                    : undefined
+                }
               />
             )}
             <div className="space-y-1">
@@ -453,6 +534,7 @@ export default function AgentDetailPage() {
                 {mutationErrorMessage(updateAgent.error, "Failed to update agent")}
               </p>
             )}
+            {settingsError && <p className="text-xs text-destructive">{settingsError}</p>}
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto">

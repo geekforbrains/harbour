@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
 import { validateThinking } from "@/lib/cli-config";
-import { deleteJob, getAgentById, getJobById, updateJob } from "@/lib/db/queries";
+import {
+  deleteJob,
+  getAgentById,
+  getJobById,
+  updateJob,
+  validateLlmModelForProvider,
+} from "@/lib/db/queries";
 import {
   optionalGate,
   optionalPositiveInt,
@@ -27,6 +33,7 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
   // Type-guard string fields bound to the DB; reject blanking the name.
   if (body.name !== undefined) body.name = requireNonEmptyString(body.name, "name");
   body.instructions = optionalString(body.instructions, "instructions");
+  body.model = optionalString(body.model, "model")?.trim();
   // Gates: undefined leaves them unchanged, null clears, object validates.
   // command/workflow alias the same workflow gate — resolve the present key
   // first so an explicit `command: null` still clears (a bare `??` would
@@ -69,6 +76,19 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
     const agent = existing.agent_id ? getAgentById(existing.agent_id) : undefined;
     const thinkingError = validateThinking(agent?.cli ?? null, body.thinking);
     if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
+  }
+  if (body.model && existing.agent_id) {
+    const agent = getAgentById(existing.agent_id);
+    if (agent?.cli === "opencode") {
+      if (!agent.llm_connection) {
+        return NextResponse.json(
+          { error: "OpenCode agents require an LLM connection" },
+          { status: 400 },
+        );
+      }
+      const modelError = validateLlmModelForProvider(agent.llm_connection.provider_id, body.model);
+      if (modelError) return NextResponse.json({ error: modelError }, { status: 400 });
+    }
   }
   try {
     const updated = updateJob(id, body);

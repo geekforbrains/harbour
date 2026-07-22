@@ -14,6 +14,13 @@ export type Agent = {
   cli: string | null;
   model: string | null;
   thinking: string | null;
+  llm_connection_id?: string | null;
+  llm_connection?: {
+    id: string;
+    name: string;
+    kind: string;
+    provider_id: string;
+  } | null;
   color?: string | null;
   eager: number | null;
   remote?: number | null;

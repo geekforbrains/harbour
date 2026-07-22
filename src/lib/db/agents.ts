@@ -1,6 +1,11 @@
 import { v4 as uuid } from "uuid";
 import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
+import {
+  bindAgentToLlmConnection,
+  getLlmConnectionForAgent,
+  unbindAgentFromLlmConnection,
+} from "./llm-connections";
 import { getDb, isUniqueViolation } from "./schema";
 
 function agentCollisionError(existingName: string, slug: string) {
@@ -21,6 +26,7 @@ export function createAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
+    llmConnectionId?: string | null;
   },
 ) {
   const db = getDb();
@@ -40,7 +46,7 @@ export function createAgent(
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
   const placement = opts?.placement?.trim() || "local";
-  try {
+  const create = db.transaction(() => {
     db.prepare(
       `INSERT INTO agents (id, project_id, name, slug, description, cli, model, thinking, color, eager, placement)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -57,6 +63,10 @@ export function createAgent(
       eager,
       placement,
     );
+    if (opts?.llmConnectionId) bindAgentToLlmConnection(id, opts.llmConnectionId);
+  });
+  try {
+    create();
   } catch (err) {
     // Race backstop: a concurrent create can slip past the pre-check; the
     // unique index catches it.
@@ -68,31 +78,24 @@ export function createAgent(
     }
     throw err;
   }
-  return {
-    id,
-    project_id: projectId,
-    name,
-    slug,
-    description,
-    cli,
-    model,
-    thinking,
-    color,
-    eager: !!eager,
-    placement,
-  };
+  return getAgentById(id)!;
 }
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return (
-    (db
-      .prepare(
-        `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, created_at, updated_at
-     FROM agents WHERE id = ?`,
-      )
-      .get(id) as any) || null
-  );
+  const agent = db
+    .prepare(
+      `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, created_at, updated_at
+       FROM agents WHERE id = ?`,
+    )
+    .get(id) as any;
+  if (!agent) return null;
+  const connection = getLlmConnectionForAgent(id);
+  return {
+    ...agent,
+    llm_connection_id: connection?.id ?? null,
+    llm_connection: connection,
+  };
 }
 
 /**
@@ -118,7 +121,7 @@ export function getAgentWorkspace(agentId: string) {
 /** List agents — one project's when projectId is given, all projects' otherwise. */
 export function listAgents(projectId?: string) {
   const db = getDb();
-  return db
+  const agents = db
     .prepare(`
     SELECT a.id, a.project_id, p.name as project_name, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
@@ -130,7 +133,15 @@ export function listAgents(projectId?: string) {
     ${projectId ? "WHERE a.project_id = ?" : ""}
     ORDER BY a.name
   `)
-    .all(...(projectId ? [projectId] : []));
+    .all(...(projectId ? [projectId] : [])) as any[];
+  return agents.map((agent) => {
+    const connection = getLlmConnectionForAgent(agent.id);
+    return {
+      ...agent,
+      llm_connection_id: connection?.id ?? null,
+      llm_connection: connection,
+    };
+  });
 }
 
 export function updateAgent(
@@ -144,6 +155,7 @@ export function updateAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
+    llmConnectionId?: string | null;
   },
 ) {
   const db = getDb();
@@ -182,10 +194,18 @@ export function updateAgent(
     fields.push("placement = ?");
     values.push(data.placement.trim() || "local");
   }
-  if (fields.length === 0) return getAgentById(id);
-  fields.push("updated_at = unixepoch()");
-  values.push(id);
-  db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const update = db.transaction(() => {
+    if (fields.length > 0) {
+      fields.push("updated_at = unixepoch()");
+      values.push(id);
+      db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    }
+    if (data.llmConnectionId !== undefined) {
+      if (data.llmConnectionId) bindAgentToLlmConnection(id, data.llmConnectionId);
+      else unbindAgentFromLlmConnection(id);
+    }
+  });
+  update();
   return getAgentById(id);
 }
 

@@ -2,6 +2,13 @@ import { v4 as uuid } from "uuid";
 import { decrypt, encrypt } from "../encryption";
 import { getDb } from "./schema";
 
+export class EnvVarInUseByLlmConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EnvVarInUseByLlmConnectionError";
+  }
+}
+
 /**
  * Enforce env-var name uniqueness per project in the query layer (the schema
  * deliberately has no UNIQUE constraint). Throws on collision.
@@ -83,6 +90,21 @@ export function updateEnvVar(id: string, data: { name?: string; value?: string }
 
 export function deleteEnvVar(id: string) {
   const db = getDb();
+  const connection = db
+    .prepare(
+      `SELECT lc.name
+       FROM llm_connection_secrets lcs
+       JOIN llm_connections lc ON lc.id = lcs.connection_id
+       WHERE lcs.env_var_id = ?
+       ORDER BY lc.name COLLATE NOCASE
+       LIMIT 1`,
+    )
+    .get(id) as { name: string } | undefined;
+  if (connection) {
+    throw new EnvVarInUseByLlmConnectionError(
+      `Cannot delete this Secret while LLM connection "${connection.name}" uses it`,
+    );
+  }
   db.prepare(`DELETE FROM env_vars WHERE id = ?`).run(id);
 }
 
@@ -121,8 +143,10 @@ export function unlinkEnvVarFromJob(jobId: string, envVarId: string) {
  * project first, then vars explicitly linked via `job_env_vars` (any project)
  * in link-creation order — on a name collision the later assignment wins.
  *
- * Returns the decrypted name→value map. (Values stay in the payload; the runner
- * delivers them as real process env vars and lists names-only in the prompt.)
+ * Secrets serving as LLM connection credentials are excluded even if pinned or
+ * linked: they travel only in the claim's private runtime block. Returns the
+ * decrypted name→value map. (Values stay in the payload; the runner delivers
+ * them as real process env vars and lists names-only in the prompt.)
  */
 export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string> {
   const db = getDb();
@@ -130,8 +154,12 @@ export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string>
 
   const pinned = db
     .prepare(`
-    SELECT name, encrypted_value FROM env_vars
-    WHERE pinned = 1 AND project_id = (SELECT project_id FROM jobs WHERE id = ?)
+    SELECT ev.name, ev.encrypted_value FROM env_vars ev
+    WHERE ev.pinned = 1
+      AND ev.project_id = (SELECT project_id FROM jobs WHERE id = ?)
+      AND NOT EXISTS (
+        SELECT 1 FROM llm_connection_secrets lcs WHERE lcs.env_var_id = ev.id
+      )
   `)
     .all(jobId) as Row[];
   const linked = db
@@ -140,6 +168,9 @@ export function getDecryptedEnvVarsForJob(jobId: string): Record<string, string>
     FROM job_env_vars jev
     JOIN env_vars ev ON jev.env_var_id = ev.id
     WHERE jev.job_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM llm_connection_secrets lcs WHERE lcs.env_var_id = ev.id
+      )
     ORDER BY jev.rowid ASC
   `)
     .all(jobId) as Row[];

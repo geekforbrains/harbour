@@ -14,7 +14,8 @@ changes happen inside SQLite transactions, so the claim path is atomic without
 external coordination.
 
 The hierarchy is **flat**: instance → **projects** → agents & jobs → runs, and
-every agent, job, doc, secret, and table lives inside exactly one project.
+every agent, job, doc, secret, LLM connection, and table lives inside exactly
+one project.
 There are no orgs, no memberships, no roles — every authenticated user may do
 everything. Harbour never calls out to agents — everything is pull.
 
@@ -238,7 +239,17 @@ writes the token (0600) and URL. The local runner's token is provisioned by
 `--dangerously-skip-permissions` *unless* the agent workspace has a valid
 `.claude/settings.json` with a `permissions` object (then the permission system
 runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`.
-Both normalize to the event vocab
+`opencode` runs directly in JSON mode against one project-scoped reusable LLM
+connection. Harbour writes an isolated, per-launch OpenCode configuration for
+the selected built-in, Ollama, or OpenAI-compatible provider; the model is
+always canonical `provider_id/model`. The connection's API key remains an
+encrypted Secret in SQLite and travels only in the claim's private `runtime`
+block, never agent metadata or prompt-visible job env. OpenCode config/auth/XDG
+state is Harbour-owned, sharing and auto-update are disabled, and a non-secret
+configuration fingerprint prevents resuming a session after its provider,
+model, endpoint, protocol, or variant changes.
+
+All three providers normalize to the event vocab
 `text_delta`/`thinking`/`tool_start`/`tool_end`/`info`/`result`/`error`, batched
 to the server every ~750ms and replayed to the dashboard via SSE.
 
@@ -256,8 +267,10 @@ effectively a no-op at the runner now.)
 
 **Env layering.** Before spawning, the runner strips Claude Code nesting guards,
 then layers the job's decrypted env vars onto the process environment so the
-agent's shell can expand `$VAR` natively. (Hardening the rest of this allowlist
-is a [PRD](../prd.md) §6 requirement — H4.)
+agent's shell can expand `$VAR` natively. OpenCode uses an isolated environment:
+only a small host allowlist, job env, and final-precedence Harbour control vars
+are passed. Its provider credential is injected under a Harbour-owned variable
+referenced by the generated config and is redacted from captured output.
 
 ## Frontend
 
@@ -266,7 +279,7 @@ Two App Router route groups:
 - **`src/app/(auth)/`** — `login/`, `set-password/`. Public; no shell.
 - **`src/app/(app)/`** — the dashboard, wrapped in `AppShell`:
   `runs/` (root dashboard), `jobs/`, `agents/`, `docs/`, `tables/`,
-  `env-vars/` (labeled **Secrets**), `users/`, `settings/`.
+  `env-vars/` (labeled **Secrets**), `llm-connections/`, `users/`, `settings/`.
 
 `AppShell` (`src/components/app/app-shell.tsx`) does the auth check
 (`/api/auth/me` → redirect on 401), the **project switcher** (active project in
@@ -288,18 +301,20 @@ Read these in order:
 
 1. `src/lib/db/schema.ts` — every table; the schema *is* the file.
 2. `src/lib/auth.ts` — identity resolution and the four wrappers above.
-3. `src/lib/db/runs.ts` — `claimNextRun`/`peekClaim` (the unified claim,
+3. `src/lib/db/llm-connections.ts` — reusable provider metadata, encrypted
+   credential bindings, same-project checks, and runner-private key reads.
+4. `src/lib/db/runs.ts` — `claimNextRun`/`peekClaim` (the unified claim,
    placement/capability/lock-unit filters, the guarded flip), exec-token minting,
    the `updateRunStatus` transition map, and the kill flow.
-4. `src/lib/db/jobs.ts` — schedule advance, job-creation transactions.
-5. `src/app/api/runner/claim/route.ts` — the server side of the claim and the
+5. `src/lib/db/jobs.ts` — schedule advance, job-creation transactions.
+6. `src/app/api/runner/claim/route.ts` — the server side of the claim and the
    `api` block (with the per-run exec token) that travels with each payload.
-6. `bin/lib/runner.mjs` + `bin/lib/providers.mjs` — the client side of the runner
+7. `bin/lib/runner.mjs` + `bin/lib/providers.mjs` — the client side of the runner
    (`runPool` drain, `claimOne`/`dispatch`, the kind executors), prompt assembly,
    kill, capability detection, and per-CLI parsing.
-7. `bin/lib/bootstrap.mjs` — first-run user creation.
-8. `docs/guide.md` / `docs/management-guide.md` / `docs/runner-guide.md` — wire
+8. `bin/lib/bootstrap.mjs` — first-run user creation.
+9. `docs/guide.md` / `docs/management-guide.md` / `docs/runner-guide.md` — wire
    contracts, live-served on `/api/guide`, `/api/management-guide`, and
    `/api/runner-guide`.
-9. `src/lib/schedule.ts` — interval / weekly parsing and timezone math
+10. `src/lib/schedule.ts` — interval / weekly parsing and timezone math
    (the instance timezone comes from the `settings` KV via `getTimezone()`).

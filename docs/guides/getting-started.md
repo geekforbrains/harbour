@@ -30,7 +30,7 @@ For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 —
 ## First agent and first job
 
 The dashboard is now up and you have a project. Every agent picks a CLI tool
-(Claude Code or Codex) at creation, but the wire contract is plain HTTP — so
+(Claude Code, Codex, or OpenCode) at creation, but the wire contract is plain HTTP — so
 this walkthrough drives the claim loop with curl from your terminal, exactly
 the way a runner does. (The [bundled runner](#let-the-bundled-runner-do-it)
 below does this for you.)
@@ -40,7 +40,7 @@ below does this for you.)
 In the dashboard:
 
 1. **Agents → New Agent** in the top right.
-2. Pick a CLI tool (any of them — for this curl walkthrough it won't actually be invoked).
+2. Pick Claude Code or Codex (for this curl walkthrough it won't actually be invoked). OpenCode works too, but first needs the LLM connection described under [Pick a CLI](#1-pick-a-cli).
 3. Name it — `Researcher` is fine.
 4. Leave **Placement** as `local` (the host's runner pool).
 5. **Create**.
@@ -71,7 +71,7 @@ A runner advertises its **capabilities** — which run kinds and CLIs it can exe
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex"],"labels":["local"]}}' \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","opencode"],"labels":["local"]}}' \
   "$HARBOUR_URL/api/runner/claim?peek=true"
 ```
 
@@ -81,11 +81,11 @@ Now claim it for real (drop `?peek=true`):
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $RUNNER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex"],"labels":["local"]}}' \
+  -d '{"capabilities":{"kinds":["agent","workflow"],"clis":["claude","codex","opencode"],"labels":["local"]}}' \
   "$HARBOUR_URL/api/runner/claim"
 ```
 
-You'll get the full bundle: `run`, `job`, `docs`, `tables`, `env`, `attachments`, an **`exec_token`**, and an `api` block with pre-resolved endpoints for this run. A runner spawns the CLI with that payload; the `exec_token` — *not* the runner token — authenticates every callback for this one run.
+You'll get the full bundle: `run`, `job`, `docs`, `tables`, `env`, `attachments`, an **`exec_token`**, and an `api` block with pre-resolved endpoints for this run. OpenCode runs also include non-secret `agent.provider` metadata and a runner-private `runtime.llm.api_key` when the connection uses a key. A runner must remove that private runtime block before constructing a model prompt or piping the payload to a gate. The `exec_token` — *not* the runner token — authenticates every callback for this one run.
 
 Finish the run cleanly with the exec token so the next claim doesn't keep returning it:
 
@@ -104,14 +104,28 @@ Section 1 drove the claim loop by hand to show the protocol. In practice the **l
 
 ### 1. Pick a CLI
 
-Make sure the CLI you want is on your PATH and authenticated:
+Make sure the CLI you want is on your PATH:
 
-- [Claude Code](https://claude.ai/claude-code) — `claude` in your shell
-- [Codex](https://github.com/openai/codex) — `codex`
+- [Claude Code](https://claude.ai/claude-code) — `claude`; complete its normal login or expose `ANTHROPIC_API_KEY` to the runner service
+- [Codex](https://github.com/openai/codex) — `codex`; complete its normal login or expose `OPENAI_API_KEY` to the runner service
+- [OpenCode](https://opencode.ai/docs) — `npm install -g opencode-ai`, then confirm `opencode --version` reports 1.17.12 or newer
+
+OpenCode does **not** use a host login or a runner-wide `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` in Harbour. Its provider credential comes from a reusable project-scoped LLM connection:
+
+1. Open **LLM Connections → New Connection** (or create one inline from **New Agent**).
+2. Pick OpenAI, Anthropic, OpenRouter, Ollama, or OpenAI-compatible. For a hosted provider, create a new encrypted Secret there or select an existing Secret from the same project. Ollama and custom compatible endpoints may be keyless.
+3. For Ollama/custom providers, enter the base URL as seen **from the runner machine**. The Ollama default is `http://127.0.0.1:11434/v1`.
+4. Reuse the connection across any OpenCode agents in that project.
+
+Harbour reserves a bound Secret for provider authentication: it is excluded from ordinary job `env` even if pinned or linked. Create a separate Secret if the same value must intentionally be job context. Harbour injects the selected provider key only for each claimed OpenCode run. You do not need to use OpenCode's interactive `/connect` flow, and credentials already saved in OpenCode on the host are not used for Harbour's provider selection. The bundled runner also disables workspace/project OpenCode config, so a repository's `opencode.json` or `.opencode/` cannot change the launch.
+
+The key is outside the model prompt, but it is present in the OpenCode child environment and the tool-capable agent can read it. Use a dedicated provider key with appropriate budget and rate limits. Runner-host/global OpenCode config and plugins remain trusted, and Harbour's output redaction is defense-in-depth rather than containment.
 
 ### 2. Create the agent
 
 The `Researcher` agent from Section 1 already works here — its `local` placement routes its runs to this host's runner pool. If you skipped that section: **Agents → New Agent**, pick the CLI tool, name it, choose a default model and (if relevant) thinking/effort level, leave **Placement** as `local`, **Create**, then add a job (schedule, instructions, **Create**).
+
+For OpenCode, select or create its LLM connection and enter the model in canonical `provider/model` form. The prefix must match the connection: `openai/gpt-5.6`, `openrouter/anthropic/claude-sonnet-4.6`, `ollama/qwen3-coder`, or `<custom-provider-id>/<model-id>`. The optional **Variant** field is passed to OpenCode as `--variant`; leave it empty unless that model exposes one.
 
 There's no per-agent runner config to write — the local runner the setup provisioned claims every agent (and workflow) whose placement belongs on this host, resolving each one's CLI, model, and thinking live from the claim payload (see [`src/app/api/agents/route.ts`](../../src/app/api/agents/route.ts)).
 

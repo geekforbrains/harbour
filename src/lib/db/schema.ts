@@ -151,7 +151,7 @@ export function initializeSchema(db: Database.Database) {
       name TEXT NOT NULL,
       slug TEXT NOT NULL,                 -- creation-time, immutable, filesystem-safe workspace path segment
       description TEXT,
-      cli TEXT,                           -- 'claude' | 'codex'
+      cli TEXT,                           -- 'claude' | 'codex' | 'opencode'
       model TEXT,
       thinking TEXT,
       color TEXT,                         -- stored identity hue (user-selectable; name-hash fallback when null)
@@ -284,6 +284,33 @@ export function initializeSchema(db: Database.Database) {
       -- name uniqueness per project enforced in the query layer
     );
 
+    -- Reusable project-scoped provider configuration for OpenCode agents.
+    -- Credentials stay in env_vars so there is still one encrypted secret
+    -- store; normal connection reads join only the Secret's id + name.
+    CREATE TABLE IF NOT EXISTS llm_connections (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('openai','anthropic','openrouter','ollama','openai-compatible')),
+      provider_id TEXT NOT NULL,
+      base_url TEXT,
+      protocol TEXT NOT NULL CHECK(protocol IN ('native','chat-completions','responses')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS llm_connection_secrets (
+      connection_id TEXT NOT NULL REFERENCES llm_connections(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('api_key')),
+      env_var_id TEXT NOT NULL REFERENCES env_vars(id),
+      PRIMARY KEY (connection_id, role)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_llm_connections (
+      agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+      connection_id TEXT NOT NULL REFERENCES llm_connections(id)
+    );
+
     CREATE TABLE IF NOT EXISTS tables (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -360,6 +387,9 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_docs_project ON docs(project_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_env_vars_project ON env_vars(project_id);
+    CREATE INDEX IF NOT EXISTS idx_llm_connections_project ON llm_connections(project_id);
+    CREATE INDEX IF NOT EXISTS idx_llm_connection_secrets_env_var ON llm_connection_secrets(env_var_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_llm_connections_connection ON agent_llm_connections(connection_id);
     CREATE INDEX IF NOT EXISTS idx_tables_project ON tables(project_id);
     CREATE INDEX IF NOT EXISTS idx_table_migrations_tbl ON table_migrations(table_id);
   `);

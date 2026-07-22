@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
 import { validateCli, validateThinking } from "@/lib/cli-config";
-import { createAgent, listAgents } from "@/lib/db/queries";
+import {
+  createAgent,
+  getLlmConnectionById,
+  LlmConnectionValidationError,
+  listAgents,
+  validateLlmModelForProvider,
+} from "@/lib/db/queries";
 import {
   optionalBoolean,
   optionalString,
@@ -21,11 +27,15 @@ export const POST = withAuthenticatedUser(async (req) => {
   const projectId = resolveProjectId(req, body);
   const name = requireNonEmptyString(body.name, "name");
   const description = optionalString(body.description, "description");
-  const model = optionalString(body.model, "model");
+  const model = optionalString(body.model, "model")?.trim();
   const color = optionalString(body.color, "color");
   const eager = optionalBoolean(body.eager, "eager");
   const placement = optionalString(body.placement, "placement");
   const thinking = optionalString(body.thinking, "thinking");
+  const llmConnectionId =
+    body.llm_connection_id === undefined || body.llm_connection_id === null
+      ? undefined
+      : requireNonEmptyString(body.llm_connection_id, "llm_connection_id");
   const cli = body.cli;
   if (!cli) {
     return NextResponse.json({ error: "cli is required" }, { status: 400 });
@@ -34,6 +44,29 @@ export const POST = withAuthenticatedUser(async (req) => {
   if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
   const thinkingError = validateThinking(cli, thinking);
   if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
+
+  if (cli === "opencode") {
+    if (!llmConnectionId) {
+      return NextResponse.json(
+        { error: "OpenCode agents require llm_connection_id" },
+        { status: 400 },
+      );
+    }
+    const connection = getLlmConnectionById(llmConnectionId);
+    if (!connection || connection.project_id !== projectId) {
+      return NextResponse.json(
+        { error: "LLM connection not found in this project" },
+        { status: 400 },
+      );
+    }
+    const modelError = validateLlmModelForProvider(connection.provider_id, model);
+    if (modelError) return NextResponse.json({ error: modelError }, { status: 400 });
+  } else if (llmConnectionId) {
+    return NextResponse.json(
+      { error: "llm_connection_id is only supported for OpenCode agents" },
+      { status: 400 },
+    );
+  }
 
   let agent: ReturnType<typeof createAgent>;
   try {
@@ -44,12 +77,16 @@ export const POST = withAuthenticatedUser(async (req) => {
       color,
       eager: !!eager,
       placement: placement ?? undefined,
+      llmConnectionId,
     });
   } catch (err) {
     if (err instanceof NameCollisionError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (err instanceof InvalidNameError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof LlmConnectionValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;

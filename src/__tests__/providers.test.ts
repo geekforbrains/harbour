@@ -343,6 +343,24 @@ describe("detectCapabilities — honest CLI detection", () => {
     }
   });
 
+  it("does not advertise OpenCode versions that cannot disable project config", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-opencode-version-"));
+    try {
+      const fake = path.join(dir, "opencode");
+      fs.writeFileSync(fake, "#!/bin/sh\necho 1.17.11\n");
+      fs.chmodSync(fake, 0o755);
+      process.env.PATH = `${dir}:/usr/bin:/bin`;
+      resetBinaryCache();
+      expect(detectCapabilities().clis).not.toContain("opencode");
+
+      fs.writeFileSync(fake, "#!/bin/sh\necho 1.17.12\n");
+      resetBinaryCache();
+      expect(detectCapabilities().clis).toContain("opencode");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("resolveBinary returns null for a missing binary (no bare-name fallback)", () => {
     process.env.PATH = "/usr/bin:/bin";
     resetBinaryCache();

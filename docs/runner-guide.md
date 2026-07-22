@@ -21,8 +21,9 @@ header. There are two tiers — the **same protocol**, different trust:
 | Trust | trusted, **unscoped** — claims any `placement = local` work across every project | **scoped** — claims only work matching its authorized labels (+ an optional single-agent scope) |
 | Token | `~/.harbour/runner.token` (0600), auto-provisioned at setup | minted by an operator, held on the runner's own host |
 
-The local token can read every project's decrypted secrets (run payloads carry them).
-That's acceptable because **all executable content is operator-authored** — the
+The local token can read every project's decrypted secrets (run payloads carry job
+Secrets and may carry an OpenCode connection key in a private runtime block).
+The runner and spawned tool-capable agents are a trusted execution plane, so the
 host is the trust boundary. Treat it like the DB and encryption key: local only,
 never shipped off-box.
 
@@ -34,7 +35,7 @@ hands it work it can execute:
 ```json
 {
   "kinds":  ["agent", "workflow"],   // run kinds this runner executes
-  "clis":   ["claude", "codex"],     // for agent runs: which CLIs are installed
+  "clis":   ["claude", "codex", "opencode"], // installed executors this runner implements
   "labels": ["local"]                // placement labels this runner serves
 }
 ```
@@ -47,6 +48,9 @@ agent's work — are the ceiling the server enforces on what it may claim, not
 what it advertises. (An agent-scoped token never claims workflow jobs — they
 have no agent.) **Capability honesty:** the server never assumes a CLI is
 present — an agent run is handed out only if the agent's CLI is in `clis`.
+For OpenCode, the bundled runner additionally requires version 1.17.12 or newer;
+older or unparsable versions are not advertised because Harbour depends on its
+complete `run --dir --pure --auto` and project-config control surface.
 
 ## Endpoints
 
@@ -118,7 +122,11 @@ everything else is uniform.
     "timeout_minutes": 30,
     "scripts_dir": "<project>/<agent>/<job-leaf>"   // workflows: "<project>/<job-leaf>"; under $HARBOUR_HOME/workflows
   },
-  "agent":   { "cli": "claude", "model": null, "thinking": null, "eager": false },  // agent runs
+  "agent":   {
+    "cli": "opencode", "model": "openai/gpt-5.6", "thinking": "high", "eager": false,
+    "provider": { "id": "…", "kind": "openai", "provider_id": "openai", "base_url": null, "protocol": "native", "credential_id": "…" }
+  },                                                                                   // agent runs; provider only for OpenCode
+  "runtime": { "llm": { "api_key": "sk-…" } },                                    // keyed OpenCode runs only; runner-private
   "workspace": { "project": "site", "agent": "dev" },                               // agent runs
   "docs":    [ … ],
   "tables":  { "<name>": { "id": "…" } },
@@ -132,6 +140,21 @@ The runner branches on `job.kind`: drive a CLI session for `agent` (using `agent
 the `instructions`, and the `api` block), or run the gate script for `workflow`.
 For gates, materialize the gate `content` into `scripts_dir` and run it with the
 runtime's interpreter (`bash`/`python3`/`node`).
+
+### OpenCode provider data
+
+An OpenCode agent claim has two extra pieces with intentionally different audiences:
+
+- `agent.provider` is non-secret connection metadata: `{ id, kind, provider_id, base_url, protocol, credential_id }`. `credential_id` is an opaque Secret identity (null for keyless connections), never its value. `kind` is `openai`, `anthropic`, `openrouter`, `ollama`, or `openai-compatible`. The agent/job model is always canonical `provider_id/model`, and `thinking` is the optional OpenCode variant.
+- `runtime.llm.api_key` is the decrypted connection Secret. It is present only when the connection has a key; keyless Ollama/custom connections omit `runtime`. This block is **runner control data**, not model context. A Secret referenced by any LLM connection is reserved for provider auth and omitted from normal `env` even if pinned or job-linked.
+
+A runner implementing OpenCode must extract and then remove the entire top-level `runtime` block before constructing a prompt or sending the claim JSON to any prerun/postrun gate. It must not log, persist, or return the key as agent output. Harbour's bundled runner generates typed inline OpenCode provider config, injects the key through a Harbour-owned child variable, prevents job variables from overriding its OpenCode controls, sets `OPENCODE_AUTH_CONTENT={}` and `OPENCODE_DISABLE_PROJECT_CONFIG=1`, and redacts/caps captured provider output before posting it. The complete command/config control surface requires OpenCode 1.17.12 or newer.
+
+`runtime` being runner-private means it is excluded from prompts and gates; it does **not** mean the credential is hidden from the spawned agent. OpenCode receives the key in its process environment, and a headless tool-capable agent can inspect or exfiltrate it. Exact-value output redaction cannot catch transformations or indirect use, so it is defense-in-depth, not containment. Values shorter than four characters are redacted only as standalone tokens because global substring replacement would corrupt ordinary output (for example, a one-character value would erase digits inside token counts and versions). Use a dedicated provider credential with budget and rate limits.
+
+The bundled invocation is direct JSONL mode: `opencode run --pure --auto --format json --model <provider/model> --dir <workspace>`, plus `--session` and `--variant` when present. A non-secret fingerprint of the connection identity, credential identity, kind, provider ID, normalized endpoint, protocol, model, and variant is saved with the session. If it no longer matches at resume time, the runner discards the old session, posts an explanatory activity, and starts fresh. Replacing the value of the same Secret preserves context; switching the connection to a different Secret/account changes `credential_id` and starts fresh.
+
+The bundled runner starts outside the repository and disables `opencode.json` / `.opencode/` project config, but keeps the runner user's normal XDG locations for sessions. Runner-host/global OpenCode config and plugins, the runner user's filesystem, and the spawned agent are part of the credential trust boundary. Because a remote runner receives the plaintext key at claim time, runner transport must be trusted TLS or a private network too.
 
 `workspace` (agent runs only) holds the project/agent slugs; the bundled runner
 derives the CLI's working directory from them as `workspaces/<project>/<agent>/`

@@ -2,15 +2,62 @@ import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadRunnerCredentials, loadSessions, saveSessions } from "./config.mjs";
 import {
+  getHarbourDir,
+  isSessionCompatible,
+  loadRunnerCredentials,
+  loadSessions,
+  saveSessions,
+} from "./config.mjs";
+import {
+  buildOpenCodeRuntime,
   detectCapabilities,
   ensureWorkingDir,
   getProvider,
+  redactSecrets,
   resolveRunConfig,
   runCliTool,
+  sanitizeProviderEvent,
+  sanitizeProviderText,
   sanitizeThinking,
 } from "./providers.mjs";
+
+/**
+ * Separate claim-only credentials from the payload used in prompts and gate
+ * stdin. The caller receives the one private value it needs; the returned
+ * payload is a new object with the entire runtime block removed.
+ */
+export function splitPrivateRuntime(input) {
+  const key = input?.runtime?.llm?.api_key;
+  const payload = { ...(input || {}) };
+  delete payload.runtime;
+  return {
+    payload,
+    llmApiKey: typeof key === "string" && key ? key : null,
+  };
+}
+
+/** Keep the runner-to-provider positional contract in one tested place. */
+export function buildProviderCommand({
+  provider,
+  prompt,
+  model,
+  workingDir,
+  sessionId,
+  isNewSession,
+  thinking,
+  providerRuntime,
+}) {
+  return provider.buildCommand(
+    prompt,
+    model,
+    workingDir,
+    sessionId,
+    isNewSession,
+    thinking,
+    providerRuntime,
+  );
+}
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
@@ -665,6 +712,8 @@ async function runCliTurn({
   agentName,
   sessionId,
   extraEnv,
+  providerRuntime,
+  secretValues = [],
   sessionAlreadyReported,
 }) {
   // Batch streaming events and flush to Harbour periodically
@@ -744,14 +793,14 @@ async function runCliTurn({
       sessionReported = true;
       apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
         session_id: turnSessionId,
-        cwd: cmd.cwd,
+        cwd: cmd.workspaceDir || cmd.cwd,
       }).catch((err) =>
         console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
       );
     }
 
     for (const evt of parsed.events) {
-      queueEvent(evt);
+      queueEvent(sanitizeProviderEvent(evt, secretValues));
     }
   }
 
@@ -762,6 +811,9 @@ async function runCliTurn({
       onLine,
       signal: killController.signal,
       extraEnv: extraEnv || {},
+      controlEnv: providerRuntime?.controlEnv || {},
+      isolatedEnv: providerRuntime?.isolatedEnv || false,
+      workspaceDir: cmd.workspaceDir || cmd.cwd,
     });
   } finally {
     clearInterval(killPollTimer);
@@ -774,8 +826,21 @@ async function runCliTurn({
   // Flush any remaining buffered events after the CLI exits.
   await flushEvents();
 
-  const parsed = provider.parseResult(result.stdout, turnSessionId);
-  const output = parsed.content || result.stdout || result.stderr || "(no output)";
+  // Parse the complete redacted stream so a final event is not lost, but only
+  // return bounded strings to callers that may persist them as activity.
+  const redactedStdout = redactSecrets(result.stdout, secretValues);
+  const redactedStderr = redactSecrets(result.stderr, secretValues);
+  const parsed = provider.parseResult(redactedStdout, turnSessionId);
+  const safeResult = {
+    ...result,
+    stdout: sanitizeProviderText(redactedStdout, [], 50_000),
+    stderr: sanitizeProviderText(redactedStderr, [], 16_000),
+  };
+  const output = sanitizeProviderText(
+    parsed.content || redactedStdout || redactedStderr || "(no output)",
+    secretValues,
+    50_000,
+  );
   const finalSessionId = parsed.sessionId || turnSessionId;
 
   // On a kill, re-read the server's status: the agent may have finished
@@ -791,7 +856,7 @@ async function runCliTurn({
     }
   }
 
-  return { result, sessionId: finalSessionId, output, killed, statusAtKill };
+  return { result: safeResult, sessionId: finalSessionId, output, killed, statusAtKill };
 }
 
 /**
@@ -809,7 +874,10 @@ async function runCliTurn({
  * `eager` reflects the live `agent.eager` flag from the claim payload (the pool
  * drains all due work each cycle regardless, so it's informational now).
  */
-export async function processNextRun(payload, { url, execToken }) {
+export async function processNextRun(inputPayload, { url, execToken }) {
+  // Credentials in `runtime` are claim-only control data. Strip the entire
+  // block before any prompt or gate payload can be constructed.
+  const { payload, llmApiKey } = splitPrivateRuntime(inputPayload);
   const apiKey = execToken;
   const agentName = payload.workspace?.agent || payload.job?.name || "agent";
   const sessions = loadSessions();
@@ -834,6 +902,44 @@ export async function processNextRun(payload, { url, execToken }) {
   const eager = !!payload.agent?.eager;
 
   const runId = payload.run.id;
+  const claimSecretValues = [apiKey, llmApiKey, ...Object.values(payload.env || {})].filter(
+    (value) => typeof value === "string" && value,
+  );
+
+  let providerRuntime = null;
+  let secretValues = [];
+  if (cli === "opencode") {
+    try {
+      providerRuntime = buildOpenCodeRuntime({
+        model: agentModel,
+        variant: agentThinking,
+        provider: payload.agent?.provider,
+        apiKey: llmApiKey,
+        harbourHome: getHarbourDir(),
+      });
+      mkdirSync(providerRuntime.launchDir, { recursive: true, mode: 0o700 });
+      chmodSync(providerRuntime.launchDir, 0o700);
+      secretValues = [...new Set([...claimSecretValues, ...providerRuntime.secretValues])];
+    } catch (err) {
+      const message = sanitizeProviderText(
+        `OpenCode configuration error: ${err.message}`,
+        claimSecretValues,
+        2_000,
+      );
+      console.error(`  [${agentName}] ${message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: message });
+      } catch {
+        /* best effort */
+      }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch {
+        /* best effort */
+      }
+      return { outcome: "config-error", eager };
+    }
+  }
 
   if (droppedThinking) {
     const warning = `Ignoring unsupported thinking level \`${droppedThinking}\` for ${cli} — running with the CLI default. Fix the agent or job's thinking setting in the dashboard.`;
@@ -843,7 +949,30 @@ export async function processNextRun(payload, { url, execToken }) {
     });
   }
 
-  const existingSession = sessions[runId];
+  let existingSession = sessions[runId];
+  if (
+    existingSession &&
+    !isSessionCompatible(existingSession, {
+      cli,
+      configFingerprint: providerRuntime?.configFingerprint || null,
+      requireFingerprint: !!provider.requiresConfigFingerprint,
+    })
+  ) {
+    const warning = sanitizeProviderText(
+      `Saved session is incompatible with the current ${cli} configuration — starting fresh without prior CLI context.`,
+      secretValues,
+      2_000,
+    );
+    console.warn(`  [${agentName}] ${warning}`);
+    delete sessions[runId];
+    saveSessions(sessions);
+    existingSession = null;
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: warning });
+    } catch {
+      /* best effort */
+    }
+  }
   const isResume = !!existingSession;
   let sessionId = existingSession?.sessionId || null;
   const isNewSession = !isResume;
@@ -1004,14 +1133,16 @@ export async function processNextRun(payload, { url, execToken }) {
   }
 
   // model/thinking were already resolved (job override > agent default) above.
-  const cmd = provider.buildCommand(
+  const cmd = buildProviderCommand({
+    provider,
     prompt,
-    agentModel,
+    model: agentModel,
     workingDir,
     sessionId,
     isNewSession,
-    agentThinking,
-  );
+    thinking: agentThinking,
+    providerRuntime,
+  });
 
   // ---- Single exit path -----------------------------------------------------
   // Every terminal return below funnels through finish(): it does the session
@@ -1034,7 +1165,14 @@ export async function processNextRun(payload, { url, execToken }) {
       // cwd pins the workspace for resumes: the CLI session lives under this
       // directory, so later turns must run there even if the agent is renamed
       // or the layout changes in the meantime.
-      sessions[runId] = { sessionId: finalSessionId, cli, cwd: workingDir };
+      sessions[runId] = {
+        sessionId: finalSessionId,
+        cli,
+        cwd: workingDir,
+        ...(providerRuntime?.configFingerprint
+          ? { configFingerprint: providerRuntime.configFingerprint }
+          : {}),
+      };
       saveSessions(sessions);
     } else {
       delete sessions[runId];
@@ -1070,15 +1208,18 @@ export async function processNextRun(payload, { url, execToken }) {
       agentName,
       sessionId,
       extraEnv: payload.env || {},
+      providerRuntime,
+      secretValues,
       sessionAlreadyReported: !!sessionId,
     });
   } catch (err) {
-    console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
+    const errorMessage = sanitizeProviderText(err.message, secretValues, 2_000);
+    console.error(`  [${agentName}] CLI execution failed: ${errorMessage}`);
     // Independent best-effort calls (issue #15): the status PUT must fire even
     // if the activity POST throws, else the run is stuck 'running'.
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: `Runner error: CLI tool "${cli}" failed to execute: ${err.message}`,
+        content: `Runner error: CLI tool "${cli}" failed to execute: ${errorMessage}`,
       });
     } catch {
       /* best effort */
@@ -1172,7 +1313,7 @@ export async function processNextRun(payload, { url, execToken }) {
     let errorContent = `**${reason}**`;
     if (result.stderr?.trim()) errorContent += `\n\nstderr:\n${result.stderr.trim()}`;
     if (sanitizedOutput) errorContent += `\n\nOutput:\n${sanitizedOutput}`;
-    if (errorContent.length > 4000) errorContent = errorContent.slice(-4000);
+    errorContent = sanitizeProviderText(errorContent, secretValues, 4_000);
 
     // Independent best-effort calls (issue #15) — see the CLI-spawn path above.
     try {
@@ -1190,7 +1331,7 @@ export async function processNextRun(payload, { url, execToken }) {
   }
 
   // ---- Post work output -----------------------------------------------------
-  const truncatedOutput = output.length > 50000 ? output.slice(-50000) : output;
+  const truncatedOutput = sanitizeProviderText(output, secretValues, 50_000);
   try {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
       content: truncatedOutput,
@@ -1228,6 +1369,8 @@ export async function processNextRun(payload, { url, execToken }) {
     thinking: agentThinking,
     workingDir,
     extraEnv: payload.env || {},
+    providerRuntime,
+    secretValues,
     activityContext: truncatedOutput,
     api: payload.api,
   });
@@ -1259,6 +1402,8 @@ async function runFinalizeLoop({
   thinking,
   workingDir,
   extraEnv,
+  providerRuntime,
+  secretValues,
   activityContext,
   api,
 }) {
@@ -1280,10 +1425,16 @@ async function runFinalizeLoop({
     const finalizePrompt = buildFinalizePrompt(api, apiKey, { mode, activityContext });
     // Resume mode reuses the session (isNewSession=false). Fresh mode runs a new
     // turn with no session id; the prompt carries the activity log as context.
-    const cmd =
-      mode === "resume"
-        ? provider.buildCommand(finalizePrompt, model, workingDir, turnSessionId, false, thinking)
-        : provider.buildCommand(finalizePrompt, model, workingDir, null, true, thinking);
+    const cmd = buildProviderCommand({
+      provider,
+      prompt: finalizePrompt,
+      model,
+      workingDir,
+      sessionId: mode === "resume" ? turnSessionId : null,
+      isNewSession: mode !== "resume",
+      thinking,
+      providerRuntime,
+    });
 
     try {
       const turn = await runCliTurn({
@@ -1295,6 +1446,8 @@ async function runFinalizeLoop({
         agentName,
         sessionId: turnSessionId,
         extraEnv,
+        providerRuntime,
+        secretValues,
         sessionAlreadyReported: true,
       });
       if (turn.sessionId) turnSessionId = turn.sessionId;
@@ -1315,7 +1468,8 @@ async function runFinalizeLoop({
         return { outcome: killOutcome, sessionId: turnSessionId };
       }
     } catch (err) {
-      console.error(`  [${agentName}] Finalize turn failed: ${err.message}`);
+      const errorMessage = sanitizeProviderText(err.message, secretValues, 2_000);
+      console.error(`  [${agentName}] Finalize turn failed: ${errorMessage}`);
       // Treat a finalize CLI failure like a non-compliant attempt and let the
       // loop's exhaustion backstop decide.
     }
