@@ -542,7 +542,7 @@ const PROVIDERS = {
     canResume: true,
     // Levels model_reasoning_effort accepts — kept in sync with CLI_CONFIG
     // (see claude.thinkingLevels above).
-    thinkingLevels: ["low", "medium", "high", "xhigh"],
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
       // generic config override instead: -c model_reasoning_effort=<level>.

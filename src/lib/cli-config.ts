@@ -35,9 +35,9 @@ export const CLI_CONFIG: Record<string, CliConfig> = {
   },
   codex: {
     name: "Codex",
-    models: ["gpt-5.5", "gpt-5.4"],
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
     thinkingLabel: "Reasoning",
-    thinkingOptions: ["low", "medium", "high", "xhigh"],
+    thinkingOptions: ["low", "medium", "high", "xhigh", "max"],
   },
   opencode: {
     name: "OpenCode",

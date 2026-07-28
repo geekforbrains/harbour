@@ -35,6 +35,13 @@
   "Collapse repeated successes" setting (`recent_collapse_success`) is
   removed.
 
+### Agents
+
+- **Codex model dropdown updated to the 5.6 lineup:** `gpt-5.6-sol`,
+  `gpt-5.6-terra`, `gpt-5.6-luna`. Removed `gpt-5.5` and `gpt-5.4`. Reasoning
+  levels gain `max` (Codex now accepts the same `low`/`medium`/`high`/`xhigh`/
+  `max` ladder as Claude).
+
 ### Removed
 
 - **Gemini CLI is no longer an agent provider.** New and updated agents accept

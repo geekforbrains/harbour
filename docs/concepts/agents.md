@@ -30,11 +30,11 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
 | `cli` | `claude`, `codex`, or `opencode` |
-| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.5`, or canonical `openai/gpt-5.6` for OpenCode) |
+| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.6-sol`, or canonical `openai/gpt-5.6` for OpenCode) |
 | `thinking` | Default reasoning effort for Claude/Codex; the optional provider-specific model variant for OpenCode |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
 
-`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`). Claude accepts `low`/`medium`/`high`/`xhigh`/`max`; Codex accepts up to `xhigh`. OpenCode treats `thinking` as a variant token (up to 64 letters, numbers, dots, underscores, or hyphens), because variants are model/provider-specific rather than a Harbour-owned enum.
+`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`). Claude and Codex both accept `low`/`medium`/`high`/`xhigh`/`max`. OpenCode treats `thinking` as a variant token (up to 64 letters, numbers, dots, underscores, or hyphens), because variants are model/provider-specific rather than a Harbour-owned enum.
 
 An OpenCode agent must also have one `llm_connection` binding. The binding lives in `agent_llm_connections`, not the `agents` row, and must point to a connection in the same project. One connection can be reused by many agents. Switching the agent to Claude or Codex removes the binding; a non-OpenCode agent cannot retain one.
 

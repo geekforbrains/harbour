@@ -93,7 +93,7 @@ describe("validateThinking", () => {
     const error = validateThinking("claude", "off");
     expect(error).toMatch(/off/);
     expect(error).toMatch(/low/);
-    expect(validateThinking("codex", "max")).toBeTruthy();
+    expect(validateThinking("codex", "off")).toBeTruthy();
   });
 
   it("rejects a level when there is no valid cli to validate against", () => {
@@ -213,20 +213,27 @@ describe("PUT /api/agents/:id — config validation", () => {
 
   it("rejects a cli change that strands the current thinking level", async () => {
     const { project } = fixture();
-    // "max" is valid for claude but not codex — switching cli alone would
+    // OpenCode's thinking is a free-form provider variant token — not a level
+    // claude/codex's fixed select list accepts. Switching cli alone would
     // leave a level the new CLI rejects at launch.
-    const agent = createAgent(project.id, "Dev", undefined, { cli: "claude", thinking: "max" });
+    const agent = createAgent(project.id, "Dev", undefined, {
+      cli: "opencode",
+      thinking: "custom-variant",
+    });
     const res = await agentPUT(
       userReq(`http://x/api/agents/${agent.id}`, "PUT", { cli: "codex" }),
       ctx({ id: agent.id }),
     );
     expect(res.status).toBe(400);
-    expect(getAgentById(agent.id)?.cli).toBe("claude");
+    expect(getAgentById(agent.id)?.cli).toBe("opencode");
   });
 
   it("accepts a cli change that re-sets or clears thinking in the same request", async () => {
     const { project } = fixture();
-    const agent = createAgent(project.id, "Dev", undefined, { cli: "claude", thinking: "max" });
+    const agent = createAgent(project.id, "Dev", undefined, {
+      cli: "opencode",
+      thinking: "custom-variant",
+    });
     const res = await agentPUT(
       userReq(`http://x/api/agents/${agent.id}`, "PUT", {
         cli: "codex",
