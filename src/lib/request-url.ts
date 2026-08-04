@@ -5,7 +5,7 @@ import type { NextRequest } from "next/server";
  *
  * When Harbour sits behind a reverse proxy (Tailscale Serve, Cloudflare,
  * nginx, etc.) `req.nextUrl.host` reflects the internal upstream
- * (`127.0.0.1:14272`), not the user-facing hostname. That makes any
+ * (`127.0.0.1:4272`), not the user-facing hostname. That makes any
  * absolute URLs we bake into API responses — attachment download URLs,
  * agent endpoint URLs — unreachable from the user's browser.
  *

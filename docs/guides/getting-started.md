@@ -21,7 +21,7 @@ npm start
 
 `harbour setup` does two things: it creates the first user **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600) plus the matching local URL to `~/.harbour/runner.url`. No minting or connect blobs are needed. On macOS it then prompts `Install the runner service to poll for work every 60s? [Y/n]`; on Linux service installation stays explicit through systemd (see [Deploying to production](deploy-to-production.md)).
 
-`npm start` runs the production server at `http://127.0.0.1:14272` by default. It binds only to loopback; put a TLS proxy in front for remote access. For a fresh install on a custom port, export `HARBOUR_PORT` before both setup and start so setup persists the matching runner URL (and the macOS install prompt captures the override):
+`npm start` runs the production server at `http://127.0.0.1:4272` by default. It binds only to loopback; put a TLS proxy in front for remote access. For a fresh install on a custom port, export `HARBOUR_PORT` before both setup and start so setup persists the matching runner URL (and the macOS install prompt captures the override):
 
 ```bash
 export HARBOUR_PORT=18080
@@ -31,11 +31,11 @@ npm start
 
 `PORT=18080 npm start`, `npm start -- --port 18080`, and CLI `--hostname` are server-only compatibility options; after setup, pair them with `HARBOUR_URL` in the runner process/service environment or edit `~/.harbour/runner.url` for a durable change. For a coordinated bind-address change, export `HARBOUR_HOST` for setup and future starts: setup keeps the bundled runner on loopback for wildcard binds and persists a concrete host when one is supplied. Reinstall a macOS runner service after changing environment values captured by its plist.
 
-Open the effective server URL (`http://127.0.0.1:14272` by default, or `http://127.0.0.1:18080` in the custom example), log in, and create your first project from the dashboard — every agent and job lives inside a project. For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively; schedule the service separately when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.
+Open the effective server URL (`http://127.0.0.1:4272` by default, or `http://127.0.0.1:18080` in the custom example), log in, and create your first project from the dashboard — every agent and job lives inside a project. For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively; schedule the service separately when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.
 
 State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 
-For active development use `npm run dev`, which defaults to port 3001. Avoid port 14272 — that's reserved for production in this repo's conventions.
+For active development use `npm run dev`, which defaults to port 3001. Avoid port 4272 — that's reserved for production in this repo's conventions.
 
 ## First agent and first job
 

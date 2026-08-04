@@ -44,7 +44,7 @@
 
 ### Install and operation
 
-- **New production installs default to `127.0.0.1:14272`.** `npm start` and
+- **New production installs default to `127.0.0.1:4272`.** `npm start` and
   `harbour start` now share that explicit loopback default with the bundled
   runner; use `HARBOUR_PORT` during setup for a coordinated custom install, or
   use server-only `PORT`/CLI `--port` with `HARBOUR_URL` or

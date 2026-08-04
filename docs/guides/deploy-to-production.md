@@ -48,7 +48,7 @@ Group=harbour
 WorkingDirectory=/opt/harbour
 ExecStart=/usr/bin/node bin/harbour.mjs start
 Environment=NODE_ENV=production
-Environment=HARBOUR_PORT=14272
+Environment=HARBOUR_PORT=4272
 Environment=HARBOUR_HOST=127.0.0.1
 Environment=HARBOUR_HOME=/home/harbour/.harbour
 UMask=0077
@@ -78,7 +78,7 @@ WorkingDirectory=/opt/harbour
 # Loop locally so one poll failure doesn't kill the service.
 ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs run || true; sleep 60; done'
 Environment=HARBOUR_HOME=/home/harbour/.harbour
-Environment=HARBOUR_URL=http://127.0.0.1:14272
+Environment=HARBOUR_URL=http://127.0.0.1:4272
 # Explicit PATH so the service session finds CLIs installed under the
 # harbour user's home (the claude installer puts itself in ~/.local/bin).
 # systemd does NOT inherit your login shell's PATH, so a CLI installed via a
@@ -105,7 +105,7 @@ systemctl enable --now harbour.service
 
 ### 4. HTTPS in front
 
-The server speaks plaintext HTTP on `127.0.0.1:14272` — never expose that directly. Put a TLS-terminating reverse proxy in front. [Caddy](https://caddyserver.com/) is the least-config option (auto-issues Let's Encrypt certs); a minimal `/etc/caddy/Caddyfile`:
+The server speaks plaintext HTTP on `127.0.0.1:4272` — never expose that directly. Put a TLS-terminating reverse proxy in front. [Caddy](https://caddyserver.com/) is the least-config option (auto-issues Let's Encrypt certs); a minimal `/etc/caddy/Caddyfile`:
 
 ```
 harbour.example.com {
@@ -119,7 +119,7 @@ harbour.example.com {
     -Server
   }
 
-  reverse_proxy 127.0.0.1:14272
+  reverse_proxy 127.0.0.1:4272
 }
 ```
 
@@ -193,7 +193,7 @@ journalctl -u caddy -f                 # the proxy / cert issuance
 
 ## macOS (launchd)
 
-macOS is the developer-machine path: `npm run build && npm start` from the repo starts Harbour on `127.0.0.1:14272`, with the runner optionally installed via `npm run harbour -- install` (a launchd plist that fires `run` every 60s — see [Getting started](getting-started.md)). The server itself remains a foreground process by default. If you configure it separately under launchd with label `com.harbour.server`, `npm run release` rebuilds and bounces that installed stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
+macOS is the developer-machine path: `npm run build && npm start` from the repo starts Harbour on `127.0.0.1:4272`, with the runner optionally installed via `npm run harbour -- install` (a launchd plist that fires `run` every 60s — see [Getting started](getting-started.md)). The server itself remains a foreground process by default. If you configure it separately under launchd with label `com.harbour.server`, `npm run release` rebuilds and bounces that installed stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
 
 ## State and backups
 

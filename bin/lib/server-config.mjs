@@ -1,5 +1,5 @@
-// Stable project-wide production port: 1-HARB (4272 on a phone keypad).
-export const DEFAULT_SERVER_PORT = 14272;
+// Stable project-wide production port: HARB on a phone keypad.
+export const DEFAULT_SERVER_PORT = 4272;
 export const DEFAULT_DEV_PORT = 3001;
 export const DEFAULT_SERVER_HOST = "127.0.0.1";
 

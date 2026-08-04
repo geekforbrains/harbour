@@ -44,7 +44,7 @@ npm start                  # run the server
 
 `setup` also auto-provisions the **local runner** — it writes its token and local URL under `~/.harbour/`; on macOS it prompts to schedule the polling service. `npm start` runs the server; `npm run harbour -- install` schedules the runner on macOS (polls every 60s), or `npm run harbour -- run` drains all due work once. Linux services are configured with systemd in the production guide.
 
-Visit [http://127.0.0.1:14272](http://127.0.0.1:14272) and log in. Harbour binds to loopback by default; the port and host are configurable as described in [Getting started](docs/guides/getting-started.md#install-and-run). All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively.)
+Visit [http://127.0.0.1:4272](http://127.0.0.1:4272) and log in. Harbour binds to loopback by default; the port and host are configurable as described in [Getting started](docs/guides/getting-started.md#install-and-run). All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively.)
 
 ### Deploy to production
 
@@ -100,11 +100,11 @@ All Harbour state lives under `~/.harbour` by default — DB, uploads, encryptio
 | `HARBOUR_DB_PATH` | SQLite database file path | `<HARBOUR_HOME>/harbour.db` |
 | `HARBOUR_UPLOADS_DIR` | Run attachments directory | `<HARBOUR_HOME>/uploads` |
 | `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for secret encryption | Auto-generated at `<HARBOUR_HOME>/encryption.key` |
-| `HARBOUR_PORT` | Server port; also a bundled-runner local override when set for that process | Production `14272`; development `3001` |
-| `PORT` | Next-compatible server port alias (server only; `HARBOUR_PORT` wins) | Production `14272`; development `3001` |
+| `HARBOUR_PORT` | Server port; also a bundled-runner local override when set for that process | Production `4272`; development `3001` |
+| `PORT` | Next-compatible server port alias (server only; `HARBOUR_PORT` wins) | Production `4272`; development `3001` |
 | `HARBOUR_HOST` | `npm start` / `npm run dev` bind address | `127.0.0.1` |
 | `HARBOUR_PUBLIC_URL` | Browser-facing base URL for absolute page metadata (set when building) | Effective local server URL |
-| `HARBOUR_URL` | Base URL used by the bundled runner (highest precedence) | `HARBOUR_PORT`, saved `runner.url`, then `http://127.0.0.1:14272` |
+| `HARBOUR_URL` | Base URL used by the bundled runner (highest precedence) | `HARBOUR_PORT`, saved `runner.url`, then `http://127.0.0.1:4272` |
 | `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `500` |
 | `HARBOUR_SESSION_TTL_DAYS` | Dashboard session lifetime in days | `30` |
 

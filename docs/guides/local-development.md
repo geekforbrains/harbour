@@ -11,7 +11,7 @@ conventions are in [development standards](../reference/development-standards.md
 Have a dev server running before you test UI changes or drive the browser. Port
 conventions in this repo:
 
-- **14272** — production server (reserved; never run a dev server here)
+- **4272** — production server (reserved; never run a dev server here)
 - **3001** — main-repo dev server (`npm run dev`)
 - **3010–3020** — worktree dev servers, one per worktree
 
@@ -33,17 +33,17 @@ the commands and order live in
 [development standards](../reference/development-standards.md#validation-commands)
 (`typecheck · lint · test · build`, plus `test:e2e` when UI or routes change).
 
-If you're iterating against the **production** server on :14272, it won't pick up
+If you're iterating against the **production** server on :4272, it won't pick up
 a new build until you restart it:
 
 ```bash
-kill $(lsof -ti :14272)  # stop the running production server
-npm run build            # rebuild
-npm start &              # restart in the background
+kill $(lsof -ti :4272)  # stop the running production server
+npm run build           # rebuild
+npm start &             # restart in the background
 ```
 
 A `npm run dev` server hot-reloads, so the rebuild dance is only for the
-production build on :14272.
+production build on :4272.
 
 ## Browser review and screenshots
 

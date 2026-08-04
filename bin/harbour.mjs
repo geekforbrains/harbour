@@ -25,7 +25,7 @@ function usage() {
 harbour - Control plane for AI agents
 
 Usage:
-  harbour start              Start the server (production; default 127.0.0.1:14272)
+  harbour start              Start the server (production; default 127.0.0.1:4272)
   harbour dev                Start the server (development; default 127.0.0.1:3001)
   harbour setup              Create the first user + local runner (first-run)
   harbour user create        Create a user (non-interactive flags)

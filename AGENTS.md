@@ -25,7 +25,7 @@ Route by task and read the doc first:
 
 A few tripwires worth knowing up front — everything else is in the docs above:
 
-- **Port 14272 is production — never run a dev server on it.** Dev is 3001 (main repo) / 3010–3020 (worktrees). → [local development](docs/guides/local-development.md)
-- **Rebuild + restart after every change.** A running server won't pick up a new build until restarted: `kill $(lsof -ti :14272); npm run build; npm start &`. (A `npm run dev` server hot-reloads and needs none of this.)
+- **Port 4272 is production — never run a dev server on it.** Dev is 3001 (main repo) / 3010–3020 (worktrees). → [local development](docs/guides/local-development.md)
+- **Rebuild + restart after every change.** A running server won't pick up a new build until restarted: `kill $(lsof -ti :4272); npm run build; npm start &`. (A `npm run dev` server hot-reloads and needs none of this.)
 - **Node 24 LTS, enforced.** `npm install` fails on the wrong Node (`engine-strict`); after switching Node versions run `npm rebuild better-sqlite3` or Harbour won't boot (`NODE_MODULE_VERSION`).
 - **Validate before calling work done:** `typecheck · lint · test · build` (+ `test:e2e` when UI or routes changed). Full ladder and conventions in [development standards](docs/reference/development-standards.md).
