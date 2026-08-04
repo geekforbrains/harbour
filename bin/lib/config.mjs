@@ -75,9 +75,7 @@ export function saveRunnerCredentials({ token, url }) {
   if (url) fs.writeFileSync(runnerUrlFile(), `${url.replace(/\/$/, "")}\n`);
 }
 
-// Session tracking:
-// run_id -> { sessionId, cli, cwd, configFingerprint? }
-// configFingerprint is a digest of non-secret provider/model/variant metadata.
+// Session tracking: run_id -> { sessionId, cli, cwd }
 export function loadSessions() {
   const file = sessionsFile();
   if (!fs.existsSync(file)) return {};
@@ -95,25 +93,15 @@ export function saveSessions(sessions) {
 
 /**
  * Decide whether a saved CLI session can safely resume under the live config.
- * Legacy Claude/Codex records had no fingerprint and remain compatible; a
- * provider that requires fingerprints (OpenCode) starts fresh when one is
- * absent or changed. A cross-CLI resume is always invalid.
+ * A cross-CLI resume is always invalid — the session id belongs to the CLI that
+ * minted it, so an agent switched from claude to codex mid-run starts fresh.
  *
- * @param {{ sessionId?: string, cli?: string, configFingerprint?: string, cwd?: string } | null | undefined} session
- * @param {{ cli?: string, configFingerprint?: string | null, requireFingerprint?: boolean }} options
+ * @param {{ sessionId?: string, cli?: string, cwd?: string } | null | undefined} session
+ * @param {{ cli?: string }} options
  */
-export function isSessionCompatible(
-  session,
-  { cli, configFingerprint = null, requireFingerprint = false } = {},
-) {
+export function isSessionCompatible(session, { cli } = {}) {
   if (!session?.sessionId || !cli) return false;
   if (session.cli && session.cli !== cli) return false;
-  if (requireFingerprint) {
-    return !!configFingerprint && session.configFingerprint === configFingerprint;
-  }
-  if (session.configFingerprint && configFingerprint) {
-    return session.configFingerprint === configFingerprint;
-  }
   return true;
 }
 

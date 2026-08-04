@@ -4,14 +4,12 @@ Three top-level entities — markdown documents, agent-managed SQLite tables, an
 
 - They belong to a **project** (`project_id`, NOT NULL). See [Projects](projects.md).
 - They're **linked to a job** via three identical junction tables: `job_docs`, `job_tables`, `job_env_vars` — and a link may point at a resource in **any** project, not just the job's own.
-- They're **injected into the run payload** when a runner claims the run — when **pinned in the job's own project** or **linked to the job** (project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map. A Secret currently reserved as an LLM connection credential is the exception: it is excluded from normal job `env` even if pinned or linked.
-- All three support **pinning** — a per-project auto-attach that normally injects the resource into every run of every job in its project, subject to the reserved LLM-credential exception above.
+- They're **injected into the run payload** when a runner claims the run — when **pinned in the job's own project** or **linked to the job** (project membership alone injects nothing): docs as content, tables as a name+id read reference, secrets as a decrypted map.
+- All three support **pinning** — a per-project auto-attach that injects the resource into every run of every job in its project.
 
 The differences are in *what* gets injected. Docs are full text. Tables inject only their `name` + `id` — a read reference the agent dereferences on demand via the API, never inlined rows. Secrets are decrypted only at the moment of polling and never stored in plaintext.
 
 (The UI labels env vars **Secrets**; the table is still `env_vars`.)
-
-Secrets have a second, deliberately separate use: a project Secret can be the credential for a same-project OpenCode **LLM connection**. While any connection references it, Harbour reserves that Secret for provider authentication and excludes it from normal job `env`, even if it is pinned or explicitly linked to a job. Pin/link records are not removed: after the last connection releases the Secret, normal injection resumes on the next claim. On an eligible OpenCode claim, Harbour instead decrypts it into the runner-private `runtime.llm.api_key` field; the bundled runner removes that block from prompts and gates, then passes the key in the OpenCode child environment. If the same value must intentionally be available as job context, create a separate Secret for that purpose. The tool-capable agent can inspect its provider environment, so use dedicated provider keys with appropriate budgets and rate limits.
 
 ## A worked example
 
@@ -49,7 +47,7 @@ The agent writes a draft, posts it to Buffer using the env var, then reads `mark
 
 Pinning is the answer to "apply this context to everything in this project automatically." Docs, tables, and env vars all support it.
 
-**Pinning is a live, project-wide auto-attach.** A pinned resource is injected into the run payload of **every job in its own project**, no link row required. It's resolved at payload-build time (`getComposedDocsForJob` / `getComposedTablesForJob` / `getDecryptedEnvVarsForJob`): pinned resources of the job's own project come first, then the job's explicit links (from any project) in link-creation order — so on a name collision, a linked resource overrides a pinned one. A resource that is both pinned and linked appears once. Secrets bound to LLM connections are filtered out of both sets while bound.
+**Pinning is a live, project-wide auto-attach.** A pinned resource is injected into the run payload of **every job in its own project**, no link row required. It's resolved at payload-build time (`getComposedDocsForJob` / `getComposedTablesForJob` / `getDecryptedEnvVarsForJob`): pinned resources of the job's own project come first, then the job's explicit links (from any project) in link-creation order — so on a name collision, a linked resource overrides a pinned one. A resource that is both pinned and linked appears once.
 
 Pinning never crosses projects — a pinned doc in project A is invisible to project B's jobs unless a job there links it explicitly. The New Job dialog also pre-checks pinned items in scope as a convenience, but that's cosmetic: pinned resources reach the run either way.
 
@@ -102,9 +100,7 @@ Encryption is AES-256-GCM (`src/lib/encryption.ts`):
 | On-disk format | `<iv-hex>:<authTag-hex>:<ciphertext-hex>` (single TEXT column) |
 | Key location | `HARBOUR_ENCRYPTION_KEY` env var (preferred) or `~/.harbour/encryption.key` (auto-generated, mode 0600) |
 
-Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the run payload, filters out Secrets bound to LLM connections, and decrypts the remaining pinned/linked values. An explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance (any authenticated user; agents can't call it). List endpoints never include the encrypted blob; you have to ask for a single var by id.
-
-An LLM connection references the Secret by id and is reusable by many OpenCode agents in that project. Renaming the Secret or replacing its value applies to every referencing connection on the next claim. Deleting a connection leaves the Secret intact; deleting a Secret is blocked with 409 while any connection still references it, so repoint or delete those connections first.
+Decryption happens at the boundary — `getDecryptedEnvVarsForJob(jobId)` is called when assembling the run payload and decrypts the pinned/linked values. An explicit `GET /api/env-vars/:id/value` endpoint exists for the dashboard's "reveal value" affordance (any authenticated user; agents can't call it). List endpoints never include the encrypted blob; you have to ask for a single var by id.
 
 Losing the key (deleting `~/.harbour/encryption.key` without a backup) renders all encrypted_value blobs unreadable. There is no recovery — back the file up, or set `HARBOUR_ENCRYPTION_KEY` from a secrets store.
 
@@ -118,7 +114,7 @@ CREATE TABLE job_tables     (job_id, table_id,     PRIMARY KEY(job_id, table_id)
 CREATE TABLE job_env_vars   (job_id, env_var_id,   PRIMARY KEY(job_id, env_var_id));
 ```
 
-All three junction tables use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/table/env var, same — except that an env-var delete is refused while an LLM connection still references it.
+All three junction tables use `ON DELETE CASCADE` for both sides. Delete a job, the junction rows go. Delete the doc/table/env var, same.
 
 Linking from the dashboard happens through the job edit page. Via API, agent jobs are created under `POST /api/agents/:id/jobs` and workflows under `POST /api/jobs`; a job's docs, secrets, and tables are linked or unlinked through `POST` / `DELETE /api/jobs/:id/{docs,env-vars,tables}`. Links are unrestricted across projects — a job may link a resource from any project — and re-linking an already-linked resource is a no-op (`INSERT OR IGNORE`). Pinned resources of the job's own project need no link at all — see Pinning above.
 
@@ -133,7 +129,6 @@ If you're hunting in code:
 - `src/lib/db/docs.ts` — `createDoc`, `updateDoc` (revisions), `toggleDocPinned`.
 - `src/lib/db/tables.ts` — `createTable`, `addColumn`, `insertRows`, `getRows`, plus the name-sanitization and reserved-word guards.
 - `src/lib/db/env-vars.ts` — env var CRUD, `getDecryptedEnvVarsForJob` (pinned-then-linked merge, linked wins).
-- `src/lib/db/llm-connections.ts` — reusable OpenCode provider profiles, Secret references, validation, and agent bindings.
 - `src/lib/db/jobs.ts` — `createJob` / `createWorkflow` link exactly the ids passed in; `triggerJobRun` is the ad-hoc-run path (it reuses an existing job's links).
 - `src/lib/db/runs.ts` — `buildRunPayload` (the run payload assembly): the composition queries (`getComposedDocsForJob`, `getComposedTablesForJob` → name+id only, `getDecryptedEnvVarsForJob`), each merging the project's pinned resources with the job's `job_*` links.
 - `src/lib/encryption.ts` — AES-256-GCM helpers, key loading.

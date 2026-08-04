@@ -1,50 +1,10 @@
-import { execFileSync, execSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const OPENCODE_API_KEY_ENV = "HARBOUR_OPENCODE_API_KEY";
-const MIN_OPENCODE_VERSION = [1, 17, 12];
 const MIN_GLOBAL_SECRET_REDACTION_LENGTH = 4;
-const OPENCODE_PROVIDER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
-const OPENCODE_VARIANT_RE = /^[a-zA-Z0-9._-]{1,64}$/;
-const ISOLATED_HOST_ENV_KEYS = new Set([
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LOGNAME",
-  "NO_COLOR",
-  "PATH",
-  "SHELL",
-  "TEMP",
-  "TERM",
-  "TMP",
-  "TMPDIR",
-  "USER",
-  // Preserve the host's normal data/config locations. OpenCode session data
-  // must remain stable across runs, and shell tools launched by the agent may
-  // keep their own credentials under these paths. Harbour never overrides
-  // them; inline OpenCode config/auth controls isolate the model provider.
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_STATE_HOME",
-]);
-const RESERVED_OPENCODE_ENV = new Set([
-  OPENCODE_API_KEY_ENV,
-  "OPENCODE_AUTH_CONTENT",
-  "OPENCODE_CONFIG",
-  "OPENCODE_CONFIG_CONTENT",
-  "OPENCODE_CONFIG_DIR",
-  "OPENCODE_SERVER_PASSWORD",
-  "OPENCODE_SERVER_USERNAME",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_STATE_HOME",
-]);
 
 const EVENT_CONTENT_LIMITS = Object.freeze({
   text_delta: 16_000,
@@ -108,197 +68,11 @@ export function sanitizeProviderEvent(event, secrets = []) {
   return { ...event, content, ...(event.tool_name !== undefined ? { tool_name: toolName } : {}) };
 }
 
-function normalizedBaseUrl(value) {
-  if (!value) return null;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("OpenCode provider base_url must be a valid http(s) URL");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("OpenCode provider base_url must use http or https");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("OpenCode provider base_url must not contain credentials");
-  }
-  if (parsed.search) {
-    throw new Error("OpenCode provider base_url must not contain a query string");
-  }
-  parsed.hash = "";
-  return parsed.toString().replace(/\/$/, "");
-}
-
-function splitOpenCodeModel(model) {
-  if (typeof model !== "string" || model.includes("\n") || model.includes("\r")) {
-    throw new Error("OpenCode requires a model in provider/model form");
-  }
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash === model.length - 1) {
-    throw new Error("OpenCode requires a model in provider/model form");
-  }
-  return { providerId: model.slice(0, slash), modelId: model.slice(slash + 1) };
-}
-
-/**
- * Build the complete, Harbour-owned OpenCode runtime config. Only typed claim
- * metadata is accepted: callers cannot inject npm packages or raw OpenCode
- * configuration. The returned fingerprint contains no credential material.
- */
-export function buildOpenCodeRuntime({
-  model,
-  variant,
-  provider,
-  apiKey,
-  harbourHome = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour"),
-}) {
-  if (!provider || typeof provider !== "object") {
-    throw new Error("OpenCode requires a configured LLM provider connection");
-  }
-
-  const presetKinds = new Set(["openai", "anthropic", "openrouter"]);
-  const allowedKinds = new Set([...presetKinds, "ollama", "openai-compatible"]);
-  const kind = provider.kind;
-  if (!allowedKinds.has(kind)) throw new Error(`Unsupported OpenCode provider kind: ${kind}`);
-  if (apiKey != null && typeof apiKey !== "string") {
-    throw new Error("OpenCode provider API key must be a string");
-  }
-
-  const presetProviderId = presetKinds.has(kind) || kind === "ollama" ? kind : null;
-  const providerId = provider.provider_id || presetProviderId;
-  if (typeof providerId !== "string" || !OPENCODE_PROVIDER_ID_RE.test(providerId)) {
-    throw new Error(
-      "OpenCode provider_id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, and hyphens",
-    );
-  }
-  if (presetProviderId && providerId !== presetProviderId) {
-    throw new Error(`OpenCode ${kind} connections must use provider_id "${presetProviderId}"`);
-  }
-
-  const protocol = provider.protocol;
-  if (presetKinds.has(kind) && protocol !== "native") {
-    throw new Error(`OpenCode ${kind} connections must use protocol "native"`);
-  }
-  if (kind === "ollama" && protocol !== "chat-completions") {
-    throw new Error('OpenCode Ollama connections must use protocol "chat-completions"');
-  }
-  if (kind === "openai-compatible" && protocol !== "chat-completions" && protocol !== "responses") {
-    throw new Error(
-      'OpenCode compatible connections must use protocol "chat-completions" or "responses"',
-    );
-  }
-
-  const splitModel = splitOpenCodeModel(model);
-  if (splitModel.providerId !== providerId) {
-    throw new Error(`OpenCode model "${model}" must use provider "${providerId}"`);
-  }
-  if (variant != null && (typeof variant !== "string" || !OPENCODE_VARIANT_RE.test(variant))) {
-    throw new Error("OpenCode variant contains unsupported characters");
-  }
-  if (presetKinds.has(kind) && !apiKey) {
-    throw new Error(`OpenCode ${kind} connections require an API key`);
-  }
-
-  const baseURL =
-    kind === "ollama"
-      ? normalizedBaseUrl(provider.base_url || "http://127.0.0.1:11434/v1")
-      : normalizedBaseUrl(provider.base_url);
-  if (kind === "openai-compatible" && !baseURL) {
-    throw new Error("OpenCode compatible connections require a base_url");
-  }
-
-  const options = {};
-  if (baseURL) options.baseURL = baseURL;
-  if (apiKey) options.apiKey = `{env:${OPENCODE_API_KEY_ENV}}`;
-
-  const providerConfig = { options };
-  if (kind === "ollama" || kind === "openai-compatible") {
-    providerConfig.npm = protocol === "responses" ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible";
-    providerConfig.models = { [splitModel.modelId]: { name: splitModel.modelId } };
-  }
-
-  const config = {
-    enabled_providers: [providerId],
-    share: "disabled",
-    autoupdate: false,
-    permission: {
-      external_directory: "deny",
-      question: "deny",
-    },
-    provider: { [providerId]: providerConfig },
-  };
-
-  const nonSecretConfig = {
-    version: 1,
-    connectionId: provider.id || null,
-    credentialId: provider.credential_id || null,
-    kind,
-    providerId,
-    baseURL,
-    protocol,
-    model,
-    variant: variant || null,
-  };
-  const configFingerprint = `sha256:${crypto
-    .createHash("sha256")
-    .update(JSON.stringify(nonSecretConfig))
-    .digest("hex")}`;
-
-  const root = path.join(harbourHome, "opencode");
-  /** @type {Record<string, string>} */
-  const controlEnv = {
-    OPENCODE_AUTH_CONTENT: "{}",
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    OPENCODE_DISABLE_AUTOUPDATE: "1",
-    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
-    // Repositories are work input, not provider configuration. Without this,
-    // a checked-in opencode.json/.opencode directory can retain deep-merged
-    // provider fields (including baseURL), MCP servers, or executable plugins.
-    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-    OPENCODE_SERVER_PASSWORD: crypto.randomBytes(32).toString("base64url"),
-    OPENCODE_CLIENT: "harbour",
-  };
-  if (apiKey) controlEnv[OPENCODE_API_KEY_ENV] = apiKey;
-
-  return {
-    configFingerprint,
-    controlEnv,
-    isolatedEnv: true,
-    launchDir: path.join(root, "runtime"),
-    secretValues: [apiKey, controlEnv.OPENCODE_SERVER_PASSWORD].filter(Boolean),
-  };
-}
-
 // Cache resolved binary paths. A name resolves to its absolute path, or to
 // null when it isn't on PATH — there is NO bare-name fallback, so
 // detectCapabilities advertises only CLIs the runner can actually spawn (a
 // runner that advertised a missing CLI would claim work it then can't run).
 const binaryPathCache = {};
-const binaryVersionCache = {};
-
-/** 1.17.12 is the first release with every unattended-run flag Harbour uses. */
-export function isOpenCodeVersionSupported(value) {
-  const match = String(value || "").match(/(?:^|\s|v)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
-  if (!match) return false;
-  const actual = match.slice(1, 4).map(Number);
-  for (let index = 0; index < MIN_OPENCODE_VERSION.length; index++) {
-    if (actual[index] > MIN_OPENCODE_VERSION[index]) return true;
-    if (actual[index] < MIN_OPENCODE_VERSION[index]) return false;
-  }
-  return true;
-}
-
-function hasSupportedOpenCodeVersion(binary) {
-  if (!(binary in binaryVersionCache)) {
-    try {
-      const output = execFileSync(binary, ["--version"], { encoding: "utf-8" }).trim();
-      binaryVersionCache[binary] = isOpenCodeVersionSupported(output);
-    } catch {
-      binaryVersionCache[binary] = false;
-    }
-  }
-  return binaryVersionCache[binary];
-}
 
 export function resolveBinary(name) {
   if (!(name in binaryPathCache)) {
@@ -314,7 +88,6 @@ export function resolveBinary(name) {
 /** Clear the resolved-binary cache. For tests that manipulate process.env.PATH. */
 export function resetBinaryCache() {
   for (const key of Object.keys(binaryPathCache)) delete binaryPathCache[key];
-  for (const key of Object.keys(binaryVersionCache)) delete binaryVersionCache[key];
 }
 
 // Normalized event types emitted by all providers:
@@ -679,152 +452,6 @@ const PROVIDERS = {
       return { content: lastMessage.trim(), sessionId };
     },
   },
-
-  opencode: {
-    canResume: true,
-    acceptsArbitraryThinking: true,
-    requiresConfigFingerprint: true,
-    // Suggestions shown in the dashboard. Unlike Claude/Codex this is not an
-    // allowlist: OpenCode accepts any validated variant token.
-    thinkingLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, variant, runtime) {
-      if (!runtime?.launchDir) throw new Error("OpenCode runtime configuration is missing");
-      // Keep OpenCode's Bun bootstrap out of the workspace so it cannot
-      // implicitly load a project .env before Harbour's isolated environment
-      // and inline config are applied. --dir remains the actual agent workspace.
-      const args = [
-        "run",
-        "--pure",
-        "--auto",
-        "--format",
-        "json",
-        "--model",
-        model,
-        "--dir",
-        workingDir,
-      ];
-      if (sessionId) args.push("--session", sessionId);
-      if (variant) args.push("--variant", variant);
-      args.push(prompt);
-      return {
-        binary: resolveBinary("opencode"),
-        args,
-        cwd: runtime.launchDir,
-        workspaceDir: workingDir,
-      };
-    },
-    createParser() {
-      const activeTools = new Set();
-      let hasEmittedText = false;
-      return {
-        parseLine(line) {
-          try {
-            const obj = JSON.parse(line);
-            const events = [];
-            const sessionId = obj.sessionID || obj.session_id || undefined;
-            const part = obj.part && typeof obj.part === "object" ? obj.part : {};
-
-            if (obj.type === "text" && typeof part.text === "string" && part.text) {
-              const content = hasEmittedText ? `\n\n${part.text}` : part.text;
-              hasEmittedText = true;
-              events.push({ event_type: "text_delta", content });
-            }
-
-            if (obj.type === "reasoning" && typeof part.text === "string" && part.text) {
-              events.push({ event_type: "thinking", content: part.text });
-            }
-
-            if (obj.type === "tool_use") {
-              const state = part.state && typeof part.state === "object" ? part.state : {};
-              const toolName = typeof part.tool === "string" ? part.tool : "tool";
-              const callId = String(
-                part.id || part.callID || part.call_id || `${toolName}:unknown`,
-              );
-              const status = state.status;
-              const terminal = status === "completed" || status === "error" || status === "failed";
-
-              if (!activeTools.has(callId)) {
-                activeTools.add(callId);
-                events.push({
-                  event_type: "tool_start",
-                  content: formatToolInput(toolName, state.input),
-                  tool_name: toolName,
-                });
-              }
-
-              if (terminal) {
-                activeTools.delete(callId);
-                let output = state.output;
-                if (output == null || output === "") output = state.error || status;
-                if (typeof output !== "string") output = JSON.stringify(output);
-                events.push({ event_type: "tool_end", content: output, tool_name: toolName });
-              }
-            }
-
-            if (obj.type === "step_finish") {
-              const tokens = part.tokens && typeof part.tokens === "object" ? part.tokens : {};
-              const usage = [];
-              if (Number.isFinite(tokens.input)) usage.push(`${tokens.input} in`);
-              if (Number.isFinite(tokens.output)) usage.push(`${tokens.output} out`);
-              if (Number.isFinite(tokens.reasoning)) usage.push(`${tokens.reasoning} reasoning`);
-              let content = usage.length ? `Tokens: ${usage.join(" / ")}` : "Step finished";
-              if (Number.isFinite(part.cost))
-                content += ` · Cost: $${Number(part.cost).toFixed(6)}`;
-              events.push({ event_type: "result", content });
-            }
-
-            if (obj.type === "error") {
-              const error = obj.error && typeof obj.error === "object" ? obj.error : {};
-              const data = error.data && typeof error.data === "object" ? error.data : {};
-              // Deliberate allowlist: responseBody/responseHeaders can contain
-              // upstream credentials and must never be serialized wholesale.
-              const name = typeof error.name === "string" ? error.name : "OpenCode error";
-              const message =
-                typeof data.message === "string"
-                  ? data.message
-                  : typeof error.message === "string"
-                    ? error.message
-                    : "Provider request failed";
-              const details = [];
-              if (typeof data.statusCode === "number") details.push(`status ${data.statusCode}`);
-              if (typeof data.providerID === "string") details.push(`provider ${data.providerID}`);
-              if (typeof data.modelID === "string") details.push(`model ${data.modelID}`);
-              events.push({
-                event_type: "error",
-                content: `${name}: ${message}${details.length ? ` (${details.join(", ")})` : ""}`,
-              });
-            }
-
-            return { events, ...(sessionId ? { sessionId } : {}) };
-          } catch {
-            return { events: [] };
-          }
-        },
-      };
-    },
-    parseResult(stdout, presetSessionId) {
-      let sessionId = presetSessionId || null;
-      let lastText = "";
-      let lastError = "";
-      for (const line of stdout.trim().split("\n")) {
-        try {
-          const obj = JSON.parse(line);
-          if (obj.sessionID || obj.session_id) sessionId = obj.sessionID || obj.session_id;
-          if (obj.type === "text" && typeof obj.part?.text === "string" && obj.part.text.trim()) {
-            lastText = obj.part.text;
-          }
-          if (obj.type === "error") {
-            const parsed = this.createParser().parseLine(line);
-            const event = parsed.events.find((item) => item.event_type === "error");
-            if (event?.content) lastError = event.content;
-          }
-        } catch {
-          /* skip non-JSON output */
-        }
-      }
-      return { content: (lastText || lastError || stdout).trim(), sessionId };
-    },
-  },
 };
 
 export function getProvider(cli) {
@@ -845,11 +472,7 @@ export const KNOWN_CLIS = Object.keys(PROVIDERS);
  *            via HARBOUR_RUNNER_LABELS (comma-separated) for a remote runner.
  */
 export function detectCapabilities() {
-  const clis = KNOWN_CLIS.filter((cli) => {
-    const binary = resolveBinary(cli);
-    if (!binary) return false;
-    return cli !== "opencode" || hasSupportedOpenCodeVersion(binary);
-  });
+  const clis = KNOWN_CLIS.filter((cli) => !!resolveBinary(cli));
   const kinds = clis.length > 0 ? ["agent", "workflow"] : ["workflow"];
   const labels = (process.env.HARBOUR_RUNNER_LABELS || "local")
     .split(",")
@@ -869,11 +492,6 @@ export function detectCapabilities() {
  */
 export function sanitizeThinking(cli, thinking) {
   if (!thinking) return { thinking: null, dropped: null };
-  if (PROVIDERS[cli]?.acceptsArbitraryThinking) {
-    return OPENCODE_VARIANT_RE.test(thinking)
-      ? { thinking, dropped: null }
-      : { thinking: null, dropped: thinking };
-  }
   const levels = PROVIDERS[cli]?.thinkingLevels || [];
   if (levels.includes(thinking)) return { thinking, dropped: null };
   return { thinking: null, dropped: levels.length > 0 ? thinking : null };
@@ -929,34 +547,9 @@ export function ensureWorkingDir(segments) {
   return dir;
 }
 
-/** Build a child environment with optional host isolation and final controls. */
-export function buildChildEnvironment({
-  extraEnv = {},
-  controlEnv = {},
-  isolatedEnv = false,
-} = {}) {
-  /** @type {Record<string, string>} */
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (
-      value !== undefined &&
-      (!isolatedEnv || ISOLATED_HOST_ENV_KEYS.has(key) || key.startsWith("LC_"))
-    ) {
-      env[key] = value;
-    }
-  }
-  for (const [key, value] of Object.entries(extraEnv || {})) {
-    if (
-      isolatedEnv &&
-      (RESERVED_OPENCODE_ENV.has(key) || key.startsWith("OPENCODE_") || key.startsWith("XDG_"))
-    ) {
-      continue;
-    }
-    env[key] = value;
-  }
-  // Runner controls always win over job-defined environment variables.
-  Object.assign(env, controlEnv || {});
-
+/** Build the child environment for a CLI run: host env plus the job's own. */
+export function buildChildEnvironment({ extraEnv = {} } = {}) {
+  const env = { ...process.env, ...(extraEnv || {}) };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CLAUDE_CODE_SESSION;
@@ -984,22 +577,13 @@ export function buildChildEnvironment({
  * @param {string} binary
  * @param {string[]} args
  * @param {string} cwd
- * @param {{ inactivityTimeoutMs?: number, killGraceMs?: number, onLine?: (line: string) => void, signal?: AbortSignal, extraEnv?: Record<string, string>, controlEnv?: Record<string, string>, isolatedEnv?: boolean, workspaceDir?: string }} [opts]
+ * @param {{ inactivityTimeoutMs?: number, killGraceMs?: number, onLine?: (line: string) => void, signal?: AbortSignal, extraEnv?: Record<string, string> }} [opts]
  */
 export function runCliTool(
   binary,
   args,
   cwd,
-  {
-    inactivityTimeoutMs = 3 * 60 * 1000,
-    killGraceMs = 3000,
-    onLine,
-    signal,
-    extraEnv,
-    controlEnv,
-    isolatedEnv = false,
-    workspaceDir,
-  } = {},
+  { inactivityTimeoutMs = 3 * 60 * 1000, killGraceMs = 3000, onLine, signal, extraEnv } = {},
 ) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards, then layer
@@ -1007,11 +591,11 @@ export function runCliTool(
     // Putting them in the actual process env (not just the prompt) lets the
     // agent's shell expand `$VARNAME` naturally — needed for `curl -H
     // "Authorization: Bearer $TOKEN"` and similar patterns.
-    const env = buildChildEnvironment({ extraEnv, controlEnv, isolatedEnv });
+    const env = buildChildEnvironment({ extraEnv });
     // If the workspace has a `bin/` directory, prepend it to PATH so per-agent
     // wrapper scripts (e.g. auth-curl shims) resolve as bare command names.
     try {
-      const workspaceBin = path.join(workspaceDir || cwd, "bin");
+      const workspaceBin = path.join(cwd, "bin");
       if (fs.statSync(workspaceBin).isDirectory()) {
         env.PATH = `${workspaceBin}:${env.PATH || ""}`;
       }

@@ -6,7 +6,6 @@ import {
   Briefcase,
   FileText,
   KeyRound,
-  Plug,
   Settings,
   Table2,
   Users,
@@ -28,7 +27,6 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/tables", label: "Tables", icon: Table2 },
     { href: "/env-vars", label: "Secrets", icon: KeyRound },
-    { href: "/llm-connections", label: "LLM Connections", icon: Plug },
     { href: "/users", label: "Users", icon: Users },
     { href: "/settings", label: "Settings", icon: Settings },
   ];

@@ -3,28 +3,7 @@ export type CliConfig = {
   models: string[];
   thinkingLabel: string;
   thinkingOptions: string[];
-  modelInput?: "select" | "text";
-  thinkingInput?: "select" | "text";
 };
-
-export const OPENCODE_MIN_VERSION = "1.17.12";
-
-function parseVersion(value: string | null | undefined): [number, number, number] | null {
-  const match = String(value || "").match(/(?:^|\s|v)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
-}
-
-export function isSupportedCliVersion(cli: string, version: string | null | undefined): boolean {
-  if (cli !== "opencode") return true;
-  const actual = parseVersion(version);
-  const minimum = parseVersion(OPENCODE_MIN_VERSION)!;
-  if (!actual) return false;
-  for (let index = 0; index < minimum.length; index++) {
-    if (actual[index] > minimum[index]) return true;
-    if (actual[index] < minimum[index]) return false;
-  }
-  return true;
-}
 
 export const CLI_CONFIG: Record<string, CliConfig> = {
   claude: {
@@ -39,14 +18,6 @@ export const CLI_CONFIG: Record<string, CliConfig> = {
     thinkingLabel: "Reasoning",
     thinkingOptions: ["low", "medium", "high", "xhigh", "max"],
   },
-  opencode: {
-    name: "OpenCode",
-    models: [],
-    thinkingLabel: "Variant",
-    thinkingOptions: ["none", "low", "medium", "high", "xhigh", "max"],
-    modelInput: "text",
-    thinkingInput: "text",
-  },
 };
 
 export type CliTool = {
@@ -54,8 +25,6 @@ export type CliTool = {
   name: string;
   installed: boolean;
   version?: string;
-  compatible?: boolean;
-  compatibilityReason?: string;
 };
 
 /**
@@ -92,16 +61,6 @@ export function validateThinking(cli: unknown, thinking: unknown): string | null
   }
   if (config.thinkingOptions.length === 0) {
     return `${cli} does not take a thinking level — leave it empty.`;
-  }
-  if (config.thinkingInput === "text") {
-    if (
-      typeof thinking === "string" &&
-      thinking.length <= 64 &&
-      /^[A-Za-z0-9._-]+$/.test(thinking)
-    ) {
-      return null;
-    }
-    return `Invalid ${config.thinkingLabel.toLowerCase()} "${thinking}" for ${cli}. Use at most 64 letters, numbers, dots, underscores, or hyphens.`;
   }
   if (typeof thinking !== "string" || !config.thinkingOptions.includes(thinking)) {
     return `Invalid thinking level "${thinking}" for ${cli}. Valid options: ${config.thinkingOptions.join(", ")} (or empty for the CLI default).`;

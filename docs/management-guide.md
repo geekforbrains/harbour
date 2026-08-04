@@ -4,17 +4,16 @@ This document covers everything a management agent needs to operate a Harbour in
 
 ## Overview
 
-You have API access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage projects, agents, LLM connections, jobs, runs, docs, tables, env vars, users, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
+You have API access to a Harbour instance — the control plane for AI agents doing ongoing work. You can create and manage projects, agents, jobs, runs, docs, tables, env vars, users, and settings. You are not a worker agent polling for runs — you are a management layer that helps a human operate Harbour through the API.
 
 Key concepts:
-- **Projects** — the top-level containers. Every agent, LLM connection, job, doc, table, and env var lives in exactly one project.
-- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no Harbour credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code, Codex, or OpenCode.
-- **LLM Connections** — reusable, project-scoped provider configuration for OpenCode agents. A connection may reference one encrypted Secret for its provider API key; normal connection and agent responses expose metadata only.
+- **Projects** — the top-level containers. Every agent, job, doc, table, and env var lives in exactly one project.
+- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no Harbour credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code or Codex.
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into the runs of jobs they're pinned for or attached to.
 - **Tables** — SQLite tables agents create and manage; injected as read references (name + id) into the runs of jobs they're pinned for or linked to.
-- **Env Vars / Secrets** — encrypted key-value pairs (API keys, tokens). A Secret may be injected into job runs through pin/link context, or reserved as an OpenCode connection credential. While bound to any connection it is excluded from normal job `env`, even if pinned or linked.
+- **Env Vars / Secrets** — encrypted key-value pairs (API keys, tokens). A Secret is injected into job runs through pin/link context.
 
 ## Authentication
 
@@ -68,7 +67,7 @@ PUT    /api/projects/:id    { "name": "New Name" }
 DELETE /api/projects/:id
 ```
 
-DELETE is **permanent**: it cascades to everything beneath the project — agents, LLM connections, jobs, runs, docs, env vars, and tables are all deleted.
+DELETE is **permanent**: it cascades to everything beneath the project — agents, jobs, runs, docs, env vars, and tables are all deleted.
 
 ## Agents
 
@@ -91,98 +90,27 @@ Content-Type: application/json
 }
 ```
 
-`projectId` (body or `?projectId=` query), `name`, and `cli` are required. `cli` is `claude`, `codex`, or `opencode`. Agent names are unique per project, under the same slug rules as projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
-- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). For Claude/Codex, `model` is not validated and `thinking` is validated per CLI: `low`/`medium`/`high`/`xhigh`/`max` for `claude`, up to `xhigh` for `codex`. Empty/omitted thinking means the CLI default.
+`projectId` (body or `?projectId=` query), `name`, and `cli` are required. `cli` is `claude` or `codex`. Agent names are unique per project, under the same slug rules as projects — 409 on collision, 400 for a name with no letters or numbers. Optional fields:
+- `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is not validated; `thinking` is validated per CLI (`low`/`medium`/`high`/`xhigh`/`max`). Empty/omitted thinking means the CLI default.
 - `eager` (boolean) — **legacy/no-op.** Still accepted and stored for compatibility, but the unified runner drains all due work each cycle regardless, so it no longer changes behavior. Omit it.
 - `placement` (string) — routes this agent's runs to a runner. Defaults to `local`: the auto-provisioned local runner claims the work. Set a label (e.g. `gpu`) to pin the agent to a specific machine — its runs then go only to a remote runner enrolled for that label (mint one via `POST /api/runners` and connect it on that host; see **Runners** below).
 - `color` — identity hue (falls back to a name-derived color if omitted)
-
-OpenCode additionally requires `llm_connection_id` and a `model` in canonical `provider/model` form. The connection must belong to the same project, and the model prefix must equal its `provider_id`; for example:
-
-```json
-{
-  "projectId": "uuid",
-  "name": "Local coding agent",
-  "cli": "opencode",
-  "llm_connection_id": "connection-uuid",
-  "model": "ollama/qwen3-coder",
-  "thinking": "high"
-}
-```
-
-OpenCode `thinking` is an optional model variant rather than a fixed Harbour enum. A non-empty value may contain up to 64 letters, numbers, dots, underscores, or hyphens. `llm_connection_id` is rejected for Claude/Codex.
 
 The response is the created agent record. The agent's runs are executed by a runner per its `placement` (the local runner by default, or a remote one you've enrolled for its label). The runner contract is served at `GET /api/runner-guide`; the spawned CLI's worker contract is at `GET /api/guide`.
 
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "llm_connection_id": "...", "color": "...", "placement": "local" }
+PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "placement": "local" }
 DELETE /api/agents/:id
 ```
 
-GET includes the agent's `workspace` — its `{ project, agent }` slugs — plus `llm_connection_id` and metadata-only `llm_connection` (both null for Claude/Codex). PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `llm_connection_id`, `color`, `eager`, `placement`; omitted fields are left unchanged. `cli` and `thinking` are validated together — changing CLI to one that rejects the current value is a 400 unless the request also re-sets or clears it.
-
-For OpenCode, model/connection updates revalidate the provider prefix and every existing job model override before committing. Switching away from OpenCode removes its binding in the same transaction. A non-OpenCode agent cannot be assigned a connection, and an OpenCode agent cannot clear one without also switching CLI.
+GET includes the agent's `workspace` — its `{ project, agent }` slugs. PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`; omitted fields are left unchanged. `cli` and `thinking` are validated together — changing CLI to one that rejects the current value is a 400 unless the request also re-sets or clears it.
 
 ### List Agent's Jobs
 ```
 GET /api/agents/:id/jobs
 ```
-
-## LLM Connections
-
-LLM connections are reusable OpenCode provider profiles. They belong to one project, may be shared by many OpenCode agents in that project, and reference at most one same-project Secret as their API key. While referenced by any connection, that Secret is reserved for provider authentication and omitted from ordinary job `env` even if pinned or explicitly linked; create a separate Secret if the same value must intentionally be job context. Connection and agent APIs expose only credential metadata, but the runner ultimately places the decrypted key in the OpenCode child environment; the tool-capable agent can access it. Use dedicated provider credentials with appropriate budgets and rate limits.
-
-### List / Create Connections
-
-```
-GET  /api/llm-connections
-GET  /api/llm-connections?projectId=<id>
-POST /api/llm-connections
-Content-Type: application/json
-
-{
-  "projectId": "uuid",
-  "name": "OpenAI production",
-  "kind": "openai",
-  "provider_id": "openai",
-  "protocol": "native",
-  "credential": { "name": "OPENAI_API_KEY", "value": "sk-..." }
-}
-```
-
-Create requires `projectId`, `name`, `kind`, and `provider_id`. `protocol` defaults from the kind. Choose exactly one credential input:
-
-- `credential_id: "secret-uuid"` links an existing Secret from the same project;
-- `credential: { "name": "...", "value": "..." }` creates and links a new encrypted Secret in the same transaction; or
-- neither, only for a keyless Ollama or OpenAI-compatible endpoint.
-
-`credential_id` and `credential` are mutually exclusive. A newly created Secret remains a normal project Secret if the connection is later deleted. List rows add `project_name` and `agent_count`; all responses expose only `credential: { id, name } | null`, never the decrypted value.
-
-Provider rules:
-
-| `kind` | `provider_id` | `protocol` | Endpoint / credential |
-|---|---|---|---|
-| `openai` | `openai` | `native` | API-key Secret required |
-| `anthropic` | `anthropic` | `native` | API-key Secret required |
-| `openrouter` | `openrouter` | `native` | API-key Secret required |
-| `ollama` | `ollama` | `chat-completions` | Key optional; runtime default URL is `http://127.0.0.1:11434/v1` when `base_url` is omitted |
-| `openai-compatible` | custom ID | `chat-completions` or `responses` | HTTP(S) `base_url` required; key optional |
-
-A custom provider ID must match `[a-z0-9][a-z0-9._-]*` and becomes the required model prefix. Base URLs must be valid HTTP(S), cannot contain username/password credentials or query strings, and are resolved from the runner machine. Connection names are case-insensitively unique within a project (409 on collision).
-
-### Get / Update / Delete a Connection
-
-```
-GET    /api/llm-connections/:id
-PUT    /api/llm-connections/:id
-DELETE /api/llm-connections/:id
-```
-
-PUT accepts any subset of `name`, `kind`, `provider_id`, `base_url`, `protocol`, and one credential input. Omit credential fields to keep the current Secret; send `credential_id: null` to clear an optional credential; send `credential_id` to select another existing Secret; or send `credential: { name, value }` to create and attach a new one. `base_url: null` clears an optional URL.
-
-A connection's provider identity (`kind` or `provider_id`) cannot change while any agent uses it, and a bound connection cannot be deleted (409). Rename, endpoint, protocol, and credential changes are allowed when otherwise valid. Endpoint/protocol changes or selecting a different credential Secret cause saved OpenCode sessions to start fresh on their next resume; replacing the value of the same Secret preserves them. A Secret used by a connection likewise cannot be deleted until the connection is changed or removed. DELETE returns `{ "ok": true }` and does not delete its Secret. Existing pin/job links are not removed, so after the last connection releases that Secret it becomes eligible for normal job `env` again.
 
 ## Runners
 
@@ -239,7 +167,7 @@ The job is created in the agent's project. Only `name` and `schedule` are requir
 
 Optional fields: `instructions`, `prerun` (a **gate** run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrun` (a gate run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`, `tableIds`, `active` (defaults to true; set `false` to create the job paused). The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
-Model/thinking overrides follow the agent's CLI rules. For OpenCode, a non-empty model override must retain the connection's canonical provider prefix, and thinking is the optional variant token. An OpenCode agent must still have a bound LLM connection before any job can be created.
+Model/thinking overrides follow the agent's CLI rules.
 
 A gate is an object `{ "runtime": "bash" | "python" | "node", "content": "<script body>" }` — the runtime selects the interpreter (`bash`, `python3`, or `node`) and `content` is the full script source, stored verbatim. `runtime` is optional and defaults to `"bash"`; `content` is required and non-empty (else 400). The runner materializes each gate's body to its own file and executes it — there are no separate script files or bare-filename references.
 
@@ -565,8 +493,6 @@ DELETE /api/env-vars/:id
 
 `GET /api/env-vars/:id` does not include the value. Both list and detail responses only return metadata.
 
-DELETE returns 409 while an LLM connection uses the Secret as its provider credential. Repoint or delete the connection first. Renaming or replacing the Secret value is allowed and takes effect for every connection that references it on the next claim.
-
 ### Read the Decrypted Value
 ```
 GET /api/env-vars/:id/value
@@ -661,14 +587,13 @@ Returns `{ "ok": true }`; an unknown id is a 404 `{ "error": "API key not found"
 
 ### Set up a new agent with a recurring job
 1. `GET /api/projects` — pick a project (or `POST /api/projects` to create one)
-2. For OpenCode, `POST /api/llm-connections` first (link an existing Secret with `credential_id` or atomically create one with `credential`)
-3. `POST /api/agents` — create the agent (`projectId` + `name` + `cli`; OpenCode also needs `llm_connection_id` + canonical `model`). The agent has no Harbour credential of its own
-4. `POST /api/agents/:id/jobs` — create a job with schedule and instructions
-5. `POST /api/docs` — create any docs the agent needs
-6. `POST /api/jobs/:id/docs` — link docs to the job (or pin them for the whole project)
-7. `POST /api/env-vars` — create any job-context Secrets (API keys, tokens)
-8. `POST /api/jobs/:id/env-vars` — link those Secrets to the job. An OpenCode connection credential needs no job link and is ignored there while bound; Harbour sends it separately as private runner control data. Create a separate Secret if the value is also needed as job `env`
-9. No runner setup needed for the default `local` placement — the auto-provisioned local runner claims the agent's runs and the spawned CLI authenticates to Harbour per-run with the run's exec token. To pin the agent to another machine, give it a `placement` label and mint a remote runner for that label (see **Runners**)
+2. `POST /api/agents` — create the agent (`projectId` + `name` + `cli`). The agent has no Harbour credential of its own
+3. `POST /api/agents/:id/jobs` — create a job with schedule and instructions
+4. `POST /api/docs` — create any docs the agent needs
+5. `POST /api/jobs/:id/docs` — link docs to the job (or pin them for the whole project)
+6. `POST /api/env-vars` — create any job-context Secrets (API keys, tokens)
+7. `POST /api/jobs/:id/env-vars` — link those Secrets to the job
+8. No runner setup needed for the default `local` placement — the auto-provisioned local runner claims the agent's runs and the spawned CLI authenticates to Harbour per-run with the run's exec token. To pin the agent to another machine, give it a `placement` label and mint a remote runner for that label (see **Runners**)
 
 ### Set up a workflow (no agent)
 1. `POST /api/jobs` — create the workflow with `projectId`, `command` (a `{ runtime, content }` gate), and schedule

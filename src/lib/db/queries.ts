@@ -4,7 +4,6 @@ export * from "./attachments";
 export * from "./docs";
 export * from "./env-vars";
 export * from "./jobs";
-export * from "./llm-connections";
 export * from "./projects";
 export * from "./runners";
 export * from "./runs";

@@ -8,7 +8,6 @@ import { deleteRunAttachmentsDir, listAttachmentsByRun } from "./attachments";
 import { getComposedDocsForJob } from "./docs";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
-import { getLlmConnectionRuntimeForAgent } from "./llm-connections";
 import { listRunners, type RunnerCapabilities, type RunnerScope, type RunnerTier } from "./runners";
 import { getDb } from "./schema";
 import { getComposedTablesForJob } from "./tables";
@@ -1315,35 +1314,14 @@ export function buildRunPayload(runId: string) {
         | { cli: string | null; model: string | null; thinking: string | null; eager: number }
         | undefined)
     : undefined;
-  const llmConnection =
-    run.agent_id && agentRow?.cli === "opencode"
-      ? getLlmConnectionRuntimeForAgent(run.agent_id)
-      : null;
   const agent = agentRow
     ? {
         cli: agentRow.cli || null,
         model: agentRow.model || null,
         thinking: agentRow.thinking || null,
         eager: !!agentRow.eager,
-        ...(llmConnection
-          ? {
-              provider: {
-                id: llmConnection.id,
-                kind: llmConnection.kind,
-                provider_id: llmConnection.provider_id,
-                base_url: llmConnection.base_url,
-                protocol: llmConnection.protocol,
-                credential_id: llmConnection.credential_id,
-              },
-            }
-          : {}),
       }
     : undefined;
-  // Provider credentials are runner-private control data. Keep them out of
-  // `env` (which is listed in the model prompt) and out of the agent metadata
-  // returned by normal CRUD APIs. The runner removes this block before piping
-  // the claim payload to prerun/postrun gates.
-  const runtime = llmConnection?.api_key ? { llm: { api_key: llmConnection.api_key } } : undefined;
 
   const isWorkflow = job.kind === "workflow";
 
@@ -1375,7 +1353,6 @@ export function buildRunPayload(runId: string) {
       scripts_dir: getJobScriptsDir(job.id),
     },
     ...(agent ? { agent } : {}),
-    ...(runtime ? { runtime } : {}),
     ...(workspace ? { workspace } : {}),
     docs,
     tables,

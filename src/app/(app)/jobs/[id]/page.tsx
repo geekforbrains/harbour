@@ -25,10 +25,6 @@ import { BackLink } from "@/components/app/back-link";
 import { PickerDialog, SelectedItems } from "@/components/app/create-dialog";
 import { EmptyState } from "@/components/app/empty-state";
 import { GateField } from "@/components/app/gate-field";
-import {
-  modelPlaceholderForProvider,
-  modelSuggestionsForProvider,
-} from "@/components/app/llm-connection-form";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageLoading } from "@/components/app/page-header";
 import { ProjectBadge } from "@/components/app/project-badge";
@@ -148,7 +144,6 @@ export default function JobDetailPage() {
           cli?: string | null;
           model?: string | null;
           thinking?: string | null;
-          llm_connection?: { provider_id: string } | null;
         }
       | undefined) ?? null;
 
@@ -850,16 +845,6 @@ export default function JobDetailPage() {
                 onThinkingChange={setEditThinking}
                 defaultModelLabel={`Agent default${agent.model ? ` (${agent.model})` : ""}`}
                 defaultThinkingLabel={`Agent default${agent.thinking ? ` (${agent.thinking})` : ""}`}
-                modelPlaceholder={
-                  agent.cli === "opencode" && agent.llm_connection
-                    ? modelPlaceholderForProvider(agent.llm_connection.provider_id)
-                    : undefined
-                }
-                modelSuggestions={
-                  agent.cli === "opencode" && agent.llm_connection
-                    ? modelSuggestionsForProvider(agent.llm_connection.provider_id)
-                    : undefined
-                }
               />
             )}
             <SelectedItems

@@ -71,12 +71,6 @@ export const qk = {
     detail: (id: string) => ["env-vars", "detail", id] as const,
   },
 
-  llmConnections: {
-    all: ["llm-connections"] as const,
-    list: (scope?: Scope) => ["llm-connections", "list", scopeKey(scope)] as const,
-    detail: (id: string) => ["llm-connections", "detail", id] as const,
-  },
-
   tables: {
     all: ["tables"] as const,
     list: (scope?: Scope) => ["tables", "list", scopeKey(scope)] as const,
@@ -112,6 +106,5 @@ export const SCOPED_DOMAINS = [
   qk.runs.all,
   qk.docs.all,
   qk.envVars.all,
-  qk.llmConnections.all,
   qk.tables.all,
 ] as const;

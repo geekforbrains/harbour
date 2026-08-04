@@ -213,26 +213,27 @@ describe("PUT /api/agents/:id — config validation", () => {
 
   it("rejects a cli change that strands the current thinking level", async () => {
     const { project } = fixture();
-    // OpenCode's thinking is a free-form provider variant token — not a level
-    // claude/codex's fixed select list accepts. Switching cli alone would
-    // leave a level the new CLI rejects at launch.
+    // A stored level the target CLI does not accept — a legacy value, or one
+    // left behind by a CLI whose option list has since changed. Written
+    // through the db layer, which does no validation. Switching cli alone
+    // would leave a level the new CLI rejects at launch.
     const agent = createAgent(project.id, "Dev", undefined, {
-      cli: "opencode",
-      thinking: "custom-variant",
+      cli: "claude",
+      thinking: "off",
     });
     const res = await agentPUT(
       userReq(`http://x/api/agents/${agent.id}`, "PUT", { cli: "codex" }),
       ctx({ id: agent.id }),
     );
     expect(res.status).toBe(400);
-    expect(getAgentById(agent.id)?.cli).toBe("opencode");
+    expect(getAgentById(agent.id)?.cli).toBe("claude");
   });
 
   it("accepts a cli change that re-sets or clears thinking in the same request", async () => {
     const { project } = fixture();
     const agent = createAgent(project.id, "Dev", undefined, {
-      cli: "opencode",
-      thinking: "custom-variant",
+      cli: "claude",
+      thinking: "off",
     });
     const res = await agentPUT(
       userReq(`http://x/api/agents/${agent.id}`, "PUT", {

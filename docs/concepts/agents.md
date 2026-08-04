@@ -1,6 +1,6 @@
 # Agents
 
-An agent is the thing that picks up runs and does work. It has a name, a description, a [placement](#remote-agents) that routes its runs to a runner, and — for harbour-managed agents — a CLI tool, model, and thinking level. An OpenCode agent also selects a reusable project-scoped LLM connection. Everything else (jobs, schedules, docs, env vars) lives outside the agent and gets attached to runs at claim time.
+An agent is the thing that picks up runs and does work. It has a name, a description, a [placement](#remote-agents) that routes its runs to a runner, and — for harbour-managed agents — a CLI tool, model, and thinking level. Everything else (jobs, schedules, docs, env vars) lives outside the agent and gets attached to runs at claim time.
 
 ## The mental model
 
@@ -8,7 +8,7 @@ Every agent in Harbour runs in one of two places, decided entirely by its `place
 
 | Where | What it is | How it works |
 |---|---|---|
-| **Local** | A built-in CLI (Claude Code, Codex, or OpenCode) claimed by the runner on this host | The local `harbour run` launchd job claims work from Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
+| **Local** | A built-in CLI (Claude Code or Codex) claimed by the runner on this host | The local `harbour run` service claims work from Harbour, spawns the CLI subprocess, streams its output back, and posts a final status. |
 | **Remote** | The same built-in CLI, but pinned to a runner on another machine | The agent's [placement](#remote-agents) names a label; a remote runner you've enrolled for that label claims and drives its runs exactly as the local one does. |
 
 The work a run carries and the callbacks it owes back are identical either way — the only difference is which runner host claims it, decided by the agent's `placement` (see [Remote agents](#remote-agents)).
@@ -29,14 +29,12 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
 | `color` | identity hue on the agent's icon (user-selectable, name-hash fallback) |
 | `eager` | legacy flag; subsumed by the runner's pool drain (see [Eager](#eager)) — no longer changes runner behavior |
-| `cli` | `claude`, `codex`, or `opencode` |
-| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.6-sol`, or canonical `openai/gpt-5.6` for OpenCode) |
-| `thinking` | Default reasoning effort for Claude/Codex; the optional provider-specific model variant for OpenCode |
+| `cli` | `claude` or `codex` |
+| `model` | Default model for this agent (e.g. `sonnet`, `gpt-5.6-sol`) |
+| `thinking` | Default reasoning effort |
 | `placement` | Label that routes this agent's runs to a runner — `local` (default) for the host's pool, or a named label served by an enrolled remote runner (see [Remote agents](#remote-agents)) |
 
-`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`). Claude and Codex both accept `low`/`medium`/`high`/`xhigh`/`max`. OpenCode treats `thinking` as a variant token (up to 64 letters, numbers, dots, underscores, or hyphens), because variants are model/provider-specific rather than a Harbour-owned enum.
-
-An OpenCode agent must also have one `llm_connection` binding. The binding lives in `agent_llm_connections`, not the `agents` row, and must point to a connection in the same project. One connection can be reused by many agents. Switching the agent to Claude or Codex removes the binding; a non-OpenCode agent cannot retain one.
+`model` and `thinking` are agent-level **defaults**. A job can override either one for a single job's runs — the runner resolves `cli`/`model`/`thinking` live from the claim payload's agent block, with any per-job override winning (`resolveRunConfig` in `bin/lib/providers.mjs`). Claude and Codex both accept `low`/`medium`/`high`/`xhigh`/`max`.
 
 ## Credentials
 
@@ -50,7 +48,6 @@ This is why local and remote agents connect the same way: a runner claims the wo
 LLM authentication is separate:
 
 - **Claude Code and Codex** use the CLI's normal auth on the runner host — interactive login or an API key visible to the runner service.
-- **OpenCode** uses a Harbour-managed LLM connection. Its provider API key is an encrypted project **Secret** (or the connection is deliberately keyless, as with local Ollama). The connection is reusable, but only its non-secret metadata appears on the agent. While bound, the Secret is reserved for provider auth and excluded from normal job `env` even if pinned or linked; use a separate Secret if the same value is intentionally needed as job context. Harbour decrypts the provider key for a claimed run and puts it in the runner-private `runtime.llm.api_key` block, never in agent CRUD responses or the generated OpenCode config text. The runner then injects it into the OpenCode child environment, where the headless, tool-capable agent can access it. Use a dedicated provider credential with appropriate budget and rate limits.
 
 ## Claiming work
 
@@ -61,24 +58,24 @@ POST /api/runner/claim            # claim work (state-changing)
 POST /api/runner/claim?peek=true  # check liveness / availability, no claim
 ```
 
-The claim response carries the run, its job, the agent's live config, the workspace block, env vars, a per-run `exec_token`, and an `api.endpoints` map of pre-resolved callback URLs — no URL construction needed. OpenCode claims additionally carry metadata-only `agent.provider` and, when the connection has a key, runner-private `runtime.llm.api_key`. The bundled runner removes the entire `runtime` block before building the prompt or piping JSON to prerun/postrun gates. Everything the runner posts back goes through the pre-resolved endpoints, authenticated with the `exec_token`. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle, the [Runner Protocol](../runner-guide.md) for the claim contract, and [guide.md](../guide.md) for the CLI-facing wire contract.
+The claim response carries the run, its job, the agent's live config, the workspace block, env vars, a per-run `exec_token`, and an `api.endpoints` map of pre-resolved callback URLs — no URL construction needed. Everything the runner posts back goes through the pre-resolved endpoints, authenticated with the `exec_token`. See [Jobs and runs](jobs-and-runs.md) for the full lifecycle, the [Runner Protocol](../runner-guide.md) for the claim contract, and [guide.md](../guide.md) for the CLI-facing wire contract.
 
 ## Harbour agents
 
 A harbour agent is the same agent record with a `cli` set — there's no stored `type` flag; a runner-backed agent is simply one that has a CLI configured. Nothing about the agent is cached on disk: the runner discovers it at claim time. One runner host runs **one** command, `harbour run`, which serves every agent (and workflow) whose work it's eligible to claim.
 
-`harbour run` loads the runner's bearer token from `~/.harbour/runner.token` (the only runner credential on disk, 0600) and a base URL (`HARBOUR_URL` env > `~/.harbour/runner.url` > `http://localhost:3000`), detects what the host can execute (`claude`, `codex`, and/or `opencode` on PATH; `kinds` = `[agent, workflow]` when a CLI is present, else `[workflow]`; `labels` = `[local]`, overridable via `HARBOUR_RUNNER_LABELS`), and POSTs `/api/runner/claim` advertising those capabilities. Each cycle **drains** all currently-due work, running distinct lock units in parallel up to a pool cap (`POOL_SIZE`, default 4, override `HARBOUR_POOL_SIZE`), then exits. It branches on the claimed run's `job.kind`: drive a CLI session for `agent`, run the gate script for `workflow`.
+`harbour run` loads the runner's bearer token from `~/.harbour/runner.token` (the only runner credential on disk, 0600) and a base URL (`HARBOUR_URL` env > local `HARBOUR_PORT` override > `~/.harbour/runner.url` > `http://127.0.0.1:14272`; `PORT` is server-only at runtime), detects what the host can execute (`claude` and/or `codex` on PATH; `kinds` = `[agent, workflow]` when a CLI is present, else `[workflow]`; `labels` = `[local]`, overridable via `HARBOUR_RUNNER_LABELS`), and POSTs `/api/runner/claim` advertising those capabilities. Each cycle **drains** all currently-due work, running distinct lock units in parallel up to a pool cap (`POOL_SIZE`, default 4, override `HARBOUR_POOL_SIZE`), then exits. It branches on the claimed run's `job.kind`: drive a CLI session for `agent`, run the gate script for `workflow`.
 
 On macOS, `harbour install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires `harbour run`. The operator-managed systemd variant on Linux (see [Deploying to production](../guides/deploy-to-production.md#3-systemd-units)) gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`. (The DB `runners` table is the registry; there's no per-agent config file.)
 
 For each agent run it claims, the runner:
 
-1. Reads the agent's live `cli`/`model`/`thinking` from the claim payload (per-job override wins), resolves the workspace, and — for OpenCode — builds a typed provider config from `agent.provider` plus the private runtime key.
+1. Reads the agent's live `cli`/`model`/`thinking` from the claim payload (per-job override wins) and resolves the workspace.
 2. If the run's job has a prerun command, run it as a gate before invoking the LLM (see [Workflows](workflows.md)).
 3. Spawn the CLI tool with the prompt — instructions, docs, data, env vars, activity, attachments, and the API cheat-sheet.
 4. Stream JSONL output back via `POST /api/runs/:id/output` in 750ms-batched flushes.
 5. After the CLI exits, post the final summary as activity. If the agent didn't already set a terminal status, the harness drives a dedicated finalize turn to set one (forcing `failed` only as a backstop).
-6. Save or clear the CLI session ID in `~/.harbour/sessions.json` keyed by run ID — used to resume on `waiting` and to allow comment-resume after a kill. OpenCode sessions also store a non-secret connection/credential/provider/model/endpoint/protocol/variant fingerprint and start fresh if that configuration changes. Replacing the value of the same Secret preserves the session; selecting a different Secret/account changes its opaque credential id and starts fresh.
+6. Save or clear the CLI session ID in `~/.harbour/sessions.json` keyed by run ID — used to resume on `waiting` and to allow comment-resume after a kill. A saved session is only resumed under the CLI that minted it: switching an agent's `cli` starts fresh.
 
 Every callback above (`/api/runs/:id/*`) is authenticated with the run's per-run `exec_token` from the claim payload — the high-value runner token never reaches the CLI or a gate.
 
@@ -94,27 +91,12 @@ The three built-in CLIs each have their own command shape. From `bin/lib/provide
 |---|---|---|---|
 | Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages` (plus `--dangerously-skip-permissions` unless the workspace has a valid `.claude/settings.json` — see [Per-agent permissions](#per-agent-permissions-claude-code)) | `--session-id <uuid>` (new) or `--resume <uuid>` |
 | Codex | `codex` | `exec --dangerously-bypass-approvals-and-sandbox --json` | `exec resume <thread_id>` |
-| OpenCode | `opencode` | `run --pure --auto --format json --model <provider/model> --dir <workspace>` | `--session <session_id>` |
 
-Model selection: Claude uses `--model`; Codex uses `-m`; OpenCode uses
-`--model <provider/model>`. Thinking/reasoning depth: Claude uses `--effort
-<level>`; Codex uses
+Model selection: Claude uses `--model`; Codex uses `-m`. Thinking/reasoning
+depth: Claude uses `--effort <level>`; Codex uses
 `-c model_reasoning_effort=<level>` (the top-level `--reasoning-effort` flag was
-removed in Codex 0.128). OpenCode's optional `thinking` value becomes
-`--variant <token>`. The runner always picks the per-job override if set,
+removed in Codex 0.128). The runner always picks the per-job override if set,
 otherwise the agent default.
-
-OpenCode is the generic provider path. Create its connection under **LLM Connections** in the same project, choosing one of:
-
-- OpenAI, Anthropic, or OpenRouter (fixed provider IDs, native protocol, API-key Secret required);
-- Ollama (fixed `ollama` provider ID, Chat Completions protocol, default `http://127.0.0.1:11434/v1`, key optional); or
-- an OpenAI-compatible endpoint (custom provider ID and HTTP(S) base URL, Chat Completions or Responses, key optional).
-
-The model must use that connection's provider ID as its canonical prefix: `openai/gpt-5.6`, `ollama/qwen3-coder`, or `my-gateway/model-id`. OpenRouter model IDs can contain another slash after the provider prefix (for example `openrouter/anthropic/claude-sonnet-4.6`). Agent and job writes validate the prefix, and changing an agent's connection validates every existing job override before committing.
-
-The bundled runner owns the generated OpenCode config for each launch: it selects the connection's provider, references the API key through a Harbour-owned environment variable, disables sharing and auto-update, denies interactive questions and external-directory access, passes `OPENCODE_AUTH_CONTENT={}` instead of relying on credentials saved through OpenCode's `/connect` flow, and sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`. Checked-in `opencode.json` and `.opencode/` project configuration therefore cannot alter the Harbour launch. Harbour requires OpenCode 1.17.12 or newer for the complete command/config controls it uses; the bundled runner does not advertise older installations.
-
-This is configuration control, not an agent sandbox. OpenCode retains the runner user's normal XDG locations for sessions, and runner-host/global OpenCode config and plugins remain trusted. The headless agent can use shell and file tools and can read the provider key from its child environment. Configure or rotate that Secret in Harbour, use a dedicated budget- and rate-limited key, and treat output redaction as defense-in-depth rather than credential containment.
 
 For Claude only, the runner pre-generates a session UUID before spawning so `PUT /api/runs/:id/session` can record the session ID up front — that lets the dashboard surface the session even while the CLI is still booting.
 
@@ -130,7 +112,7 @@ The workspace root defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_
 
 The runner also layers two workspace-derived things onto each spawn: any job-linked env vars (`payload.env`) are merged into the spawned process environment so the agent's shell can expand `$VAR` natively (rather than the LLM emitting the secret as text), and if the workspace has a `bin/` directory it's prepended to PATH so per-agent wrapper scripts resolve as bare command names. Both behaviors are no-ops when there are no env vars / no `bin/`.
 
-Claude and Codex inherit the runner service's normal environment plus the job env. OpenCode uses a narrower child environment: a small host allowlist (including normal HOME/PATH/XDG locations), the job env, then Harbour-owned OpenCode control variables with final precedence. Arbitrary host environment secrets are not inherited, and a job cannot override `OPENCODE_*`, the connection-key variable, or XDG controls. The child still has the runner user's filesystem access and its explicitly supplied provider/job secrets. Captured OpenCode events and final output are exact-value-redacted against the provider key, exec token, generated server password, and job secret values, then size-capped before persistence; transformations or indirect exfiltration can evade redaction, so it is not a security boundary.
+Claude and Codex inherit the runner service's normal environment plus the job env. Captured events and final output are exact-value-redacted against the exec token and job secret values, then size-capped before persistence; transformations or indirect exfiltration can evade redaction, so it is not a security boundary.
 
 ### Per-agent permissions (Claude Code)
 
@@ -200,5 +182,5 @@ Docs, secrets, and tables live in a project, but job links may cross projects �
 - `src/lib/db/runs.ts` — `claimNextRun` / `claimableLabels`: placement-to-label routing and remote-token scoping.
 - `src/app/api/runners/route.ts` + `[id]/route.ts` — mint (`POST`), list (`GET`), and revoke (`DELETE`) remote runner credentials; `src/lib/db/runners.ts` is the registry.
 - `bin/lib/runner.mjs` — the runner: `runPool` (claim, drain, dispatch), then spawn, stream, kill, finalize per run.
-- `bin/lib/providers.mjs` — Claude, Codex, and OpenCode command builders and JSONL parsers; OpenCode runtime controls and redaction; `detectCapabilities` and `resolveRunConfig`.
+- `bin/lib/providers.mjs` — Claude and Codex command builders and JSONL parsers; output redaction; `detectCapabilities` and `resolveRunConfig`.
 - `bin/lib/connect.mjs` — the `harbour connect <blob>` flow for enrolling a remote runner.

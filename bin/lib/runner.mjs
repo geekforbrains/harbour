@@ -3,14 +3,12 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  getHarbourDir,
   isSessionCompatible,
   loadRunnerCredentials,
   loadSessions,
   saveSessions,
 } from "./config.mjs";
 import {
-  buildOpenCodeRuntime,
   detectCapabilities,
   ensureWorkingDir,
   getProvider,
@@ -22,21 +20,6 @@ import {
   sanitizeThinking,
 } from "./providers.mjs";
 
-/**
- * Separate claim-only credentials from the payload used in prompts and gate
- * stdin. The caller receives the one private value it needs; the returned
- * payload is a new object with the entire runtime block removed.
- */
-export function splitPrivateRuntime(input) {
-  const key = input?.runtime?.llm?.api_key;
-  const payload = { ...(input || {}) };
-  delete payload.runtime;
-  return {
-    payload,
-    llmApiKey: typeof key === "string" && key ? key : null,
-  };
-}
-
 /** Keep the runner-to-provider positional contract in one tested place. */
 export function buildProviderCommand({
   provider,
@@ -46,17 +29,8 @@ export function buildProviderCommand({
   sessionId,
   isNewSession,
   thinking,
-  providerRuntime,
 }) {
-  return provider.buildCommand(
-    prompt,
-    model,
-    workingDir,
-    sessionId,
-    isNewSession,
-    thinking,
-    providerRuntime,
-  );
+  return provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
 }
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
@@ -712,7 +686,6 @@ async function runCliTurn({
   agentName,
   sessionId,
   extraEnv,
-  providerRuntime,
   secretValues = [],
   sessionAlreadyReported,
 }) {
@@ -793,7 +766,7 @@ async function runCliTurn({
       sessionReported = true;
       apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", {
         session_id: turnSessionId,
-        cwd: cmd.workspaceDir || cmd.cwd,
+        cwd: cmd.cwd,
       }).catch((err) =>
         console.error(`  [${agentName}] Failed to report session ID: ${err.message}`),
       );
@@ -811,9 +784,6 @@ async function runCliTurn({
       onLine,
       signal: killController.signal,
       extraEnv: extraEnv || {},
-      controlEnv: providerRuntime?.controlEnv || {},
-      isolatedEnv: providerRuntime?.isolatedEnv || false,
-      workspaceDir: cmd.workspaceDir || cmd.cwd,
     });
   } finally {
     clearInterval(killPollTimer);
@@ -874,10 +844,7 @@ async function runCliTurn({
  * `eager` reflects the live `agent.eager` flag from the claim payload (the pool
  * drains all due work each cycle regardless, so it's informational now).
  */
-export async function processNextRun(inputPayload, { url, execToken }) {
-  // Credentials in `runtime` are claim-only control data. Strip the entire
-  // block before any prompt or gate payload can be constructed.
-  const { payload, llmApiKey } = splitPrivateRuntime(inputPayload);
+export async function processNextRun(payload, { url, execToken }) {
   const apiKey = execToken;
   const agentName = payload.workspace?.agent || payload.job?.name || "agent";
   const sessions = loadSessions();
@@ -902,44 +869,9 @@ export async function processNextRun(inputPayload, { url, execToken }) {
   const eager = !!payload.agent?.eager;
 
   const runId = payload.run.id;
-  const claimSecretValues = [apiKey, llmApiKey, ...Object.values(payload.env || {})].filter(
+  const secretValues = [apiKey, ...Object.values(payload.env || {})].filter(
     (value) => typeof value === "string" && value,
   );
-
-  let providerRuntime = null;
-  let secretValues = [];
-  if (cli === "opencode") {
-    try {
-      providerRuntime = buildOpenCodeRuntime({
-        model: agentModel,
-        variant: agentThinking,
-        provider: payload.agent?.provider,
-        apiKey: llmApiKey,
-        harbourHome: getHarbourDir(),
-      });
-      mkdirSync(providerRuntime.launchDir, { recursive: true, mode: 0o700 });
-      chmodSync(providerRuntime.launchDir, 0o700);
-      secretValues = [...new Set([...claimSecretValues, ...providerRuntime.secretValues])];
-    } catch (err) {
-      const message = sanitizeProviderText(
-        `OpenCode configuration error: ${err.message}`,
-        claimSecretValues,
-        2_000,
-      );
-      console.error(`  [${agentName}] ${message}`);
-      try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: message });
-      } catch {
-        /* best effort */
-      }
-      try {
-        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
-      } catch {
-        /* best effort */
-      }
-      return { outcome: "config-error", eager };
-    }
-  }
 
   if (droppedThinking) {
     const warning = `Ignoring unsupported thinking level \`${droppedThinking}\` for ${cli} — running with the CLI default. Fix the agent or job's thinking setting in the dashboard.`;
@@ -950,14 +882,7 @@ export async function processNextRun(inputPayload, { url, execToken }) {
   }
 
   let existingSession = sessions[runId];
-  if (
-    existingSession &&
-    !isSessionCompatible(existingSession, {
-      cli,
-      configFingerprint: providerRuntime?.configFingerprint || null,
-      requireFingerprint: !!provider.requiresConfigFingerprint,
-    })
-  ) {
+  if (existingSession && !isSessionCompatible(existingSession, { cli })) {
     const warning = sanitizeProviderText(
       `Saved session is incompatible with the current ${cli} configuration — starting fresh without prior CLI context.`,
       secretValues,
@@ -1141,7 +1066,6 @@ export async function processNextRun(inputPayload, { url, execToken }) {
     sessionId,
     isNewSession,
     thinking: agentThinking,
-    providerRuntime,
   });
 
   // ---- Single exit path -----------------------------------------------------
@@ -1165,14 +1089,7 @@ export async function processNextRun(inputPayload, { url, execToken }) {
       // cwd pins the workspace for resumes: the CLI session lives under this
       // directory, so later turns must run there even if the agent is renamed
       // or the layout changes in the meantime.
-      sessions[runId] = {
-        sessionId: finalSessionId,
-        cli,
-        cwd: workingDir,
-        ...(providerRuntime?.configFingerprint
-          ? { configFingerprint: providerRuntime.configFingerprint }
-          : {}),
-      };
+      sessions[runId] = { sessionId: finalSessionId, cli, cwd: workingDir };
       saveSessions(sessions);
     } else {
       delete sessions[runId];
@@ -1208,7 +1125,6 @@ export async function processNextRun(inputPayload, { url, execToken }) {
       agentName,
       sessionId,
       extraEnv: payload.env || {},
-      providerRuntime,
       secretValues,
       sessionAlreadyReported: !!sessionId,
     });
@@ -1369,7 +1285,6 @@ export async function processNextRun(inputPayload, { url, execToken }) {
     thinking: agentThinking,
     workingDir,
     extraEnv: payload.env || {},
-    providerRuntime,
     secretValues,
     activityContext: truncatedOutput,
     api: payload.api,
@@ -1402,7 +1317,6 @@ async function runFinalizeLoop({
   thinking,
   workingDir,
   extraEnv,
-  providerRuntime,
   secretValues,
   activityContext,
   api,
@@ -1433,7 +1347,6 @@ async function runFinalizeLoop({
       sessionId: mode === "resume" ? turnSessionId : null,
       isNewSession: mode !== "resume",
       thinking,
-      providerRuntime,
     });
 
     try {
@@ -1446,7 +1359,6 @@ async function runFinalizeLoop({
         agentName,
         sessionId: turnSessionId,
         extraEnv,
-        providerRuntime,
         secretValues,
         sessionAlreadyReported: true,
       });

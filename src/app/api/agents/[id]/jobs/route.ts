@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
 import { validateThinking } from "@/lib/cli-config";
-import {
-  createJob,
-  getAgentById,
-  listJobsByAgent,
-  validateLlmModelForProvider,
-} from "@/lib/db/queries";
+import { createJob, getAgentById, listJobsByAgent } from "@/lib/db/queries";
 import {
   optionalBoolean,
   optionalGate,
@@ -51,16 +46,6 @@ export const POST = withAuthenticatedUser(async (req, _auth, { params }) => {
   const thinking = optionalString(body.thinking, "thinking");
   const thinkingError = validateThinking(agent.cli, thinking);
   if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
-  if (agent.cli === "opencode" && model) {
-    if (!agent.llm_connection) {
-      return NextResponse.json(
-        { error: "OpenCode agents require an LLM connection" },
-        { status: 400 },
-      );
-    }
-    const modelError = validateLlmModelForProvider(agent.llm_connection.provider_id, model);
-    if (modelError) return NextResponse.json({ error: modelError }, { status: 400 });
-  }
 
   const normalized = normalizeSchedule(body.schedule);
   if (!normalized) {

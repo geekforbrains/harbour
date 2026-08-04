@@ -1,11 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
-import {
-  bindAgentToLlmConnection,
-  getLlmConnectionForAgent,
-  unbindAgentFromLlmConnection,
-} from "./llm-connections";
 import { getDb, isUniqueViolation } from "./schema";
 
 function agentCollisionError(existingName: string, slug: string) {
@@ -26,7 +21,6 @@ export function createAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
-    llmConnectionId?: string | null;
   },
 ) {
   const db = getDb();
@@ -63,7 +57,6 @@ export function createAgent(
       eager,
       placement,
     );
-    if (opts?.llmConnectionId) bindAgentToLlmConnection(id, opts.llmConnectionId);
   });
   try {
     create();
@@ -89,13 +82,7 @@ export function getAgentById(id: string) {
        FROM agents WHERE id = ?`,
     )
     .get(id) as any;
-  if (!agent) return null;
-  const connection = getLlmConnectionForAgent(id);
-  return {
-    ...agent,
-    llm_connection_id: connection?.id ?? null,
-    llm_connection: connection,
-  };
+  return agent ?? null;
 }
 
 /**
@@ -134,14 +121,7 @@ export function listAgents(projectId?: string) {
     ORDER BY a.name
   `)
     .all(...(projectId ? [projectId] : [])) as any[];
-  return agents.map((agent) => {
-    const connection = getLlmConnectionForAgent(agent.id);
-    return {
-      ...agent,
-      llm_connection_id: connection?.id ?? null,
-      llm_connection: connection,
-    };
-  });
+  return agents;
 }
 
 export function updateAgent(
@@ -155,7 +135,6 @@ export function updateAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
-    llmConnectionId?: string | null;
   },
 ) {
   const db = getDb();
@@ -194,18 +173,11 @@ export function updateAgent(
     fields.push("placement = ?");
     values.push(data.placement.trim() || "local");
   }
-  const update = db.transaction(() => {
-    if (fields.length > 0) {
-      fields.push("updated_at = unixepoch()");
-      values.push(id);
-      db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...values);
-    }
-    if (data.llmConnectionId !== undefined) {
-      if (data.llmConnectionId) bindAgentToLlmConnection(id, data.llmConnectionId);
-      else unbindAgentFromLlmConnection(id);
-    }
-  });
-  update();
+  if (fields.length > 0) {
+    fields.push("updated_at = unixepoch()");
+    values.push(id);
+    db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  }
   return getAgentById(id);
 }
 

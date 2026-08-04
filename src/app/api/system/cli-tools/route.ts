@@ -3,12 +3,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { isSupportedCliVersion, OPENCODE_MIN_VERSION } from "@/lib/cli-config";
 
 export const CLI_TOOLS = [
   { id: "claude", name: "Claude", binary: "claude", versionFlag: "--version" },
   { id: "codex", name: "Codex", binary: "codex", versionFlag: "--version" },
-  { id: "opencode", name: "OpenCode", binary: "opencode", versionFlag: "--version" },
 ];
 
 // Extend PATH with common user binary locations that may not be in the server's PATH
@@ -43,17 +41,12 @@ function checkTool(tool: (typeof CLI_TOOLS)[number]) {
       /* version check failed, binary still exists */
     }
 
-    const compatible = isSupportedCliVersion(tool.id, version);
     return {
       id: tool.id,
       name: tool.name,
       installed: true,
       version,
       path: whichResult,
-      compatible,
-      ...(compatible
-        ? {}
-        : { compatibilityReason: `Requires OpenCode ${OPENCODE_MIN_VERSION} or newer` }),
     };
   } catch {
     return { id: tool.id, name: tool.name, installed: false };

@@ -12,7 +12,7 @@ Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. Yo
 
 - **Node 24 LTS** (e.g. via [NodeSource](https://github.com/nodesource/distributions): `curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs`)
 - **A domain you control**, with an A record you can point at the host.
-- Whatever AI CLIs your agents use (Claude Code, Codex, or OpenCode) — installed later and visible on the runner service's PATH.
+- Whatever AI CLIs your agents use (Claude Code or Codex) — installed later and visible on the runner service's PATH.
 
 Create a dedicated user. By default the runner launches Claude Code with `--dangerously-skip-permissions` (it's omitted only when an agent's workspace has a valid `.claude/settings.json` with a `permissions` object), and Claude Code refuses that flag when running as root — so both services run unprivileged:
 
@@ -149,14 +149,7 @@ together.
 
 ### 6. Install and authenticate the AI CLIs
 
-Install only the CLIs your agents select. For OpenCode, the official Node package puts `opencode` on a system-wide npm PATH already included in the unit above. Harbour requires OpenCode 1.17.12 or newer:
-
-```bash
-npm install -g opencode-ai
-sudo -u harbour -H opencode --version
-```
-
-Claude Code and Codex use their own auth state or direct API-key environment variables. Complete interactive login as the `harbour` user, because that is the account the runner uses:
+Install only the CLIs your agents select. Claude Code and Codex use their own auth state or direct API-key environment variables. Complete interactive login as the `harbour` user, because that is the account the runner uses:
 
 ```bash
 su - harbour
@@ -176,17 +169,6 @@ Environment=OPENAI_API_KEY=...
 ```
 
 Then run `systemctl daemon-reload && systemctl restart harbour-runner`.
-
-OpenCode authentication is deliberately different. Do **not** put its provider key in the systemd unit and do not run OpenCode's `/connect` flow for a Harbour agent. In the Harbour dashboard:
-
-1. Open the project, then **LLM Connections → New Connection**.
-2. Choose OpenAI, Anthropic, OpenRouter, Ollama, or a custom OpenAI-compatible endpoint.
-3. Create or select a project Secret for the API key (Ollama and custom endpoints may be keyless).
-4. Select that connection on the OpenCode agent and use a canonical model such as `openai/gpt-5.6` or `ollama/qwen3-coder`.
-
-While bound to a connection, the encrypted Secret is reserved for provider authentication and excluded from ordinary job `env` even if pinned or linked; create a separate Secret if the same value must intentionally be job context. It stays in Harbour's database and is decrypted into a runner-private claim field only when an eligible OpenCode run is claimed. The bundled runner supplies Harbour-controlled provider/auth configuration, disables repository-level `opencode.json` and `.opencode/` project config, and does not rely on host OpenCode credentials for provider selection.
-
-That is not a sandbox: runner-host/global OpenCode config and plugins, the runner user's filesystem, and the headless tool-capable agent remain trusted. The provider key is placed in the OpenCode child environment and can be read by the agent, so use a dedicated credential with provider-side budgets and rate limits; output redaction is only defense-in-depth. If the runner is remote, the plaintext key also crosses from Harbour to that runner over the claim connection, so expose Harbour only over trusted TLS or a private network and treat the runner host as part of the credential boundary.
 
 ### 7. Updating
 
@@ -217,13 +199,13 @@ macOS is the developer-machine path: `npm run build && npm start` from the repo 
 
 Wherever it runs, harbour's state lives in one directory — `HARBOUR_HOME`, default `~/.harbour/` (so `/home/harbour/.harbour/` in the Linux setup above).
 
-What's in there: `harbour.db` (SQLite, including LLM connection metadata and encrypted credential Secrets), `uploads/` (run attachments), `encryption.key`, `runner.token` (the runner credential, 0600), `sessions.json` (CLI session IDs and OpenCode configuration fingerprints for resume), `workflows/` (workflow and prerun scripts), and Harbour's OpenCode launch directory.
+What's in there: `harbour.db` (SQLite), `uploads/` (run attachments), `encryption.key`, `runner.token` (the runner credential, 0600), `runner.url` (its non-secret server URL), `sessions.json` (CLI session IDs for resume), and `workflows/` (workflow and prerun scripts).
 
 Backup strategy: snapshot the directory. Restoring is "put it back, restart the service".
 
-> The encryption key is the one piece you should back up **separately** from the database. The DB encrypts Secrets — including LLM connection credentials — with that key, so a backup of the DB without the key is half-useless. A backup of the key without the DB is fine — you can always re-create Secrets in a fresh install.
+> The encryption key is the one piece you should back up **separately** from the database. The DB encrypts Secrets with that key, so a backup of the DB without the key is half-useless. A backup of the key without the DB is fine — you can always re-create Secrets in a fresh install.
 
-`sessions.json` points at session data owned by each CLI. OpenCode keeps its underlying sessions in its normal user data directory (typically under the service user's XDG data home), not inside Harbour's launch directory. Back up the relevant CLI data under `/home/harbour` too if restoring in-progress conversation context matters; a Harbour-state-only restore can still run new work but may have to start old waiting/killed sessions fresh.
+`sessions.json` points at session data owned by each CLI. Back up the relevant CLI data under `/home/harbour` too if restoring in-progress conversation context matters; a Harbour-state-only restore can still run new work but may have to start old waiting/killed sessions fresh.
 
 ## Next
 

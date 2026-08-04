@@ -50,10 +50,7 @@ agent-run's exec token (the executor acts as the run's agent).
   `404 {"error":"Project not found"}`.
 - **Claim payload** (`POST /api/runner/claim`): `{ run: null }` or the kind-tagged
   `{ run, job, docs, tables, env, attachments, exec_token, api }`, plus `agent` and
-  `workspace` (the `{project, agent}` slugs) on agent runs. OpenCode claims add
-  metadata-only `agent.provider` and, when configured, a runner-private
-  `runtime.llm.api_key`; the key is never placed in the prompt-visible `env`.
-  `exec_token` is the
+  `workspace` (the `{project, agent}` slugs) on agent runs. `exec_token` is the
   freshly minted per-run `hbx_` credential and the `api` block is pre-resolved full
   URLs that authenticate with it. Full schema in
   [runner-guide.md](../runner-guide.md) (`GET /api/runner-guide`).
@@ -98,40 +95,13 @@ There is **no** signup route.
 
 | Method | Path | Wrapper | Purpose |
 |---|---|---|---|
-| GET / POST | `/api/agents` | `withAuthenticatedUser` | List (`?projectId=` optional, rows carry `project_name`) / create (project required; `cli` required; OpenCode also requires `llm_connection_id` + canonical `provider/model`) |
+| GET / POST | `/api/agents` | `withAuthenticatedUser` | List (`?projectId=` optional, rows carry `project_name`) / create (project required; `cli` required) |
 | GET | `/api/agents/:id` | `withAuthenticatedUser` | Fetch |
 | PUT / DELETE | `/api/agents/:id` | `withAuthenticatedUser` | Update / delete |
 | GET / POST | `/api/agents/:id/jobs` | `withAuthenticatedUser` | List / create the agent's jobs |
 | GET | `/api/agents/:id/runs` | `withAuthenticatedUser` | Run history |
 | GET | `/api/agents/:id/runner-status` | `withAuthenticatedUser` | `{ live }` — is a live runner already serving this agent's placement + CLI, independent of any queued run |
 | POST | `/api/agents/:id/tables` | `withAgentOrUser` | Convenience: create a table, optionally link to a job + seed rows |
-
-Agent responses include `llm_connection_id` and metadata-only
-`llm_connection` (or null). A binding is valid only for `cli: "opencode"` and
-must belong to the agent's project. Switching away from OpenCode removes it.
-Changing an OpenCode provider/model validates the agent default and every
-existing job model override before committing.
-
-## LLM connections (`withAuthenticatedUser`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET / POST | `/api/llm-connections` | List (`?projectId=`; rows add `project_name` + `agent_count`) / create a reusable provider connection |
-| GET / PUT / DELETE | `/api/llm-connections/:id` | Metadata / update / delete (409 while bound to an agent) |
-
-Create input is `{name, kind, provider_id, base_url?, protocol?,
-credential_id?}`. Instead of linking an existing Secret, callers may send the
-mutually exclusive `credential: {name, value}`; Harbour encrypts and creates
-that Secret in the same transaction as the connection. `credential_id: null`
-on PUT clears an optional credential; omission leaves it unchanged. API
-responses never include the value—only `credential: {id, name} | null`.
-
-Kinds are `openai`, `anthropic`, `openrouter`, `ollama`, and
-`openai-compatible`; protocols are `native`, `chat-completions`, and
-`responses`. Provider IDs are lowercase OpenCode model prefixes. Built-in
-provider IDs/protocols are fixed, compatible endpoints require a validated
-HTTP(S) `base_url`, and URLs containing userinfo or query strings are rejected. Connection
-names are case-insensitively unique per project (409 on collision).
 
 ## Jobs
 
@@ -147,8 +117,7 @@ names are case-insensitively unique per project (409 on collision).
 | POST | `/api/jobs/:id/tables` | `withAgentOrUser` | Link a table |
 | DELETE | `/api/jobs/:id/tables/:tableId` | `withAuthenticatedUser` | Unlink a table |
 
-Agent jobs are created via `POST /api/agents/:id/jobs`; OpenCode `model`
-overrides must use the bound connection's provider prefix. `POST /api/jobs`
+Agent jobs are created via `POST /api/agents/:id/jobs`. `POST /api/jobs`
 creates only deterministic workflow jobs (an `agentId` in the body is a 400
 pointing at the agent route). Job↔resource links are **unrestricted across
 projects** — the link inserts are `INSERT OR IGNORE`, so re-linking is a no-op.
@@ -232,7 +201,7 @@ attachments) or any authenticated user.
 | GET | `/api/env-vars` | `withAuthenticatedUser` | List secrets (no plaintext); `?projectId=` |
 | POST | `/api/env-vars` | `withAuthenticatedUser` | Create (encrypts) — **user-only**; agents cannot create secrets |
 | GET | `/api/env-vars/:id` | `withAuthenticatedUser` | Metadata (no plaintext) |
-| PUT / DELETE | `/api/env-vars/:id` | `withAuthenticatedUser` | Rename/replace / delete (delete is 409 while an LLM connection uses it) |
+| PUT / DELETE | `/api/env-vars/:id` | `withAuthenticatedUser` | Rename/replace / delete |
 | GET | `/api/env-vars/:id/value` | `withAuthenticatedUser` | Decrypted reveal |
 | POST | `/api/env-vars/:id/pin` | `withAuthenticatedUser` | Toggle pin |
 

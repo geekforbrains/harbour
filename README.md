@@ -19,7 +19,7 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 Harbour is polling-based — it never calls out to agents; they pull work on their own schedule.
 
 - **Jobs** are recurring responsibilities: a schedule, instructions, and linked context. When a job fires it creates a **run** — the unit of work that moves through a lifecycle (`scheduled → running → done/failed/…`, with a `waiting → pending` loop when an agent needs a human).
-- **Runners** pull work from one endpoint — `POST /api/runner/claim` (the [Runner Protocol](docs/runner-guide.md)) — and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. The bundled runner drives Claude Code, Codex, or OpenCode for **agent jobs**; a runner on another machine hooks in over the same protocol.
+- **Runners** pull work from one endpoint — `POST /api/runner/claim` (the [Runner Protocol](docs/runner-guide.md)) — and get everything bundled: instructions, docs, tables, secrets, and pre-resolved API endpoints. The bundled runner drives Claude Code or Codex for **agent jobs**; a runner on another machine hooks in over the same protocol.
 - **Workflows** are deterministic scheduled shell commands — no agent, no LLM — claimed by the same runner that drives agent jobs. Agent jobs can also define a cheap **prerun** gate that skips a run when there's no work.
 - **Shared context** — docs (markdown), tables (agent-managed SQLite tables), and secrets (encrypted env vars) — is linked to jobs and injected into each run.
 
@@ -52,17 +52,19 @@ See [deploying to production](docs/guides/deploy-to-production.md) for the Linux
 
 ### Running agents
 
-Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), and [OpenCode](https://opencode.ai/docs). Create a **Harbour Agent** in the dashboard, and the **local runner** (provisioned at setup) claims and runs it. If you haven't scheduled the runner yet:
+Built-in support for [Claude Code](https://claude.ai/claude-code) and [Codex](https://github.com/openai/codex). Create a **Harbour Agent** in the dashboard, and the **local runner** (provisioned at setup) claims and runs it. If you haven't scheduled the runner yet:
 
 ```bash
 npm run harbour -- install   # macOS launchd; polls every 60s
 ```
 
-Claude Code and Codex use their normal login or API-key setup on the runner machine. OpenCode is the provider-neutral path: install it (`npm install -g opencode-ai`; Harbour requires OpenCode 1.17.12+), create a reusable project-scoped connection under **LLM Connections**, and select it when creating the agent. Connections support OpenAI, Anthropic, OpenRouter, Ollama, and custom OpenAI-compatible Chat Completions or Responses endpoints. A connection's API key is an encrypted Harbour **Secret**, delivered outside prompt-visible job context and then injected into the OpenCode child process; use a dedicated, budget- and rate-limited provider key because the tool-capable agent can access its process environment. OpenCode models use canonical `provider/model` names such as `openai/gpt-5.6` or `ollama/qwen3-coder`.
+On Linux, use the runner systemd unit in the [production guide](docs/guides/deploy-to-production.md#3-systemd-units).
+
+Claude Code and Codex use their normal login or API-key setup on the runner machine.
 
 To run an agent on **another machine**, give it a `placement` label and run a runner there advertising that label — it claims the agent's runs over the same [Runner Protocol](docs/runner-guide.md) and drives the CLI locally. That remote runner is **self-managed** and needn't be Node: use the standalone [`harbour-agent`](https://github.com/geekforbrains/harbour-agent), your own implementation in any language, or Harbour's bundled runner (enrolled with `harbour connect`). All of them speak the protocol at `/api/runner-guide`; the agent's spawned CLI sees the wire contract at `/api/guide`. Either way the agent has no Harbour API key of its own — the runner token claims and a per-run exec token authenticates the work.
 
-> More: [agents](docs/concepts/agents.md) (CLI auth, OpenCode connections, permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
+> More: [agents](docs/concepts/agents.md) (CLI auth, permissions, model/effort overrides) and [running a runner on a different machine](docs/guides/run-on-different-machine.md).
 
 ### Running workflows
 

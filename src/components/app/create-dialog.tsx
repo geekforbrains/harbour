@@ -3,10 +3,6 @@
 import { FileText, KeyRound, Pin, Plus, Table2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GateField } from "@/components/app/gate-field";
-import {
-  modelPlaceholderForProvider,
-  modelSuggestionsForProvider,
-} from "@/components/app/llm-connection-form";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { parseSchedule, SchedulePicker, serializeSchedule } from "@/components/app/schedule-picker";
 import { Button } from "@/components/ui/button";
@@ -331,16 +327,6 @@ export function CreateDialog({
         onThinkingChange={setThinking}
         defaultModelLabel={`Default${selectedAgent.model ? ` (${selectedAgent.model})` : ""}`}
         defaultThinkingLabel={`Default${selectedAgent.thinking ? ` (${selectedAgent.thinking})` : ""}`}
-        modelPlaceholder={
-          selectedAgent.cli === "opencode" && selectedAgent.llm_connection
-            ? modelPlaceholderForProvider(selectedAgent.llm_connection.provider_id)
-            : undefined
-        }
-        modelSuggestions={
-          selectedAgent.cli === "opencode" && selectedAgent.llm_connection
-            ? modelSuggestionsForProvider(selectedAgent.llm_connection.provider_id)
-            : undefined
-        }
       />
     </div>
   ) : null;

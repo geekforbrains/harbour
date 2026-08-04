@@ -17,11 +17,10 @@ only when non-trivial.
 ## Shape
 
 The hierarchy is flat: **instance → projects → agents & jobs → runs**, and
-every resource (docs / env_vars / LLM connections / tables) belongs to exactly
-one project:
+every resource (docs / env_vars / tables) belongs to exactly one project:
 
 - Every project-owned table (`agents`, `jobs`, `runs`, `docs`, `env_vars`,
-  `llm_connections`, `tables`) carries a **NOT NULL** `project_id` FK with
+  `tables`) carries a **NOT NULL** `project_id` FK with
   `ON DELETE CASCADE` —
   deleting a project is a **hard cascade delete** of everything beneath it
   (there is no `archived_at` / soft delete). Runner workspace directories on
@@ -108,7 +107,7 @@ agent, job, run, doc, secret, and table under the project goes with it.
 | `name` | TEXT | NN | |
 | `slug` | TEXT | NN | unique per project; creation-time, immutable workspace path segment (see [Slugs](#slugs)) |
 | `description` | TEXT | | |
-| `cli` | TEXT | | `claude` / `codex` / `opencode` — required by the create API (every agent is CLI-driven) |
+| `cli` | TEXT | | `claude` / `codex` — required by the create API (every agent is CLI-driven) |
 | `model` / `thinking` | TEXT | | default model + effort override |
 | `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
 | `eager` | INTEGER | NN, default 0 | legacy/no-op — the pool drains all due work each cycle regardless (kept for compatibility) |
@@ -231,48 +230,6 @@ timestamps. **Name uniqueness per project is enforced in the query layer**, not
 by a DB constraint (error copy: `already exists in this project`). Index:
 `idx_env_vars_project`.
 
-A Secret referenced by `llm_connection_secrets` cannot be deleted until the
-connection is changed or removed; the query layer reports this as a guarded
-409 instead of surfacing a foreign-key error.
-
-### `llm_connections`
-Reusable OpenCode provider configuration owned by one project. Names are
-case-insensitively unique per project in the query layer.
-
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | TEXT | PK | uuid |
-| `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
-| `name` | TEXT | NN | display name; query-layer uniqueness per project |
-| `kind` | TEXT | NN, CHECK | `openai` / `anthropic` / `openrouter` / `ollama` / `openai-compatible` |
-| `provider_id` | TEXT | NN | canonical OpenCode model prefix (`provider_id/model`) |
-| `base_url` | TEXT | | validated HTTP(S) endpoint; userinfo and query strings are rejected |
-| `protocol` | TEXT | NN, CHECK | `native` / `chat-completions` / `responses` |
-| `created_at` / `updated_at` | INTEGER | NN | |
-
-Preset kinds have fixed provider IDs and protocols. OpenAI, Anthropic, and
-OpenRouter require an API-key Secret; Ollama is keyless by default;
-OpenAI-compatible connections require `base_url` and use Chat Completions or
-Responses. Index: `idx_llm_connections_project`.
-
-Normal reads expose only connection metadata and `{id, name}` for the linked
-credential. The decrypted value is read only while building the runner-private
-OpenCode claim block.
-
-### `llm_connection_secrets`
-Credential-role link: `connection_id` (FK → `llm_connections`, CASCADE),
-`role` (CHECK `api_key`), and `env_var_id` (FK → `env_vars`). Primary key:
-`(connection_id, role)`, so a connection has at most one API-key credential.
-The Secret and connection must belong to the same project (enforced by the
-query layer). Index: `idx_llm_connection_secrets_env_var`.
-
-### `agent_llm_connections`
-One optional provider binding per agent: `agent_id` (PK, FK → `agents`,
-CASCADE) and `connection_id` (FK → `llm_connections`). Agents and connections
-must belong to the same project (query-layer invariant); one connection may be
-reused by many agents. A connection cannot be deleted while referenced.
-Index: `idx_agent_llm_connections_connection`.
-
 ### `tables`
 Registry of agent-managed SQLite tables (the data tables are siblings in the
 same file). `project_id`, `name`, `table_name` (NN, **U** — the physical table
@@ -289,9 +246,7 @@ Per-table DDL history. `table_id`, `version` (NN), `description`, `sql`
 
 These three composite-PK junctions attach a resource to a specific job — from
 **any** project (links are unrestricted; inserts are `INSERT OR IGNORE`, so
-re-linking is a no-op). The LLM-specific relationship tables are documented
-with `llm_connections` above and, unlike job resources, require same-project
-ownership.
+re-linking is a no-op).
 
 | Table | A | B |
 |---|---|---|
@@ -327,10 +282,6 @@ falling back to the host timezone) and recent-feed limits. There is **no**
   runner advertising the `workflow` kind), no separate poll endpoint.
 - **Env-var encryption.** Plaintext never lands in the DB; the key is read from
   `HARBOUR_ENCRYPTION_KEY` or auto-generated at `~/.harbour/encryption.key`.
-- **OpenCode provider binding.** OpenCode agents require one same-project LLM
-  connection and a canonical `provider_id/model` default. Per-job model
-  overrides must keep the same provider prefix. Normal API reads never decrypt
-  the connection's Secret.
 
 ## Schema initialization
 

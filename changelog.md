@@ -62,6 +62,19 @@
 
 ### Removed
 
+- **OpenCode and LLM connections are removed** — the provider surface is back to
+  Claude Code and Codex only while the agent model is refined. Gone: the
+  `opencode` CLI option, the **LLM Connections** dashboard page and nav entry,
+  the `/api/llm-connections` routes, the `llm_connections` /
+  `llm_connection_secrets` / `agent_llm_connections` tables, the claim payload's
+  `agent.provider` and runner-private `runtime.llm.api_key` blocks, and the
+  runner's OpenCode config generation, env isolation, and session fingerprints.
+  A Secret is no longer reservable as a provider credential, so secret deletes
+  no longer 409 and no Secret is withheld from job `env`. Output redaction and
+  the cross-CLI session-resume guard are kept. On a fresh database the three
+  tables are simply never created; existing databases keep them unused
+  (harmless — nothing reads them). The work is parked on the
+  `feat/opencode-connections` branch.
 - **Gemini CLI is no longer an agent provider.** New and updated agents accept
   only `claude` or `codex`; the dashboard no longer detects or offers Gemini,
   and the bundled runner no longer advertises, launches, resumes, or parses it.
