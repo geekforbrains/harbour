@@ -45,9 +45,7 @@ An agent has **no Harbour credential of its own**. Everything it does to Harbour
 
 This is why local and remote agents connect the same way: a runner claims the work and the CLI authenticates *as the run*. There is no long-lived per-agent Harbour API key to issue, rotate, or leak — programmatic management of Harbour itself uses a [management API key](../management-guide.md) instead.
 
-LLM authentication is separate:
-
-- **Claude Code and Codex** use the CLI's normal auth on the runner host — interactive login or an API key visible to the runner service.
+LLM authentication is separate, and Harbour stays out of it: both Claude Code and Codex use the CLI's own auth on the runner host — interactive login or an API key visible to the runner service.
 
 ## Claiming work
 
@@ -85,7 +83,7 @@ Eager is a legacy concept — the runner no longer needs it. Each `harbour run` 
 
 ### CLI providers
 
-The three built-in CLIs each have their own command shape. From `bin/lib/providers.mjs`:
+Both built-in CLIs have their own command shape. From `bin/lib/providers.mjs`:
 
 | CLI | Binary | Key flags | Resume mechanism |
 |---|---|---|---|
