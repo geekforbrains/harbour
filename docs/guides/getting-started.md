@@ -13,19 +13,29 @@ You'll need **Node 24 LTS** and a working `npm` (macOS or Linux). If you later s
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
 cd harbour
-npm install
+npm ci
 npm run build
 npm run harbour -- setup   # one-time: create the first user + local runner (interactive)
 npm start
 ```
 
-`harbour setup` does two things: it creates the first user **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600). No minting, no connect blobs; the local path just works. At the end it prompts `Install the runner service to poll for work every 60s? [Y/n]` — answer yes and launchd starts polling immediately, or skip it and run `npm run harbour -- install` later (see [Run the local runner](#3-run-the-local-runner)).
+`harbour setup` does two things: it creates the first user **and** auto-provisions the **local runner** — it registers a `local` runner in the DB and writes its bearer token to `~/.harbour/runner.token` (0600) plus the matching local URL to `~/.harbour/runner.url`. No minting or connect blobs are needed. On macOS it then prompts `Install the runner service to poll for work every 60s? [Y/n]`; on Linux service installation stays explicit through systemd (see [Deploying to production](deploy-to-production.md)).
 
-`npm start` runs `next start` on port 3000 by default. Visit [http://localhost:3000](http://localhost:3000), log in, and create your first project from the dashboard — every agent and job lives inside a project. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user non-interactively — it also auto-provisions the local runner token, but doesn't prompt to install the service; schedule it yourself with `harbour install` when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.)
+`npm start` runs the production server at `http://127.0.0.1:14272` by default. It binds only to loopback; put a TLS proxy in front for remote access. For a fresh install on a custom port, export `HARBOUR_PORT` before both setup and start so setup persists the matching runner URL (and the macOS install prompt captures the override):
+
+```bash
+export HARBOUR_PORT=18080
+npm run harbour -- setup
+npm start
+```
+
+`PORT=18080 npm start`, `npm start -- --port 18080`, and CLI `--hostname` are server-only compatibility options; after setup, pair them with `HARBOUR_URL` in the runner process/service environment or edit `~/.harbour/runner.url` for a durable change. For a coordinated bind-address change, export `HARBOUR_HOST` for setup and future starts: setup keeps the bundled runner on loopback for wildcard binds and persists a concrete host when one is supplied. Reinstall a macOS runner service after changing environment values captured by its plist.
+
+Open the effective server URL (`http://127.0.0.1:14272` by default, or `http://127.0.0.1:18080` in the custom example), log in, and create your first project from the dashboard — every agent and job lives inside a project. For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively; schedule the service separately when ready. Provisioning is idempotent, so a re-run is a no-op once the local runner exists.
 
 State lives in `~/.harbour/` by default — DB at `~/.harbour/harbour.db`, uploads under `~/.harbour/uploads`, encryption key at `~/.harbour/encryption.key`. Back that directory up and you have a snapshot of everything. Override with `HARBOUR_HOME` if you want to keep installs separate.
 
-For active development use `npm run dev -- -p 3001` instead. Avoid port 3000 — that's reserved for production in this repo's conventions.
+For active development use `npm run dev`, which defaults to port 3001. Avoid port 14272 — that's reserved for production in this repo's conventions.
 
 ## First agent and first job
 
@@ -63,7 +73,7 @@ Behind the dialog this is `POST /api/agents/:id/jobs` with `{"name":"Daily check
 A runner claims work over the [Runner Protocol](../runner-guide.md), authenticating with a **runner token** (never an agent key — agents have none). `setup` already provisioned the local one — read it into a shell variable:
 
 ```bash
-export HARBOUR_URL=http://localhost:3000
+export HARBOUR_URL=$(cat ~/.harbour/runner.url)
 export RUNNER_TOKEN=$(cat ~/.harbour/runner.token)
 ```
 
@@ -156,7 +166,7 @@ npm run harbour -- status
 
 ### 4. Schedule polling
 
-If you didn't say yes to the install prompt during `setup`, schedule it now:
+On macOS, if you didn't say yes to the install prompt during `setup`, schedule it now:
 
 ```bash
 npm run harbour -- install
@@ -164,9 +174,9 @@ npm run harbour -- install
 
 This writes a single launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60` so launchd reruns `harbour run` every 60 seconds. Logs go to `~/.harbour/runner.log` (stdout) and `~/.harbour/runner.err.log` (stderr).
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, run the runner as a systemd service (see the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units)) or schedule `npm run harbour -- run` from cron.
+On Linux, use the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units); `harbour install` deliberately refuses rather than attempting privileged service setup.
 
-To stop polling: `npm run harbour -- uninstall` (removes the plist and unloads it).
+To stop macOS polling: `npm run harbour -- uninstall` (removes the plist after unloading it).
 
 > **The service can't see your shell's PATH.** launchd (and systemd) run the runner under a fixed, minimal PATH — not your interactive shell's. A CLI installed through a version manager (nvm, asdf, pyenv, volta) or reached only via a shell alias won't be found, so its agent runs sit `scheduled` forever with nothing to claim them. The runner advertises only CLIs actually on its PATH — check `harbour status` (what the current shell sees) and **Settings → Runners** (what the service advertised). Fix: add the CLI's directory to the plist's `EnvironmentVariables` (launchd) or the unit's `Environment=PATH=…` (systemd). See [Sanity checks](run-on-different-machine.md#sanity-checks).
 

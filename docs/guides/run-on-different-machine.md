@@ -92,10 +92,12 @@ The minted token from step 2 is all a runner needs. Two paths:
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
 cd harbour
-npm install
+npm ci
 ```
 
-`npm install` is needed because the runner's CLI entry point lives at `bin/harbour.mjs`, invoked through `npm run harbour --`. The runner itself only uses Node stdlib — everything under `bin/` runs with zero installed dependencies.
+Dependencies are required because the bundled CLI imports the same native and
+runtime packages used for setup and agent execution. Invoke it through `npm run
+harbour --` from the repository.
 
 Install the agent CLI on this machine too. For OpenCode:
 
@@ -139,15 +141,23 @@ npm run harbour -- run
 
 ### 6. Schedule polling
 
+On macOS:
+
 ```bash
 npm run harbour -- install
 ```
 
 This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.runner.plist` with `StartInterval=60`. launchd reruns `harbour run` every 60 seconds. Logs go to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 
-The plist captures the current environment's `PATH` and `HOME`, but **not** arbitrary exports — so put `HARBOUR_RUNNER_LABELS` (and `HARBOUR_URL` if you use it) somewhere the launchd session inherits, e.g. the host's login environment, or edit the plist's `EnvironmentVariables` block by hand after install.
+The plist captures `PATH`, `HOME`, the resolved `HARBOUR_HOME`, and any explicit
+`HARBOUR_URL`, `HARBOUR_PORT`, `HARBOUR_HOST`, `HARBOUR_RUNNER_LABELS`, or
+`HARBOUR_POOL_SIZE` present when installed. Re-run `harbour uninstall &&
+harbour install` after changing one of those values. Provider API keys are not
+copied into the plist.
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit — the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units) is the model: a `bash -c 'while true; do node bin/harbour.mjs run || true; sleep 60; done'` service with `HARBOUR_RUNNER_LABELS` in its `Environment=` — or use cron.
+On Linux, use the runner unit in [Deploying to production](deploy-to-production.md#3-systemd-units)
+with `HARBOUR_RUNNER_LABELS` in its `Environment=`, or use cron. `harbour
+install` installs launchd services only and refuses cleanly on other platforms.
 
 ## What runs on the remote, what runs on harbour
 
@@ -181,8 +191,8 @@ The runner token is a bearer credential. There's no in-place rotation — you re
 
 If polls aren't producing runs:
 
-- **Did launchd actually load the plist?** `launchctl list | grep com.harbour.runner`.
-- **What does the log say?** `tail -f ~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+- **Did the scheduler load the runner?** On macOS, run `launchctl print gui/$(id -u)/com.harbour.runner`; on Linux, run `systemctl status harbour-runner`.
+- **What does the log say?** On macOS, inspect `~/.harbour/runner.log` and `~/.harbour/runner.err.log`; on Linux, run `journalctl -u harbour-runner -f`.
 - **Can the remote actually reach harbour?** `curl -X POST -H "Authorization: Bearer $(cat ~/.harbour/runner.token)" -H "Content-Type: application/json" -d '{"capabilities":{"kinds":["workflow"],"clis":[],"labels":["gpu"]}}' "$(cat ~/.harbour/runner.url)/api/runner/claim?peek=true"` — if this fails from the remote, no amount of fiddling with the runner will fix it.
 - **Do the labels line up?** The job's `placement` must match a label the runner *advertises* (`HARBOUR_RUNNER_LABELS`) **and** a label its token was *authorized* for at mint time. A mismatch leaves the work `scheduled` with nothing to claim it. Confirm the runner's advertised labels and last poll under **Settings → Runners**.
 - **Are jobs scheduled?** Check the agent's job list in the dashboard. A configured agent with no jobs polls forever and claims nothing.

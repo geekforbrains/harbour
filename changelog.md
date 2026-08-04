@@ -42,6 +42,24 @@
   levels gain `max` (Codex now accepts the same `low`/`medium`/`high`/`xhigh`/
   `max` ladder as Claude).
 
+### Install and operation
+
+- **New production installs default to `127.0.0.1:14272`.** `npm start` and
+  `harbour start` now share that explicit loopback default with the bundled
+  runner; use `HARBOUR_PORT` during setup for a coordinated custom install, or
+  use server-only `PORT`/CLI `--port` with `HARBOUR_URL` or
+  `~/.harbour/runner.url` configured separately. Bare development
+  starts consistently use port 3001. Page metadata uses the same local default
+  unless `HARBOUR_PUBLIC_URL` is set at build time. Existing service
+  definitions are not rewritten; when retaining port 3000, explicitly keep
+  the server `PORT` and runner `HARBOUR_URL` aligned.
+- **Setup is platform-safe.** macOS runner installation persists its
+  non-secret configuration and uses modern launchd commands. Linux setup no
+  longer attempts to install a launchd service and points operators to the
+  documented systemd units instead. Both platforms now use the same supported
+  `harbour start` production path rather than mixing `next start` with a
+  standalone-output build.
+
 ### Removed
 
 - **Gemini CLI is no longer an agent provider.** New and updated agents accept

@@ -36,26 +36,26 @@ All you need is Node 24 LTS on macOS or Linux.
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
 cd harbour
-npm install
+npm ci
 npm run build
 npm run harbour -- setup   # one-time: create the first user + local runner (interactive)
 npm start                  # run the server
 ```
 
-`setup` also auto-provisions the **local runner** — it writes a runner token to `~/.harbour/runner.token` and prompts to schedule the polling service. `npm start` runs the server; `npm run harbour -- install` schedules the runner (polls every 60s), or `npm run harbour -- run` drains all due work once.
+`setup` also auto-provisions the **local runner** — it writes its token and local URL under `~/.harbour/`; on macOS it prompts to schedule the polling service. `npm start` runs the server; `npm run harbour -- install` schedules the runner on macOS (polls every 60s), or `npm run harbour -- run` drains all due work once. Linux services are configured with systemd in the production guide.
 
-Visit [http://localhost:3000](http://localhost:3000) and log in. All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively.)
+Visit [http://127.0.0.1:14272](http://127.0.0.1:14272) and log in. Harbour binds to loopback by default; the port and host are configurable as described in [Getting started](docs/guides/getting-started.md#install-and-run). All state (DB, uploads, encryption key) lives in `~/.harbour` — back up that directory and you have everything. (For scripted installs, `npm run harbour -- user create --email <e> --name "<n>" --password <p>` creates the user and provisions the local runner non-interactively.)
 
 ### Deploy to production
 
-See [deploying to production](docs/guides/deploy-to-production.md) for the Linux path — systemd units for the server and runner, with Caddy terminating TLS in front. On macOS, `npm run release` handles in-place launchd updates.
+See [deploying to production](docs/guides/deploy-to-production.md) for the Linux path — systemd units for the server and runner, with Caddy terminating TLS in front. On macOS, the server runs in the foreground by default; `npm run release` handles in-place updates only when a server launch agent has been configured separately.
 
 ### Running agents
 
 Built-in support for [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), and [OpenCode](https://opencode.ai/docs). Create a **Harbour Agent** in the dashboard, and the **local runner** (provisioned at setup) claims and runs it. If you haven't scheduled the runner yet:
 
 ```bash
-npm run harbour -- install   # polls every 60s; logs at ~/.harbour/runner.log
+npm run harbour -- install   # macOS launchd; polls every 60s
 ```
 
 Claude Code and Codex use their normal login or API-key setup on the runner machine. OpenCode is the provider-neutral path: install it (`npm install -g opencode-ai`; Harbour requires OpenCode 1.17.12+), create a reusable project-scoped connection under **LLM Connections**, and select it when creating the agent. Connections support OpenAI, Anthropic, OpenRouter, Ollama, and custom OpenAI-compatible Chat Completions or Responses endpoints. A connection's API key is an encrypted Harbour **Secret**, delivered outside prompt-visible job context and then injected into the OpenCode child process; use a dedicated, budget- and rate-limited provider key because the tool-capable agent can access its process environment. OpenCode models use canonical `provider/model` names such as `openai/gpt-5.6` or `ollama/qwen3-coder`.
@@ -66,7 +66,7 @@ To run an agent on **another machine**, give it a `placement` label and run a ru
 
 ### Running workflows
 
-Workflows are claimed by the **same** local runner that drives agent jobs — one runner handles both, so there's nothing extra to install. A workflow with no runner scheduled at all just sits queued until you run `npm run harbour -- install` (service) or `npm run harbour -- run` (one-shot).
+Workflows are claimed by the **same** local runner that drives agent jobs — one runner handles both, so there's nothing extra to install. A workflow with no runner scheduled at all just sits queued until the runner is scheduled (launchd on macOS, systemd on Linux) or you run `npm run harbour -- run` (one-shot).
 
 > More: [workflows](docs/concepts/workflows.md) (runners, gates, the exit-code contract).
 
@@ -98,8 +98,17 @@ All Harbour state lives under `~/.harbour` by default — DB, uploads, encryptio
 | `HARBOUR_DB_PATH` | SQLite database file path | `<HARBOUR_HOME>/harbour.db` |
 | `HARBOUR_UPLOADS_DIR` | Run attachments directory | `<HARBOUR_HOME>/uploads` |
 | `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for secret encryption | Auto-generated at `<HARBOUR_HOME>/encryption.key` |
+| `HARBOUR_PORT` | Server port; also a bundled-runner local override when set for that process | Production `14272`; development `3001` |
+| `PORT` | Next-compatible server port alias (server only; `HARBOUR_PORT` wins) | Production `14272`; development `3001` |
+| `HARBOUR_HOST` | `npm start` / `npm run dev` bind address | `127.0.0.1` |
+| `HARBOUR_PUBLIC_URL` | Browser-facing base URL for absolute page metadata (set when building) | Effective local server URL |
+| `HARBOUR_URL` | Base URL used by the bundled runner (highest precedence) | `HARBOUR_PORT`, saved `runner.url`, then `http://127.0.0.1:14272` |
 | `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `500` |
 | `HARBOUR_SESSION_TTL_DAYS` | Dashboard session lifetime in days | `30` |
+
+Setup saves its effective runner URL to `~/.harbour/runner.url`. The macOS
+installer also captures explicit runner-related environment values in its
+launchd plist; reinstall that service after changing them.
 
 ## License
 

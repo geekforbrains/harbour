@@ -9,9 +9,9 @@
     "harbour": "./bin/harbour.mjs"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node bin/harbour.mjs dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node bin/harbour.mjs start",
     "lint": "biome check",
     "lint:fix": "biome check --write",
     "format": "biome format --write",

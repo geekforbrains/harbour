@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSetup, runUserCreate } from "./lib/bootstrap.mjs";
@@ -8,9 +9,13 @@ import { printRunnerStatus } from "./lib/config.mjs";
 import { connectRunner } from "./lib/connect.mjs";
 import { installRunner, uninstallRunner } from "./lib/install.mjs";
 import { runPool } from "./lib/runner.mjs";
+import { buildNextServerArgs } from "./lib/server-config.mjs";
+import { monitorServerProcess } from "./lib/server-process.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
+const require = createRequire(import.meta.url);
+const nextBin = require.resolve("next/dist/bin/next");
 
 const [, , command, ...rest] = process.argv;
 
@@ -20,14 +25,14 @@ function usage() {
 harbour - Control plane for AI agents
 
 Usage:
-  harbour start              Start the server (production)
-  harbour dev                Start the server (development)
+  harbour start              Start the server (production; default 127.0.0.1:14272)
+  harbour dev                Start the server (development; default 127.0.0.1:3001)
   harbour setup              Create the first user + local runner (first-run)
   harbour user create        Create a user (non-interactive flags)
   harbour run                Claim and run all due work once (the runner)
   harbour connect <blob>     Enroll a remote runner from a minted credential blob
-  harbour install            Schedule the runner as a service (polls every 60s)
-  harbour uninstall          Remove the runner service
+  harbour install            Schedule the runner with launchd (macOS; every 60s)
+  harbour uninstall          Remove the launchd runner service (macOS)
   harbour status             Show the runner's provisioning status
   `.trim(),
   );
@@ -45,20 +50,26 @@ function checkNode() {
   }
 }
 
+function runNext(mode, args) {
+  const child = spawn(process.execPath, [nextBin, ...buildNextServerArgs(mode, args)], {
+    cwd: projectRoot,
+    stdio: "inherit",
+  });
+  return monitorServerProcess(child).then(({ code, signal }) => {
+    if (signal) process.kill(process.pid, signal);
+    return code;
+  });
+}
+
 async function main() {
   checkNode();
   switch (command) {
     case "start": {
-      const child = spawn("npx", ["next", "start", ...rest], {
-        cwd: projectRoot,
-        stdio: "inherit",
-      });
-      child.on("exit", (code) => process.exit(code ?? 0));
+      process.exitCode = await runNext("start", rest);
       break;
     }
     case "dev": {
-      const child = spawn("npx", ["next", "dev", ...rest], { cwd: projectRoot, stdio: "inherit" });
-      child.on("exit", (code) => process.exit(code ?? 0));
+      process.exitCode = await runNext("dev", rest);
       break;
     }
     case "setup": {
@@ -82,10 +93,10 @@ async function main() {
       await connectRunner(rest[0]);
       break;
     case "install":
-      installRunner();
+      if (!installRunner()) process.exitCode = 1;
       break;
     case "uninstall":
-      uninstallRunner();
+      if (!uninstallRunner()) process.exitCode = 1;
       break;
     case "status":
       printRunnerStatus();

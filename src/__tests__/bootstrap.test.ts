@@ -12,6 +12,7 @@ import {
   provisionLocalRunner,
   userExists,
 } from "../../bin/lib/bootstrap.mjs";
+import { defaultServerUrl } from "../../bin/lib/server-config.mjs";
 
 const CLI = path.resolve(__dirname, "../../bin/harbour.mjs");
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -71,7 +72,7 @@ describe("CLI bootstrap helpers", () => {
     process.env.HARBOUR_HOME = home;
     try {
       const db = memDb();
-      const first = provisionLocalRunner(db);
+      const first = provisionLocalRunner(db, { url: defaultServerUrl({}) });
       expect(first.provisioned).toBe(true);
 
       // One local runner row exists, and its token was written (0600).
@@ -88,14 +89,35 @@ describe("CLI bootstrap helpers", () => {
       // The stored hash matches the written token (sha256).
       const sha = hashToken(token);
       expect(rows[0].token_hash).toBe(sha);
+      expect(fs.readFileSync(path.join(home, "runner.url"), "utf-8").trim()).toBe(
+        defaultServerUrl({}),
+      );
 
       // Idempotent: a second call provisions nothing and adds no row.
-      const second = provisionLocalRunner(db);
+      const second = provisionLocalRunner(db, { url: defaultServerUrl({}) });
       expect(second.provisioned).toBe(false);
       expect((db.prepare(`SELECT COUNT(*) AS n FROM runners`).get() as { n: number }).n).toBe(1);
     } finally {
       process.env.HARBOUR_HOME = prev;
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back the runner row when credentials cannot be written", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-prov-fail-"));
+    const invalidHome = path.join(parent, "not-a-directory");
+    fs.writeFileSync(invalidHome, "file");
+    const prev = process.env.HARBOUR_HOME;
+    process.env.HARBOUR_HOME = invalidHome;
+    const db = memDb();
+    try {
+      expect(() => provisionLocalRunner(db, { url: defaultServerUrl({}) })).toThrow();
+      expect((db.prepare(`SELECT COUNT(*) AS n FROM runners`).get() as { n: number }).n).toBe(0);
+    } finally {
+      db.close();
+      if (prev === undefined) delete process.env.HARBOUR_HOME;
+      else process.env.HARBOUR_HOME = prev;
+      fs.rmSync(parent, { recursive: true, force: true });
     }
   });
 });
@@ -140,6 +162,9 @@ describe("CLI `harbour user create` (subprocess)", () => {
     expect(r.stdout).toContain("Local runner provisioned");
     // The runner token is on disk — a fresh install can run work immediately.
     expect(fs.readFileSync(path.join(home, "runner.token"), "utf-8").trim()).toMatch(/^hbrn_/);
+    expect(fs.readFileSync(path.join(home, "runner.url"), "utf-8").trim()).toBe(
+      defaultServerUrl(process.env),
+    );
   });
 
   it("accepts the password from HARBOUR_USER_PASSWORD", () => {
@@ -148,6 +173,46 @@ describe("CLI `harbour user create` (subprocess)", () => {
     });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("User created: user@example.com");
+  });
+
+  it("persists an explicit runner URL during non-interactive setup", () => {
+    const r = run(
+      [
+        "user",
+        "create",
+        "--email",
+        "user@example.com",
+        "--name",
+        "User",
+        "--password",
+        "supersecret123",
+      ],
+      { HARBOUR_URL: "https://harbour.example/" },
+    );
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(path.join(home, "runner.url"), "utf-8").trim()).toBe(
+      "https://harbour.example",
+    );
+  });
+
+  it("persists the coordinated Harbour port during non-interactive setup", () => {
+    const r = run(
+      [
+        "user",
+        "create",
+        "--email",
+        "user@example.com",
+        "--name",
+        "User",
+        "--password",
+        "supersecret123",
+      ],
+      { HARBOUR_URL: "", HARBOUR_PORT: "18080" },
+    );
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(path.join(home, "runner.url"), "utf-8").trim()).toBe(
+      "http://127.0.0.1:18080",
+    );
   });
 
   it("rejects a password under 8 characters", () => {

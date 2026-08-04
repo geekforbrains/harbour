@@ -28,7 +28,7 @@ default):
 | `encryption.key` | hex key for env-var AES-256-GCM (mode 0600) |
 | `uploads/runs/<runId>/` | run attachment files |
 | `runner.token` | the runner's bearer token (`hbrn_…`), the **only** secret the runner keeps on disk (mode 0600, like `encryption.key`); its absence means the runner is unprovisioned. The DB `runners` table is the registry — there is no local runner registry file |
-| `runner.url` (optional) | non-secret base URL the runner reaches Harbour at; resolution order is `HARBOUR_URL` env → this file → `http://localhost:3000` |
+| `runner.url` (optional) | non-secret base URL the runner reaches Harbour at; resolution order is `HARBOUR_URL` env → `HARBOUR_PORT` local override → this file → the shared local default `http://127.0.0.1:14272` (`PORT` is server-only at runtime) |
 | `sessions.json` | CLI session cache for run resume (`run_id → {sessionId, cli, cwd}`) |
 | `workflows/` | working root under which each job's gate scripts (workflow command, agent prerun/postrun) are materialized; the runner writes a gate's body to a per-job subdir (`<scripts_dir>`) from the payload, then runs it via its runtime's interpreter |
 | `runner.log`, `runner.err.log` | launchd output for the runner |
@@ -44,7 +44,7 @@ Load-bearing dependencies (authoritative versions live in `package.json`):
 
 | Layer | Choice |
 |---|---|
-| Framework | Next.js (App Router, `output: standalone`) |
+| Framework | Next.js (App Router) |
 | UI runtime | React 19 |
 | Styling | Tailwind v4 (oklch color space, CSS-variable theming) |
 | Components | shadcn/ui on `@base-ui/react` |
@@ -199,7 +199,7 @@ systemd variant loops with `sleep 60`. Each invocation drains all currently-due
 work and exits.
 
 ```
-launchd (com.harbour.runner, StartInterval=60)
+launchd (macOS, StartInterval=60) / systemd loop (Linux)
   -> node bin/harbour.mjs run
        -> bin/lib/runner.mjs : runPool()
             load ~/.harbour/runner.token + base URL, detectCapabilities()

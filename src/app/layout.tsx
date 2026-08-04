@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { defaultServerUrl } from "../../bin/lib/server-config.mjs";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,6 +18,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.HARBOUR_PUBLIC_URL || defaultServerUrl()),
   title: "Harbour",
   description: "Project management for AI agents",
   manifest: "/manifest.json",

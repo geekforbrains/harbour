@@ -11,8 +11,8 @@ conventions are in [development standards](../reference/development-standards.md
 Have a dev server running before you test UI changes or drive the browser. Port
 conventions in this repo:
 
-- **3000** — production server (reserved; never run a dev server here)
-- **3001** — main-repo dev server (`npm run dev -- -p 3001`)
+- **14272** — production server (reserved; never run a dev server here)
+- **3001** — main-repo dev server (`npm run dev`)
 - **3010–3020** — worktree dev servers, one per worktree
 
 Check what's already bound before starting, then take the lowest free port:
@@ -22,7 +22,8 @@ lsof -iTCP:3010-3020 -sTCP:LISTEN   # which worktree ports are taken
 npm run dev -- -p 3010
 ```
 
-`npm run dev` is `next dev` (fast refresh, no build step). It still needs a
+`npm run dev` launches `next dev` with the safe project defaults (fast refresh,
+no build step). It still needs a
 first-run user to log in — see [getting started](getting-started.md).
 
 ## The change loop
@@ -32,17 +33,17 @@ the commands and order live in
 [development standards](../reference/development-standards.md#validation-commands)
 (`typecheck · lint · test · build`, plus `test:e2e` when UI or routes change).
 
-If you're iterating against the **production** server on :3000, it won't pick up
+If you're iterating against the **production** server on :14272, it won't pick up
 a new build until you restart it:
 
 ```bash
-kill $(lsof -ti :3000)   # stop the running production server
+kill $(lsof -ti :14272)  # stop the running production server
 npm run build            # rebuild
-npm start -- -p 3000 &   # restart in the background
+npm start &              # restart in the background
 ```
 
 A `npm run dev` server hot-reloads, so the rebuild dance is only for the
-production build on :3000.
+production build on :14272.
 
 ## Browser review and screenshots
 

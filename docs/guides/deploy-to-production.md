@@ -2,7 +2,7 @@
 
 Harbour is a single-process Next.js app with a SQLite file. Anything that can run Node and persist a directory will host it — no external database, no Redis, no background workers. This guide covers a plain Linux host (systemd + a reverse proxy); the macOS/launchd path is covered briefly at the end.
 
-> Prefer containers? Harbour is a standard Next.js + SQLite app and containerizes the usual way (build, copy `.next/standalone`, persist `HARBOUR_HOME` as a volume). The repo doesn't ship or support a Dockerfile, but nothing about harbour resists one.
+> Prefer containers? Harbour is a standard Next.js + SQLite app: install, build, run `npm start`, persist `HARBOUR_HOME` as a volume, and bind deliberately with `HARBOUR_HOST=0.0.0.0`. The repo doesn't ship or support a Dockerfile.
 
 ## Linux (systemd)
 
@@ -26,14 +26,9 @@ useradd -m -s /bin/bash harbour
 git clone https://github.com/geekforbrains/harbour.git /opt/harbour
 cd /opt/harbour
 npm ci
-npm run build
-# Next.js standalone output: server.js expects public/ and .next/static/
-# (and docs/, which /api/guide serves from) as siblings — next build
-# doesn't put them there, so copy explicitly:
-cp -r public .next/standalone/
-cp -r .next/static .next/standalone/.next/
+HARBOUR_PUBLIC_URL=https://harbour.example.com npm run build
 chown -R harbour:harbour /opt/harbour
-mkdir -p /home/harbour/.harbour && chown harbour:harbour /home/harbour/.harbour
+install -d -m 0700 -o harbour -g harbour /home/harbour/.harbour
 ```
 
 ### 3. systemd units
@@ -50,15 +45,13 @@ Wants=network-online.target
 Type=simple
 User=harbour
 Group=harbour
-# Next.js is configured with output: standalone. The standalone server.js
-# only resolves ./public and ./.next/static relative to its own directory,
-# so run from inside .next/standalone/ (see the cp steps above).
-WorkingDirectory=/opt/harbour/.next/standalone
-ExecStart=/usr/bin/node server.js
+WorkingDirectory=/opt/harbour
+ExecStart=/usr/bin/node bin/harbour.mjs start
 Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=HOSTNAME=127.0.0.1
+Environment=HARBOUR_PORT=14272
+Environment=HARBOUR_HOST=127.0.0.1
 Environment=HARBOUR_HOME=/home/harbour/.harbour
+UMask=0077
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -68,7 +61,7 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/harbour-runner.service` — the runner (skip if this host won't run agents):
+`/etc/systemd/system/harbour-runner.service` — the runner (skip if this host won't execute agent jobs or workflows):
 
 ```ini
 [Unit]
@@ -85,6 +78,7 @@ WorkingDirectory=/opt/harbour
 # Loop locally so one poll failure doesn't kill the service.
 ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs run || true; sleep 60; done'
 Environment=HARBOUR_HOME=/home/harbour/.harbour
+Environment=HARBOUR_URL=http://127.0.0.1:14272
 # Explicit PATH so the service session finds CLIs installed under the
 # harbour user's home (the claude installer puts itself in ~/.local/bin).
 # systemd does NOT inherit your login shell's PATH, so a CLI installed via a
@@ -95,22 +89,23 @@ Environment=HARBOUR_HOME=/home/harbour/.harbour
 Environment=PATH=/home/harbour/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Restart=on-failure
 RestartSec=10s
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Enable both:
+Load the units and start the server first. The runner is enabled after setup has
+created its credential:
 
 ```bash
 systemctl daemon-reload
 systemctl enable --now harbour.service
-systemctl enable --now harbour-runner.service
 ```
 
 ### 4. HTTPS in front
 
-The server speaks plaintext HTTP on `127.0.0.1:3000` — never expose that directly. Put a TLS-terminating reverse proxy in front. [Caddy](https://caddyserver.com/) is the least-config option (auto-issues Let's Encrypt certs); a minimal `/etc/caddy/Caddyfile`:
+The server speaks plaintext HTTP on `127.0.0.1:14272` — never expose that directly. Put a TLS-terminating reverse proxy in front. [Caddy](https://caddyserver.com/) is the least-config option (auto-issues Let's Encrypt certs); a minimal `/etc/caddy/Caddyfile`:
 
 ```
 harbour.example.com {
@@ -124,7 +119,7 @@ harbour.example.com {
     -Server
   }
 
-  reverse_proxy localhost:3000
+  reverse_proxy 127.0.0.1:14272
 }
 ```
 
@@ -138,9 +133,19 @@ There's no web signup — create the first user over SSH (one-time, interactive)
 su - harbour
 cd /opt/harbour
 node bin/harbour.mjs setup
+exit
+systemctl enable --now harbour-runner.service
 ```
 
-Visit `https://<your-domain>` and log in. Further accounts are created from the dashboard (Settings → Users) via set-password links.
+On Linux, setup provisions the local runner but deliberately does not attempt a
+privileged service installation; the command above enables the systemd runner
+after its token exists. Visit `https://<your-domain>` and log in. Further
+accounts are created from the dashboard (Settings → Users) via set-password
+links.
+
+To use a different local port, change `HARBOUR_PORT` in `harbour.service`,
+`HARBOUR_URL` in `harbour-runner.service`, and the reverse-proxy upstream
+together.
 
 ### 6. Install and authenticate the AI CLIs
 
@@ -189,10 +194,7 @@ That is not a sandbox: runner-host/global OpenCode config and plugins, the runne
 cd /opt/harbour
 git pull
 npm ci
-npm run build
-# Standalone needs public/, .next/static/ (and the traced files) refreshed
-cp -r public .next/standalone/
-cp -r .next/static .next/standalone/.next/
+HARBOUR_PUBLIC_URL=https://harbour.example.com npm run build
 systemctl restart harbour
 systemctl restart harbour-runner
 ```
@@ -209,7 +211,7 @@ journalctl -u caddy -f                 # the proxy / cert issuance
 
 ## macOS (launchd)
 
-macOS is the developer-machine path: `npm run build && npm start` from the repo, with the runner installed via `npm run harbour -- install` (a launchd plist that fires `run` every 60s — see [Getting started](getting-started.md)). If you run the server itself under launchd (label `com.harbour.server`), `npm run release` rebuilds and bounces the full stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
+macOS is the developer-machine path: `npm run build && npm start` from the repo starts Harbour on `127.0.0.1:14272`, with the runner optionally installed via `npm run harbour -- install` (a launchd plist that fires `run` every 60s — see [Getting started](getting-started.md)). The server itself remains a foreground process by default. If you configure it separately under launchd with label `com.harbour.server`, `npm run release` rebuilds and bounces that installed stack in the right order — see [`scripts/release.sh`](../../scripts/release.sh) for what it does and why the server must stop before the build.
 
 ## State and backups
 

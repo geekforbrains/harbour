@@ -21,7 +21,8 @@ import readline from "node:readline";
 import { Algorithm, hashSync, verifySync } from "@node-rs/argon2";
 import Database from "better-sqlite3";
 import { saveRunnerCredentials } from "./config.mjs";
-import { installRunner } from "./install.mjs";
+import { installRunner, supportsRunnerService } from "./install.mjs";
+import { defaultServerUrl, initialRunnerUrl } from "./server-config.mjs";
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id };
 
@@ -115,23 +116,28 @@ export function insertUser(db, { email, displayName, password }) {
 
 /**
  * Provision the local runner if one doesn't exist yet: insert a `tier='local'`
- * row into the registry and write its token to ~/.harbour/runner.token (0600).
+ * row into the registry and write its token + local server URL under
+ * ~/.harbour/ (token mode 0600).
  * Idempotent — a second call is a no-op once a local runner exists, so it's safe
  * to run on every setup / user-create. This is what makes a fresh install "just
  * work": no minting, no connect blobs. Returns { provisioned, id }.
  */
-export function provisionLocalRunner(db) {
+export function provisionLocalRunner(db, { url = initialRunnerUrl() } = {}) {
   const existing = db.prepare(`SELECT id FROM runners WHERE tier = 'local' LIMIT 1`).get();
   if (existing) return { provisioned: false, id: existing.id };
 
   const id = crypto.randomUUID();
   const token = `hbrn_${crypto.randomBytes(32).toString("hex")}`;
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-  db.prepare(
-    `INSERT INTO runners (id, name, token_hash, tier, labels) VALUES (?, ?, ?, 'local', ?)`,
-  ).run(id, "Local runner", tokenHash, JSON.stringify(["local"]));
-
-  saveRunnerCredentials({ token }); // URL defaults to http://localhost:3000
+  // Keep the registry retryable if credential persistence fails. Filesystem
+  // writes cannot participate in SQLite's transaction, but a thrown write rolls
+  // the row back; a retry safely overwrites any partial credential file.
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO runners (id, name, token_hash, tier, labels) VALUES (?, ?, ?, 'local', ?)`,
+    ).run(id, "Local runner", tokenHash, JSON.stringify(["local"]));
+    saveRunnerCredentials({ token, url });
+  })();
   return { provisioned: true, id };
 }
 
@@ -183,16 +189,19 @@ function createUser({ email, displayName, password, force }) {
 
   const db = openDb();
   try {
-    if (!force && userExists(db)) {
-      throw new Error(
-        "A user already exists. Bootstrap is first-run only. " +
-          "Add more users from the dashboard's Users page, or pass --force to override.",
-      );
-    }
-    const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
-    if (existing) throw new Error(`A user with email ${email} already exists.`);
-    const id = insertUser(db, { email, displayName: displayName.trim(), password });
-    return { id, email };
+    return db.transaction(() => {
+      if (!force && userExists(db)) {
+        throw new Error(
+          "A user already exists. Bootstrap is first-run only. " +
+            "Add more users from the dashboard's Users page, or pass --force to override.",
+        );
+      }
+      const existing = db.prepare(`SELECT id FROM users WHERE email = ?`).get(email);
+      if (existing) throw new Error(`A user with email ${email} already exists.`);
+      const id = insertUser(db, { email, displayName: displayName.trim(), password });
+      const runner = provisionLocalRunner(db);
+      return { id, email, runner };
+    })();
   } finally {
     db.close();
   }
@@ -235,36 +244,51 @@ export async function runSetup(argv = []) {
       break;
     }
 
-    const { email: created } = createUser({ email, displayName, password, force });
+    const { email: created, runner } = createUser({ email, displayName, password, force });
     console.log(`\nUser created: ${created}`);
 
     // Auto-provision the local runner so a fresh install "just works".
-    const rdb = openDb();
-    let provisioned;
-    try {
-      provisioned = provisionLocalRunner(rdb);
-    } finally {
-      rdb.close();
-    }
-    if (provisioned.provisioned) {
+    if (runner.provisioned) {
       console.log(
         `Local runner provisioned — token at ${path.join(harbourHome(), "runner.token")} (0600).`,
       );
-      const answer = (
-        await prompt(rl, "Install the runner service to poll for work every 60s? [Y/n]: ")
-      )
-        .trim()
-        .toLowerCase();
-      if (answer === "" || answer === "y" || answer === "yes") {
-        installRunner();
+      if (supportsRunnerService()) {
+        const answer = (
+          await prompt(rl, "Install the runner service to poll for work every 60s? [Y/n]: ")
+        )
+          .trim()
+          .toLowerCase();
+        if (answer === "" || answer === "y" || answer === "yes") {
+          if (!installRunner()) {
+            throw new Error(
+              "User and local runner were provisioned, but the runner service could not be installed.",
+            );
+          }
+        } else {
+          console.log(
+            "Skipped. Start it later with `harbour install` (service) or `harbour run` (one-shot).",
+          );
+        }
+      } else if (process.platform === "linux") {
+        console.log(
+          "Runner service installation is manual on Linux — use the systemd unit in docs/guides/deploy-to-production.md, or run `harbour run` once.",
+        );
       } else {
         console.log(
-          "Skipped. Start it later with `harbour install` (service) or `harbour run` (one-shot).",
+          "Run `harbour run` to drain work; automatic service install is unavailable here.",
         );
       }
     }
 
-    console.log("\nLog in at the dashboard, then create your first project.");
+    if (process.platform === "linux") {
+      console.log(
+        "\nHarbour is configured. Ensure the server service is running, then open its configured public URL.",
+      );
+    } else {
+      console.log(
+        `\nHarbour is configured. If the server is not already running, start it with \`npm start\`. Local URL: ${defaultServerUrl()}.`,
+      );
+    }
   } finally {
     rl.close();
   }
@@ -311,19 +335,14 @@ export async function runUserCreate(argv = []) {
   }
 
   try {
-    const { email: created } = createUser({ email, displayName, password, force });
+    const { email: created, runner } = createUser({ email, displayName, password, force });
     console.log(`User created: ${created}`);
     // Auto-provision the local runner (no service install in the non-interactive
     // path — the caller schedules it with `harbour install` when ready).
-    const rdb = openDb();
-    try {
-      if (provisionLocalRunner(rdb).provisioned) {
-        console.log(
-          `Local runner provisioned — token at ${path.join(harbourHome(), "runner.token")} (0600).`,
-        );
-      }
-    } finally {
-      rdb.close();
+    if (runner.provisioned) {
+      console.log(
+        `Local runner provisioned — token at ${path.join(harbourHome(), "runner.token")} (0600).`,
+      );
     }
   } catch (err) {
     console.error(err.message || String(err));

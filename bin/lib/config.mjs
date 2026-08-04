@@ -2,8 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectCapabilities } from "./providers.mjs";
-
-const DEFAULT_URL = "http://localhost:3000";
+import { defaultServerUrl } from "./server-config.mjs";
 
 // Resolve HARBOUR_HOME (and the files under it) LIVE on every call — never frozen
 // at module load — so an env override (e.g. a worktree or a test) always wins.
@@ -26,7 +25,9 @@ export function ensureDir() {
  * reach Harbour. The token is the only secret on disk (0600, like the encryption
  * key); the URL is non-secret. Returns null when no token is present (the runner
  * hasn't been provisioned — `harbour setup` for local, `harbour connect` for
- * remote). The base URL resolves HARBOUR_URL > runner.url file > localhost:3000.
+ * remote). The base URL resolves HARBOUR_URL > HARBOUR_PORT local override >
+ * runner.url file > the shared local server default. PORT is server-only at
+ * runtime; setup writes its effective value to runner.url when initially used.
  */
 export function loadRunnerCredentials() {
   const file = runnerTokenFile();
@@ -41,9 +42,13 @@ export function loadRunnerCredentials() {
   return { token, url: resolveRunnerUrl() };
 }
 
-function resolveRunnerUrl() {
-  if (process.env.HARBOUR_URL) return process.env.HARBOUR_URL.replace(/\/$/, "");
-  const file = runnerUrlFile();
+/**
+ * @param {{env?: Record<string, string | undefined>, harbourDir?: string}} [options]
+ */
+export function resolveRunnerUrl({ env = process.env, harbourDir = getHarbourDir() } = {}) {
+  if (env.HARBOUR_URL) return env.HARBOUR_URL.replace(/\/$/, "");
+  if (env.HARBOUR_PORT) return defaultServerUrl(env);
+  const file = path.join(harbourDir, "runner.url");
   if (fs.existsSync(file)) {
     try {
       const url = fs.readFileSync(file, "utf-8").trim();
@@ -52,7 +57,10 @@ function resolveRunnerUrl() {
       /* fall through to default */
     }
   }
-  return DEFAULT_URL;
+  // PORT is a conventional server-only alias. Setup persists its effective
+  // value in runner.url; don't let an unrelated PORT in a runner environment
+  // silently redirect an unconfigured runner later.
+  return defaultServerUrl({});
 }
 
 /**
@@ -125,5 +133,11 @@ export function printRunnerStatus() {
   console.log(
     `  CLIs on PATH: ${caps.clis.length ? caps.clis.join(", ") : "none — agent runs need a CLI on PATH"}`,
   );
-  console.log("  Start polling with `harbour install` (service) or `harbour run` (one-shot).");
+  if (process.platform === "darwin") {
+    console.log("  Start polling with `harbour install` (service) or `harbour run` (one-shot).");
+  } else {
+    console.log(
+      "  Start polling with the documented systemd unit (Linux) or `harbour run` (one-shot).",
+    );
+  }
 }

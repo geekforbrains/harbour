@@ -78,5 +78,9 @@ export async function connectRunner(blob) {
   console.log();
   console.log("Next steps:");
   console.log("  harbour run       # run one claim cycle now");
-  console.log("  harbour install   # schedule polling as a service");
+  if (process.platform === "darwin") {
+    console.log("  harbour install   # schedule polling as a service");
+  } else {
+    console.log("  Configure the documented systemd unit to schedule polling on Linux");
+  }
 }
