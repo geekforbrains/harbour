@@ -64,14 +64,39 @@ export function normalizePermissions(value) {
 }
 
 /**
- * Read a file only if it's a plain, non-empty regular file. lstat (not stat) so
- * a symlink is rejected rather than followed: a policy file symlinked to
- * /dev/null or to an attacker-writable path must not be trusted, and "the file
- * looks fine" is exactly the check an unrestricted-by-accident bug hides behind.
+ * Whether `file` really lives inside `root`, with every symlink along the way
+ * resolved. lstat on the final component alone is not enough: an agent (or
+ * anything else that can write the workspace) could point a parent DIRECTORY
+ * elsewhere — `<ws>/.claude` → `/tmp/attacker/.claude` — and the leaf would
+ * still stat as an innocent regular file. The policy Harbour blesses has to be
+ * the one inside the workspace it validated, not a stand-in reached through it.
+ *
+ * Both sides are realpath'd because the workspace root can legitimately sit
+ * behind a symlink (on macOS `/tmp` is `/private/tmp`), which a naive string
+ * prefix check would read as an escape.
+ */
+function isInsideRoot(file, root) {
+  try {
+    const realRoot = fs.realpathSync(root);
+    const realFile = fs.realpathSync(file);
+    const rel = path.relative(realRoot, realFile);
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  } catch {
+    return false; // unresolvable (dangling link, race) — refuse rather than guess
+  }
+}
+
+/**
+ * Read a file only if it's a plain, non-empty regular file that genuinely lives
+ * inside the agent's workspace. lstat (not stat) so a symlinked leaf is rejected
+ * rather than followed, plus the containment check above for symlinked ancestors:
+ * a policy reached through a link to /dev/null or to an attacker-writable path
+ * must not be trusted, and "the file looks fine" is exactly the check an
+ * unrestricted-by-accident bug hides behind.
  *
  * @returns {{ ok: true, content: string } | { ok: false, reason: string }}
  */
-function readPlainFile(file, label) {
+function readPlainFile(file, label, root) {
   let st;
   try {
     st = fs.lstatSync(file);
@@ -86,6 +111,12 @@ function readPlainFile(file, label) {
   }
   if (st.size === 0) {
     return { ok: false, reason: `${label} at ${file} is empty.` };
+  }
+  if (root && !isInsideRoot(file, root)) {
+    return {
+      ok: false,
+      reason: `${label} at ${file} resolves outside the agent's workspace (${root}) — refusing to trust it. A directory on that path is a symlink.`,
+    };
   }
   try {
     return { ok: true, content: fs.readFileSync(file, "utf-8") };
@@ -107,7 +138,11 @@ function readPlainFile(file, label) {
  */
 function resolveClaudePolicy(workingDir) {
   const settingsPath = path.join(workingDir, ".claude", "settings.json");
-  const read = readPlainFile(settingsPath, "Claude policy file (.claude/settings.json)");
+  const read = readPlainFile(
+    settingsPath,
+    "Claude policy file (.claude/settings.json)",
+    workingDir,
+  );
   if (!read.ok) return { ok: false, reason: `${read.reason} ${DOC_HINT}` };
 
   let parsed;
@@ -149,17 +184,52 @@ function resolveClaudePolicy(workingDir) {
 }
 
 /**
- * Extract a TOP-LEVEL key from a TOML document — the lines before the first
- * `[table]` header. Deliberately not a TOML parser: we need exactly one scalar
- * (`sandbox_mode`) and adding a TOML dependency to the runner bundle to read it
- * would be a poor trade. Scoping to the pre-table region matters: a same-named
- * key inside some other table must not be mistaken for the real one, or a
- * policy could resolve to a sandbox mode its author never wrote.
+ * Walk a TOML document as (table, line) pairs, skipping the interior of
+ * multi-line strings.
+ *
+ * Deliberately not a TOML parser — we need exactly two scalars, and pulling a
+ * TOML dependency into the runner bundle to read them would be a poor trade.
+ * But the two things it must get right are the two an attacker-shaped file
+ * plays with: which table a line belongs to, and whether a line is real config
+ * or text inside a `"""` block. Without the fence tracking, a `[fake]` header
+ * written inside a string ends the top-level region early and a
+ * `sandbox_mode = "danger-full-access"` after it goes unread — the policy is
+ * then reported as something its author never wrote.
+ *
+ * `table` is null for the top-level region before the first header.
+ */
+function* tomlLines(content) {
+  let table = null;
+  let fence = null; // the delimiter that opened the multi-line string we're in
+  for (const line of content.split("\n")) {
+    if (fence) {
+      if (line.includes(fence)) fence = null;
+      continue;
+    }
+    // A value opening a multi-line string swallows everything to its closer.
+    const opener = line.match(/=\s*("""|''')/);
+    if (opener && line.indexOf(opener[1], line.indexOf(opener[1]) + 3) === -1) {
+      fence = opener[1];
+      continue;
+    }
+    const header = line.match(/^\s*\[([^\]]+)\]/);
+    if (header) {
+      table = header[1].trim();
+      continue;
+    }
+    yield { table, line };
+  }
+}
+
+/**
+ * Extract a TOP-LEVEL key — one that appears before the first `[table]` header.
+ * Scoping matters: a same-named key inside some other table must not be mistaken
+ * for the real one, or a policy resolves to a sandbox mode nobody declared.
  */
 function topLevelTomlString(content, key) {
   const pattern = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']*)["']`);
-  for (const line of content.split("\n")) {
-    if (/^\s*\[/.test(line)) break; // first table header ends the top-level region
+  for (const { table, line } of tomlLines(content)) {
+    if (table !== null) break; // past the top-level region
     const match = line.match(pattern);
     if (match) return match[1];
   }
@@ -173,18 +243,13 @@ function topLevelTomlString(content, key) {
  * The table scoping is the whole check. A bare `network_access = true` at top
  * level, or under some other table, is ignored by Codex: accepting it would pass
  * a policy whose sandbox still blocks loopback, which is precisely the run-killing
- * configuration this gate exists to refuse. Same reasoning as
- * topLevelTomlString — a key means nothing without its table.
+ * configuration this gate exists to refuse.
  */
 function hasNetworkAccess(content) {
-  let inTable = false;
-  for (const line of content.split("\n")) {
-    const header = line.match(/^\s*\[([^\]]+)\]/);
-    if (header) {
-      inTable = header[1].trim() === "sandbox_workspace_write";
-      continue;
+  for (const { table, line } of tomlLines(content)) {
+    if (table === "sandbox_workspace_write" && /^\s*network_access\s*=\s*true\b/.test(line)) {
+      return true;
     }
-    if (inTable && /^\s*network_access\s*=\s*true\b/.test(line)) return true;
   }
   return false;
 }
@@ -205,7 +270,7 @@ function hasNetworkAccess(content) {
  */
 function resolveCodexPolicy(workingDir, deps) {
   const configPath = path.join(workingDir, ".codex", "config.toml");
-  const read = readPlainFile(configPath, "Codex policy file (.codex/config.toml)");
+  const read = readPlainFile(configPath, "Codex policy file (.codex/config.toml)", workingDir);
   if (!read.ok) return { ok: false, reason: `${read.reason} ${DOC_HINT}` };
 
   const declared = topLevelTomlString(read.content, "sandbox_mode");
@@ -273,7 +338,7 @@ function collectCodexRules(workingDir, deps) {
     .sort();
 
   for (const file of files) {
-    const read = readPlainFile(file, "Codex execpolicy rules file");
+    const read = readPlainFile(file, "Codex execpolicy rules file", workingDir);
     if (!read.ok) return { ok: false, reason: `${read.reason} ${DOC_HINT}` };
     const result = check(file);
     if (!result?.ok) {

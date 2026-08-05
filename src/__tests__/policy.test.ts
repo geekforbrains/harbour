@@ -281,6 +281,48 @@ describe("resolveAgentPolicy — codex enforced", () => {
     expect(resolve()).toMatchObject({ ok: true, sandboxMode: "workspace-write" });
   });
 
+  it("is not fooled by a table header written inside a multi-line string", () => {
+    // Without fence tracking the fake header ends the top-level region early,
+    // the real sandbox_mode below it goes unread, and a danger-full-access
+    // policy both passes and gets reported as workspace-write.
+    writeCodexConfig(
+      [
+        'notes = """',
+        "[fake]",
+        '"""',
+        'sandbox_mode = "danger-full-access"',
+        "",
+        "[sandbox_workspace_write]",
+        "network_access = true",
+        "",
+      ].join("\n"),
+    );
+    const policy = resolve();
+    expect(policy.ok).toBe(false);
+    if (!policy.ok) expect(policy.reason).toMatch(/danger-full-access/);
+  });
+
+  it("does not count network_access that only appears inside a string", () => {
+    writeCodexConfig(
+      [
+        'sandbox_mode = "workspace-write"',
+        'notes = """',
+        "[sandbox_workspace_write]",
+        "network_access = true",
+        '"""',
+        "",
+      ].join("\n"),
+    );
+    expect(resolve().ok).toBe(false);
+  });
+
+  it("handles a single-line triple-quoted value without swallowing the rest", () => {
+    // Guard against over-correction: `x = """one line"""` opens and closes on
+    // the same line, so the config after it must still be read.
+    writeCodexConfig(`desc = """one line"""\n${CODEX_CONFIG}`);
+    expect(resolve()).toMatchObject({ ok: true, sandboxMode: "workspace-write" });
+  });
+
   it("fails closed when config.toml is missing", () => {
     const policy = resolve();
     expect(policy.ok).toBe(false);
@@ -345,6 +387,72 @@ describe("resolveAgentPolicy — codex optional execpolicy rules", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.symlinkSync(target, path.join(dir, "link.rules"));
     expect(resolve().ok).toBe(false);
+  });
+});
+
+// A policy is only trustworthy if it's the file inside the workspace Harbour
+// validated. Rejecting a symlinked LEAF isn't enough: pointing a parent
+// directory elsewhere leaves the leaf stat'ing as an innocent regular file
+// while its bytes live somewhere the agent (or anyone else) can rewrite.
+describe("resolveAgentPolicy — the policy must really live in the workspace", () => {
+  let outside: string;
+
+  beforeEach(() => {
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-outside-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("refuses a claude policy reached through a symlinked .claude directory", () => {
+    fs.mkdirSync(path.join(outside, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(outside, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { allow: ["Bash(curl *)"] } }),
+    );
+    fs.symlinkSync(path.join(outside, ".claude"), path.join(ws, ".claude"));
+    const policy = resolveAgentPolicy({ cli: "claude", workingDir: ws, permissions: "enforced" });
+    expect(policy.ok).toBe(false);
+    if (!policy.ok) expect(policy.reason).toMatch(/outside the agent's workspace/);
+  });
+
+  it("refuses a codex policy reached through a symlinked .codex directory", () => {
+    fs.mkdirSync(path.join(outside, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(outside, ".codex", "config.toml"), CODEX_CONFIG);
+    fs.symlinkSync(path.join(outside, ".codex"), path.join(ws, ".codex"));
+    const policy = resolveAgentPolicy(
+      { cli: "codex", workingDir: ws, permissions: "enforced" },
+      { checkRulesFile: okCheck },
+    );
+    expect(policy.ok).toBe(false);
+  });
+
+  it("refuses a rules file reached through a symlinked rules directory", () => {
+    writeCodexConfig(CODEX_CONFIG);
+    const realRules = path.join(outside, "rules");
+    fs.mkdirSync(realRules, { recursive: true });
+    fs.writeFileSync(path.join(realRules, "x.rules"), 'prefix_rule(pattern=["rm"])\n');
+    fs.symlinkSync(realRules, path.join(ws, ".codex", "rules"));
+    const policy = resolveAgentPolicy(
+      { cli: "codex", workingDir: ws, permissions: "enforced" },
+      { checkRulesFile: okCheck },
+    );
+    expect(policy.ok).toBe(false);
+  });
+
+  it("still accepts a genuine policy when the workspace itself sits behind a symlink", () => {
+    // Guard against over-correction: on macOS the temp root is /var → /private/var,
+    // so a naive string-prefix containment check would reject every real policy.
+    writeClaudeSettings(JSON.stringify({ permissions: { allow: ["Bash(curl *)"] } }));
+    const linked = path.join(outside, "ws-link");
+    fs.symlinkSync(ws, linked);
+    const policy = resolveAgentPolicy({
+      cli: "claude",
+      workingDir: linked,
+      permissions: "enforced",
+    });
+    expect(policy.ok).toBe(true);
   });
 });
 

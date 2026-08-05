@@ -8,7 +8,7 @@ You have API access to a Harbour instance — the control plane for AI agents do
 
 Key concepts:
 - **Projects** — the top-level containers. Every agent, job, doc, table, and env var lives in exactly one project.
-- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no Harbour credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code or Codex.
+- **Agents** — workers whose runs are claimed and executed by a runner. An agent has no Harbour credential of its own; a runner claims the agent's runs and the spawned CLI authenticates each run with that run's per-run exec token. The bundled runner drives Claude Code or Codex. Each agent's `permissions` setting decides whether its CLI runs under a workspace policy file or with the CLI's permission-bypass flag — and **your key can change it**, on any agent, including one that was deliberately constrained. Treat flipping an agent to `unrestricted` as an operator decision to confirm, not a fix to apply when a run reports a denial. See [agent permissions](guides/agent-permissions.md).
 - **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions and can have prerun/postrun gates. Workflow jobs run a single gate script with no agent or LLM.
 - **Runs** — a single execution of a job. Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into the runs of jobs they're pinned for or attached to.
