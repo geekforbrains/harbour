@@ -21,8 +21,7 @@
   remains). Workspace and script paths lose the org segment:
   `workspaces/<project>/<agent>` and `workflows/<project>[/<agent>]/<job-leaf>`.
 - **Migration: none.** Harbour has no schema migrations — a fresh database is
-  the only path across this change. See [MIGRATION.md](MIGRATION.md) for the
-  by-hand cutover notes.
+  the only path across this change.
 
 ### Breaking: agents no longer bypass CLI permissions by default
 
