@@ -88,8 +88,10 @@ Both built-in CLIs have their own command shape. From `bin/lib/providers.mjs`:
 
 | CLI | Binary | Key flags | Resume mechanism |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages`, then by the agent's [permissions](#per-agent-permissions): enforced → `--settings <ws>/.claude/settings.json --permission-mode <mode> --setting-sources project`; unrestricted → `--dangerously-skip-permissions` | `--session-id <uuid>` (new) or `--resume <uuid>` |
-| Codex | `codex` | `exec … --json`, where `…` is by the agent's [permissions](#per-agent-permissions): enforced → `--skip-git-repo-check -s <sandbox_mode> -c approval_policy=never`; unrestricted → `--dangerously-bypass-approvals-and-sandbox` | `exec resume <thread_id>` |
+| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages`, plus the [permissions](#per-agent-permissions) flags — policy flags (enforced) or the bypass flag (unrestricted) | `--session-id <uuid>` (new) or `--resume <uuid>` |
+| Codex | `codex` | `exec … --json`, where `…` is the [permissions](#per-agent-permissions) flags — sandbox flags (enforced) or the bypass flag (unrestricted) | `exec resume <thread_id>` |
+
+The exact per-mode flags are documented where the policy files are: [agent permissions](../guides/agent-permissions.md).
 
 Model selection: Claude uses `--model`; Codex uses `-m`. Thinking/reasoning
 depth: Claude uses `--effort <level>`; Codex uses
@@ -123,35 +125,30 @@ What loads where, verified against Claude Code 2.1.222 and Codex 0.146.0:
 |---|---|---|---|
 | Workspace file (`CLAUDE.md` / `AGENTS.md` in the cwd) | yes | yes | yes |
 | Ancestor directories (`~/.harbour/CLAUDE.md`, up to and including `~/CLAUDE.md`) | yes | yes | no — Codex walks git root → cwd only, and workspaces aren't git repos |
-| User level (`~/.claude/CLAUDE.md` / `$CODEX_HOME/AGENTS.md`) | **no** | yes | yes |
-| User-scope settings: hooks, MCP servers | **no** | yes | yes — `$CODEX_HOME/config.toml` (including any `mcp_servers`) is global config either way |
 | Workspace skills (`.claude/skills/` for Claude; `.codex/skills/` or `.agents/skills/` for Codex) | yes | yes | yes — regardless of workspace trust |
-| User skills (`~/.claude/skills/` for Claude; `$CODEX_HOME/skills/` incl. bundled packs, plus `~/.agents/skills/`, for Codex) | **no** | yes | yes |
+| User memory (`~/.claude/CLAUDE.md` / `$CODEX_HOME/AGENTS.md`) | **no** | yes | yes |
+| User-scope hooks, MCP servers, and skills | **no** | yes | yes — `$CODEX_HOME/config.toml` is global config either way; skills include `$CODEX_HOME/skills/` bundled packs and `~/.agents/skills/` |
 
-The enforced-Claude column is a side effect of the permission flags: the runner passes `--setting-sources project`, which excludes user-scope configuration entirely — memory, hooks, and user-registered MCP servers ([agent permissions](../guides/agent-permissions.md) has the flag details). Workspace-scope context still applies, including CLAUDE.md files in ancestor directories and any `.mcp.json` in the workspace itself.
+The enforced-Claude column is a side effect of the permission flags: the runner passes `--setting-sources project`, which excludes user-scope configuration entirely ([agent permissions](../guides/agent-permissions.md) has the flag details). Workspace-scope context still applies, including CLAUDE.md files in ancestor directories and any `.mcp.json` in the workspace itself.
 
 Practical consequences:
 
-- **`~/.harbour/CLAUDE.md` is a natural host-wide context file for Claude agents.** Every workspace lives under `~/.harbour/workspaces/…`, and Claude reads CLAUDE.md from all ancestors of the cwd, so one file there reaches every Claude agent on the host, in both permission modes. The flip side: so does a stray `~/CLAUDE.md` — the home directory is an ancestor too.
-- **Codex has no equivalent ancestor path.** Its per-workspace file is `AGENTS.md` in the cwd; its host-wide file is `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), which loads in both modes. Setting `project_doc_max_bytes = 0` disables the workspace/project docs; nothing short of relocating `CODEX_HOME` disables the global one, and that relocates `auth.json` and `config.toml` with it.
-- **Repos inside the workspace bring their own context.** When an agent works inside a repo it cloned, that repo's `CLAUDE.md` / `AGENTS.md` join the context by the CLIs' normal rules — same as your terminal.
-- **On a dedicated Harbour machine — the recommended production layout — this is all upside:** the user-level files *are* the machine's agent context. On a shared dev machine, know that your personal `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, hooks, and MCP servers ride along in every run except enforced Claude ones. Claude's `--bare` flag and `CLAUDE_CONFIG_DIR` exist as blunter isolation knobs, but both also sever the CLI's login (keychain/credentials aren't read), so neither is something Harbour sets for you.
+- **`~/.harbour/CLAUDE.md` is a natural host-wide context file for Claude agents.** Every workspace lives under `~/.harbour/workspaces/…` and Claude reads CLAUDE.md from all ancestors of the cwd — the flip side being that a stray `~/CLAUDE.md` reaches every agent too.
+- **Codex has no ancestor path.** Its per-workspace file is `AGENTS.md` in the cwd; its host-wide file is `$CODEX_HOME/AGENTS.md`, loaded in both modes. `project_doc_max_bytes = 0` disables the workspace docs; only relocating `CODEX_HOME` disables the global one, and that moves `auth.json` and `config.toml` with it.
+- **A repo the agent clones brings its own `CLAUDE.md` / `AGENTS.md`** when the agent works inside it — same as your terminal.
+- **On a dedicated Harbour machine — the recommended production layout — this is all upside:** the user-level files *are* the machine's agent context. On a shared dev machine, your personal memory files, hooks, and MCP servers ride along in every run except enforced Claude ones. (Claude's `--bare` and `CLAUDE_CONFIG_DIR` isolate harder, but both sever the CLI's login — not something Harbour will set for you.)
 
-**Per-agent skill sets** fall out of the workspace rows above: put skills in the agent's workspace and only that agent has them. An enforced Claude agent is the strongest version — user skills don't load, so its skill surface is exactly the workspace set plus the CLI's built-ins. Invoking a workspace skill needs no allow rule in the policy; the policy governs the tool calls the skill's instructions lead to (its Bash commands, its edits), not the skill's loading. To serve both CLIs from one set, make `.agents/skills/` the real directory (Codex reads it directly) and symlink `.claude/skills` → `../.agents/skills` for Claude — verified to work through the symlink.
+**Per-agent skill sets** fall out of the workspace rows: put skills in the agent's workspace and only that agent has them. Enforced Claude is the strongest version — user skills don't load, so the agent's skill surface is exactly the workspace set plus built-ins. Invoking a workspace skill needs no allow rule; the policy governs the tool calls the skill leads to, not its loading. One set can serve both CLIs: make `.agents/skills/` the real directory (Codex reads it directly) and symlink `.claude/skills` → `../.agents/skills` (verified to work through the symlink).
 
 When in doubt whether a file loads, test it the boring way: put a distinctive marker word in the suspect file and ask the CLI in the workspace (`claude -p` / `codex exec`) which markers it can see, with the same flags the runner uses.
 
 ### Per-agent permissions
 
-Every agent has a `permissions` setting, set on its settings page in the dashboard: **Enforced** (the default) or **Unrestricted**. It applies to both CLIs, and there is no per-job override — permissions belong to the agent, so one job can't quietly widen what an agent may do.
+Every agent has a `permissions` setting on its settings page: **Enforced** (the default) or **Unrestricted**. There is no per-job override — permissions belong to the agent, so one job can't quietly widen what an agent may do.
 
-**Enforced** means the agent's CLI runs under a policy file that lives in the agent's [workspace](#workspaces), written in that CLI's own native format — `.claude/settings.json` for Claude Code, `.codex/config.toml` for Codex. Harbour never authors or edits the file's content; before every run the runner validates that it exists and is well-formed and points the CLI at it. A missing or invalid policy **fails the run closed**: the CLI is never spawned, and the run finishes `failed` with an activity message naming exactly what's missing and how to fix it — never a silent fallback to unrestricted.
+Enforced means the CLI runs under a policy file you author in the agent's [workspace](#workspaces), in that CLI's native format; a missing or invalid policy **fails the run closed** — the CLI is never spawned, and the run finishes `failed` with the reason as activity. Unrestricted is the deliberate per-agent opt-out that restores the CLI's permission-bypass flag (the agent shows a badge, and a policy file may not grant itself the same bypass).
 
-**Unrestricted** is a deliberate per-agent opt-out that restores the legacy bypass flags (`--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`); the agent shows an Unrestricted badge in the dashboard. A policy file may not grant itself the same bypass — the runner refuses `bypassPermissions` / `danger-full-access` in a workspace file, so the bypass stays visible where agents are managed.
-
-Policy file formats, minimal working examples, exactly what the runner checks, workspace trust, what these files do and do not contain, and the `harbour policy check` migration command are all in [agent permissions](../guides/agent-permissions.md).
-
-Enforced mode pairs well with the workspace `bin/` PATH injection above: a per-agent wrapper script (e.g. an `auth-curl` shim that reads its env vars internally) gives you a narrow, allow-listable command name in place of a broad `curl` rule, and keeps `$VAR` references out of the LLM-emitted command.
+Everything else — file formats and minimal examples, exactly what the runner validates, workspace trust, the wrapper-script shim pattern for narrow allow rules, and the `harbour policy init` / `policy check` commands — lives in [agent permissions](../guides/agent-permissions.md).
 
 ### Streaming and kill
 
