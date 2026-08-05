@@ -125,6 +125,8 @@ What loads where, verified against Claude Code 2.1.222 and Codex 0.146.0:
 | Ancestor directories (`~/.harbour/CLAUDE.md`, up to and including `~/CLAUDE.md`) | yes | yes | no — Codex walks git root → cwd only, and workspaces aren't git repos |
 | User level (`~/.claude/CLAUDE.md` / `$CODEX_HOME/AGENTS.md`) | **no** | yes | yes |
 | User-scope settings: hooks, MCP servers | **no** | yes | yes — `$CODEX_HOME/config.toml` (including any `mcp_servers`) is global config either way |
+| Workspace skills (`.claude/skills/` for Claude; `.codex/skills/` or `.agents/skills/` for Codex) | yes | yes | yes — regardless of workspace trust |
+| User skills (`~/.claude/skills/` for Claude; `$CODEX_HOME/skills/` incl. bundled packs, plus `~/.agents/skills/`, for Codex) | **no** | yes | yes |
 
 The enforced-Claude column is a side effect of the permission flags: the runner passes `--setting-sources project`, which excludes user-scope configuration entirely — memory, hooks, and user-registered MCP servers ([agent permissions](../guides/agent-permissions.md) has the flag details). Workspace-scope context still applies, including CLAUDE.md files in ancestor directories and any `.mcp.json` in the workspace itself.
 
@@ -134,6 +136,8 @@ Practical consequences:
 - **Codex has no equivalent ancestor path.** Its per-workspace file is `AGENTS.md` in the cwd; its host-wide file is `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), which loads in both modes. Setting `project_doc_max_bytes = 0` disables the workspace/project docs; nothing short of relocating `CODEX_HOME` disables the global one, and that relocates `auth.json` and `config.toml` with it.
 - **Repos inside the workspace bring their own context.** When an agent works inside a repo it cloned, that repo's `CLAUDE.md` / `AGENTS.md` join the context by the CLIs' normal rules — same as your terminal.
 - **On a dedicated Harbour machine — the recommended production layout — this is all upside:** the user-level files *are* the machine's agent context. On a shared dev machine, know that your personal `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, hooks, and MCP servers ride along in every run except enforced Claude ones. Claude's `--bare` flag and `CLAUDE_CONFIG_DIR` exist as blunter isolation knobs, but both also sever the CLI's login (keychain/credentials aren't read), so neither is something Harbour sets for you.
+
+**Per-agent skill sets** fall out of the workspace rows above: put skills in the agent's workspace and only that agent has them. An enforced Claude agent is the strongest version — user skills don't load, so its skill surface is exactly the workspace set plus the CLI's built-ins. Invoking a workspace skill needs no allow rule in the policy; the policy governs the tool calls the skill's instructions lead to (its Bash commands, its edits), not the skill's loading. To serve both CLIs from one set, make `.agents/skills/` the real directory (Codex reads it directly) and symlink `.claude/skills` → `../.agents/skills` for Claude — verified to work through the symlink.
 
 When in doubt whether a file loads, test it the boring way: put a distinctive marker word in the suspect file and ask the CLI in the workspace (`claude -p` / `codex exec`) which markers it can see, with the same flags the runner uses.
 
