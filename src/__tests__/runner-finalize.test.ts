@@ -44,14 +44,27 @@ describe("buildApiPrompt (work prompt)", () => {
     expect(prompt).not.toContain("the run will be marked as failed");
   });
 
-  it("keeps the title-setting preamble", () => {
-    expect(prompt).toContain("set a short title for this run");
-    expect(prompt).toContain("https://h.test/api/runs/r1/title");
+  it("keeps the title-setting preamble, now via the harbour command", () => {
+    expect(prompt).toContain("set a short title");
+    expect(prompt).toContain("harbour update title");
   });
 
-  it("keeps the status-endpoint curl docs (agent can set waiting mid-run)", () => {
-    expect(prompt).toContain("https://h.test/api/runs/r1/status");
-    expect(prompt).toContain('"status":"waiting"');
+  it("documents setting waiting mid-run (the agent's one legitimate mid-run status)", () => {
+    expect(prompt).toContain("harbour update status waiting");
+  });
+
+  // The reporting trio moved off curl so a restricted agent can be granted it
+  // with one narrow rule instead of Bash(curl *), which would also hand over
+  // the whole internet. The endpoints must not reappear as curl recipes: the
+  // model copies whatever the prompt shows it.
+  it("does not hand the agent curl recipes for title/status/activity", () => {
+    for (const endpoint of ["/api/runs/r1/title", "/api/runs/r1/status", "/api/runs/r1/activity"]) {
+      expect(prompt, endpoint).not.toContain(endpoint);
+    }
+  });
+
+  it("still documents the endpoints curl is genuinely needed for", () => {
+    expect(prompt).toContain("/api/runs/r1/attachments");
   });
 
   it("keeps the API key and guide url", () => {
@@ -100,26 +113,28 @@ describe("buildPrompt (work prompt) — tables block", () => {
 
 describe("buildFinalizePrompt", () => {
   it("contains the explicit set-status mandate and the valid set", () => {
-    const p = buildFinalizePrompt(API, API_KEY, { mode: "resume" });
+    const p = buildFinalizePrompt({ mode: "resume" });
     expect(p).toContain("set the run status");
     for (const s of ["done", "waiting", "failed", "skipped"]) {
       expect(p).toContain(s);
     }
   });
 
-  it("includes the status endpoint curl with the api key", () => {
-    const p = buildFinalizePrompt(API, API_KEY, { mode: "resume" });
-    expect(p).toContain("https://h.test/api/runs/r1/status");
-    expect(p).toContain(API_KEY);
+  it("asks for the status via the harbour command, not curl", () => {
+    // The finalize turn spawns the CLI again under the same policy, so if it
+    // taught curl here a scaffolded agent would still die at the backstop.
+    const p = buildFinalizePrompt({ mode: "resume" });
+    expect(p).toContain("harbour update status");
+    expect(p).not.toContain("https://h.test/api/runs/r1/status");
   });
 
   it("instructs the agent to do nothing else", () => {
-    const p = buildFinalizePrompt(API, API_KEY, { mode: "resume" });
+    const p = buildFinalizePrompt({ mode: "resume" });
     expect(p.toLowerCase()).toContain("do nothing else");
   });
 
   it("resume mode does NOT inline the work activity log (session has context)", () => {
-    const p = buildFinalizePrompt(API, API_KEY, {
+    const p = buildFinalizePrompt({
       mode: "resume",
       activityContext: "[agent] did a bunch of work",
     });
@@ -127,7 +142,7 @@ describe("buildFinalizePrompt", () => {
   });
 
   it("fresh mode carries the activity log as context", () => {
-    const p = buildFinalizePrompt(API, API_KEY, {
+    const p = buildFinalizePrompt({
       mode: "fresh",
       activityContext: "[agent] did a bunch of work",
     });
@@ -136,7 +151,7 @@ describe("buildFinalizePrompt", () => {
 
   it("the work prompt and finalize prompt are clearly different", () => {
     const work = buildApiPrompt(API, API_KEY);
-    const fin = buildFinalizePrompt(API, API_KEY, { mode: "resume" });
+    const fin = buildFinalizePrompt({ mode: "resume" });
     expect(fin).not.toBe(work);
     // The mandate lives ONLY in the finalize prompt now.
     expect(work).not.toContain(MANDATE);

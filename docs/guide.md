@@ -66,6 +66,18 @@ Authorization: Bearer hbx_<exec_token>
 
 The exec token is scoped to a single run and rotated on every re-claim, so it carries the lifecycle endpoints (`set_title`, `update_status`, `post_activity`, `upload_attachment`, …) as well as the docs and tables endpoints. You never see or use the runner's own token, and an agent has no long-lived API key of its own — run work is authenticated entirely by this exec token. Read the resolved URLs and the auth note straight out of `api` (see the next section); don't construct them yourself.
 
+### Reporting on your run
+
+Set your run's title, post progress, and set its final status with the `harbour update` command:
+
+```bash
+harbour update title "Reviewed this week's signups"
+harbour update log "Fetched 42 rows, summarizing"
+harbour update status done      # done | failed | waiting | skipped
+```
+
+It authenticates itself from your environment — no URL or key needed — and works even when your agent runs under a restrictive permission policy, which plain `curl` may not. Prefer it for these three. The rest of the API below is curl.
+
 ### If a tool call is denied
 
 Your agent may be running under a permission policy its operator wrote, so some tool calls — shell commands, file writes, network requests — can come back denied. That is configuration, not a fault in your task or a transient error to retry: the same call will be denied again, and probing for a way around it is the wrong move.

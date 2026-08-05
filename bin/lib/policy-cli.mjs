@@ -145,6 +145,163 @@ export function decidePolicyExit(results) {
   return results.some((r) => !r.ok) ? 1 : 0;
 }
 
+// ── `harbour policy init` ────────────────────────────────────────────────────
+//
+// Writes the starter policy an enforced agent needs to run at all. The templates
+// are deliberately the smallest thing that WORKS: enough for the agent to report
+// its title, log, and final status, and nothing more. Everything an agent
+// actually does for its job is the operator's to add on top — which is the point
+// of the setting, and the reason the scaffold refuses to overwrite by default.
+
+/** Where each CLI expects its policy, relative to the agent's workspace. */
+export function templatePath(cli) {
+  if (cli === "claude") return path.join(".claude", "settings.json");
+  if (cli === "codex") return path.join(".codex", "config.toml");
+  return null;
+}
+
+/**
+ * The starter policy for a CLI, or null if Harbour can't scaffold that CLI.
+ *
+ * Claude gets exactly one allow rule. `Bash(harbour update *)` is narrow on
+ * purpose: `Bash(curl *)` would have worked for reporting but also hands over
+ * the whole internet, and `Bash(harbour *)` would expose the admin CLI (user
+ * create, connect, install). This is most operators' only policy — its default
+ * has to be the safe one.
+ *
+ * Codex has no tool-level allow-list, so its policy is the sandbox: writes
+ * confined to the workspace, with network on because every report is an HTTP
+ * call and Codex's sandbox otherwise blocks even loopback.
+ */
+export function policyTemplate(cli) {
+  if (cli === "claude") {
+    return `${JSON.stringify(
+      {
+        permissions: {
+          defaultMode: "dontAsk",
+          allow: ["Bash(harbour update *)"],
+        },
+      },
+      null,
+      2,
+    )}\n`;
+  }
+  if (cli === "codex") {
+    return [
+      "# Harbour agent policy. Writes are confined to this workspace;",
+      "# network_access is required for the agent to report back to Harbour.",
+      'sandbox_mode = "workspace-write"',
+      "",
+      "[sandbox_workspace_write]",
+      "network_access = true",
+      "",
+    ].join("\n");
+  }
+  return null;
+}
+
+/** Parse `harbour policy init <project/agent|agent> [--force]`. */
+export function parseInitArgs(argv = []) {
+  let agent = null;
+  let force = false;
+  for (const arg of argv) {
+    if (arg === "--force") {
+      force = true;
+    } else if (arg.startsWith("--")) {
+      return { ok: false, error: `Unknown argument: ${arg}` };
+    } else if (agent === null) {
+      agent = arg;
+    } else {
+      return { ok: false, error: `Unexpected argument: ${arg}` };
+    }
+  }
+  if (!agent) {
+    return { ok: false, error: "An agent is required (e.g. harbour policy init dev-agent)" };
+  }
+  return { ok: true, agent, force };
+}
+
+/**
+ * `harbour policy init <agent> [--force]` — scaffold one agent's policy file.
+ * Returns the process exit code. deps ({ loadAgents, harbourDir, log, error })
+ * exist for tests; production callers pass nothing.
+ */
+export function runPolicyInit(args = [], deps = {}) {
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
+
+  const parsed = parseInitArgs(args);
+  if (!parsed.ok) {
+    error(parsed.error);
+    error("Usage: harbour policy init <agent-slug|project/agent-slug> [--force]");
+    return 1;
+  }
+
+  let rows;
+  try {
+    rows = deps.loadAgents ? deps.loadAgents() : loadAgentsFromDb();
+  } catch (err) {
+    error(err.message || String(err));
+    return 1;
+  }
+
+  const slash = parsed.agent.indexOf("/");
+  const project = slash === -1 ? null : parsed.agent.slice(0, slash);
+  const slug = slash === -1 ? parsed.agent : parsed.agent.slice(slash + 1);
+  const matches = rows.filter((r) => r.slug === slug && (!project || r.project_slug === project));
+
+  if (matches.length === 0) {
+    error(`No agent found with slug ${JSON.stringify(parsed.agent)}.`);
+    return 1;
+  }
+  if (matches.length > 1) {
+    // Writing to the wrong project's workspace would look like it worked and
+    // leave the intended agent still failing, so make the caller disambiguate.
+    error(
+      `Ambiguous agent ${JSON.stringify(slug)} — it exists in ${matches.length} projects. Qualify it: ${matches
+        .map((m) => `${m.project_slug}/${m.slug}`)
+        .join(", ")}`,
+    );
+    return 1;
+  }
+
+  const row = matches[0];
+  const body = policyTemplate(row.cli);
+  const relative = templatePath(row.cli);
+  if (!body || !relative) {
+    error(
+      `No policy template for CLI ${JSON.stringify(row.cli)} — Harbour scaffolds claude and codex.`,
+    );
+    return 1;
+  }
+
+  const harbourDir = deps.harbourDir ?? getHarbourDir();
+  const file = path.join(harbourDir, "workspaces", row.project_slug, row.slug, relative);
+
+  if (fs.existsSync(file) && !parsed.force) {
+    error(`${file} already exists — pass --force to replace it.`);
+    return 1;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body);
+  } catch (err) {
+    error(`Could not write ${file}: ${err.message}`);
+    return 1;
+  }
+
+  log(`Wrote ${row.cli} policy for ${row.project_slug}/${row.slug}:`);
+  log(`  ${file}`);
+  if (normalizePermissions(row.permissions) === "unrestricted") {
+    log("");
+    log(
+      `Note: this agent's permissions are set to Unrestricted, so the file is inert until you switch it to Enforced in the dashboard.`,
+    );
+  }
+  return 0;
+}
+
 /**
  * `harbour policy check [--agent <slug>]` — the command body. Returns the
  * process exit code. deps ({ loadAgents, resolveAgentPolicy, harbourDir, log,

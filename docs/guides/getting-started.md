@@ -132,13 +132,7 @@ New agents default to **Enforced**, which means the CLI runs under a permission 
 For a first run, the quickest path is to make that choice explicitly. Either:
 
 - **Set the agent to Unrestricted** on its settings page — the CLI gets its permission-bypass flag, which is how every agent behaved before this setting existed. Fine for trying things out on your own machine; you can tighten it later.
-- **Or write the policy file** now. For a Claude Code agent, the minimum that can complete a run is `~/.harbour/workspaces/<project-slug>/<agent-slug>/.claude/settings.json` containing:
-
-  ```json
-  { "permissions": { "allow": ["Bash(curl *)"] } }
-  ```
-
-  `curl` has to be allowed because the run protocol reports the title, activity, and final status through it.
+- **Or scaffold the policy file** now, with `npm run harbour -- policy init <project>/<agent>`. That writes the minimum an agent needs to run: permission to report its own title, progress, and final status, and nothing else. The agent will start, tell you what it can't do, and finish cleanly — then you add what the job actually needs on top.
 
 Either way, `npm run harbour -- policy check` tells you where every agent stands before you run anything. The full picture — Codex's format, what's validated, and how to tighten a policy — is in [agent permissions](agent-permissions.md).
 

@@ -8,10 +8,11 @@ import { runSetup, runUserCreate } from "./lib/bootstrap.mjs";
 import { printRunnerStatus } from "./lib/config.mjs";
 import { connectRunner } from "./lib/connect.mjs";
 import { installRunner, uninstallRunner } from "./lib/install.mjs";
-import { runPolicyCheck } from "./lib/policy-cli.mjs";
+import { runPolicyCheck, runPolicyInit } from "./lib/policy-cli.mjs";
 import { runPool } from "./lib/runner.mjs";
 import { buildNextServerArgs } from "./lib/server-config.mjs";
 import { monitorServerProcess } from "./lib/server-process.mjs";
+import { runUpdate } from "./lib/update-cli.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -36,6 +37,8 @@ Usage:
   harbour uninstall          Remove the launchd runner service (macOS)
   harbour status             Show the runner's provisioning status
   harbour policy check       Validate every agent's permission policy (exit 1 on failures)
+  harbour policy init <a>    Scaffold a starter policy file into an agent's workspace
+  harbour update <field>     Report on the current run (agents only: status | title | log)
   `.trim(),
   );
 }
@@ -106,6 +109,8 @@ async function main() {
     case "policy": {
       if (rest[0] === "check") {
         process.exitCode = await runPolicyCheck(rest.slice(1));
+      } else if (rest[0] === "init") {
+        process.exitCode = await runPolicyInit(rest.slice(1));
       } else {
         console.error(`Unknown policy command: ${rest[0]}`);
         usage();
@@ -113,6 +118,11 @@ async function main() {
       }
       break;
     }
+    // The agent-facing reporting channel. Runs inside an agent's own shell,
+    // authenticated by the per-run credentials the runner puts in its env.
+    case "update":
+      process.exitCode = await runUpdate(rest);
+      break;
     default:
       usage();
       break;

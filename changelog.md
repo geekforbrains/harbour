@@ -23,6 +23,33 @@
 - **Migration: none.** Harbour has no schema migrations — a fresh database is
   the only path across this change.
 
+### Agents report through `harbour update`, and policies can be scaffolded
+
+- **New command: `harbour update {title,log,status}`** — the channel a running
+  agent uses to report back. It reads the run's identity and a per-run
+  credential from the environment the runner injects (`HARBOUR_URL`,
+  `HARBOUR_RUN_ID`, `HARBOUR_API_KEY`), so it needs no URL or key on the
+  command line, and exits non-zero outside a run.
+- **Why it exists.** The run protocol was `curl`, so the only allow rule that
+  covered reporting was `Bash(curl *)` — which also hands the agent the whole
+  internet and quietly defeats the rest of its policy. `Bash(harbour update *)`
+  grants reporting and nothing else: an agent holding only that rule cannot
+  fetch a URL, read a file, or run any other command. Keep the rule scoped to
+  `harbour update`; `Bash(harbour *)` would also grant the admin CLI.
+- **Agent runs now get `HARBOUR_URL` / `HARBOUR_RUN_ID` / `HARBOUR_API_KEY`** in
+  the spawned CLI's environment. Workflow runs already did; this is the
+  agent-side counterpart. Job env vars are layered first, so a job secret can't
+  shadow the reporting credentials.
+- **The work and finalize prompts teach the command** instead of curl recipes
+  for title/status/activity. The finalize turn matters most: it spawns the CLI
+  again under the same policy, so a curl-based finalize would strand a
+  restricted agent at the backstop after its work had already succeeded.
+- **New command: `harbour policy init <agent> [--force]`** — scaffolds the
+  starter policy for an agent in its CLI's own format (`.claude/settings.json`
+  or `.codex/config.toml`), refusing to overwrite an existing file without
+  `--force`. What it writes is the minimum that works: reporting only. Pairs
+  with `harbour policy check`, which validates what it wrote.
+
 ### Breaking: agents no longer bypass CLI permissions by default
 
 - **Every agent now has a Permissions setting, and the default inverts the old
@@ -43,9 +70,9 @@
   project-scope settings silently ignore the sandbox keys that do the
   containing. `defaultMode` defaults to `dontAsk` and may not be
   `bypassPermissions` (bypassing is the dashboard toggle's job). The policy
-  must allow the run protocol's `curl` calls (e.g. `Bash(curl *)`) or every
-  run ends `failed`; Claude's "Ignoring permissions" stderr warnings are
-  surfaced as run activity.
+  must let the agent report — `Bash(harbour update *)`, which
+  `harbour policy init` writes — or every run ends `failed`; Claude's
+  "Ignoring permissions" stderr warnings are surfaced as run activity.
 - **Codex policy: `<workspace>/.codex/config.toml`** — the CLI's own config
   format, with `sandbox_mode` set to `workspace-write` (`danger-full-access`
   is refused; use the dashboard toggle instead). Passed as
@@ -55,8 +82,8 @@
   boundary — rules are a deny-list only, and unmatched commands run.
 - **Codex policies must enable network access** with
   `[sandbox_workspace_write]` `network_access = true`. Codex's sandbox
-  otherwise blocks every connection — loopback included — and the run
-  protocol is loopback `curl` to the Harbour API, so such an agent could do
+  otherwise blocks every connection — loopback included — and reporting to
+  Harbour is an HTTP call either way, so such an agent could do
   work but never report a title, activity, or final status, and every run
   would end `failed` at the finalize backstop. Harbour refuses the policy up
   front instead; `read-only` is refused for the same reason.

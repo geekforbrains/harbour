@@ -50,6 +50,27 @@ export function buildProviderCommand({
 }
 
 /**
+ * The environment an agent's CLI is spawned with: the job's own env vars, plus
+ * the run-scoped credentials `harbour update` needs to report back.
+ *
+ * The HARBOUR_* trio is what lets a restricted agent talk to Harbour through
+ * one narrow allow rule (`Bash(harbour update *)`) instead of `Bash(curl *)`,
+ * which would hand it the whole internet. Workflow runs have been given the
+ * same three for the same reason; this is the agent-side counterpart.
+ *
+ * Job vars are layered first so HARBOUR_* win a name collision — a job secret
+ * called HARBOUR_API_KEY must not be able to redirect the reporting channel.
+ */
+export function buildRunEnv({ env, url, runId, execToken }) {
+  return {
+    ...(env || {}),
+    HARBOUR_RUN_ID: runId,
+    HARBOUR_API_KEY: execToken,
+    HARBOUR_URL: url,
+  };
+}
+
+/**
  * Grant the host-side trust each CLI needs before it will honor a workspace
  * policy at all — Claude drops `permissions.allow` in an untrusted workspace,
  * Codex won't load a `.codex/` layer in one. Both are normally granted by an
@@ -110,9 +131,6 @@ function stripVerb(endpoint) {
  * off to a human) is a legitimate action the agent takes during the work itself.
  */
 export function buildApiPrompt(api, apiKey) {
-  const setTitleUrl = stripVerb(api.endpoints.set_title);
-  const runStatusUrl = stripVerb(api.endpoints.update_status);
-  const activityUrl = stripVerb(api.endpoints.post_activity);
   const uploadUrl = stripVerb(api.endpoints.upload_attachment);
   const guideUrl = stripVerb(api.endpoints.guide);
 
@@ -120,16 +138,20 @@ export function buildApiPrompt(api, apiKey) {
 
 Your output will be posted as a comment on this run. Write a clear, concise summary.
 
-Before doing anything else, set a short title for this run (max 80 chars) so humans can identify it on the dashboard:
-  curl -X PUT ${setTitleUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"title":"your short title"}'
+Report on this run with the \`harbour update\` command. It knows which run it belongs to and authenticates itself, so it needs no URL or key — and it is the ONLY way to report that works when this agent runs under a restricted permission policy. Prefer it over curl for these three:
 
-Use these curl commands with the provided API key:
+Before doing anything else, set a short title (max 80 chars) so humans can identify this run on the dashboard:
+  harbour update title "your short title"
 
-If you need human input to continue, set status to waiting (explain what you need in an activity message first):
-  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"waiting"}'
+Post a message to the activity log (visible on the dashboard):
+  harbour update log "your message"
 
-Post an activity message (visible on dashboard):
-  curl -X POST ${activityUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"content":"your message"}'
+If you need human input to continue, set the status to waiting (explain what you need in the log first):
+  harbour update status waiting
+
+Each exits 0 on success and prints the reason on failure. If one is denied by this agent's permission policy, report that in your final output rather than working around it.
+
+The rest of the API uses curl with the provided key:
 
 Upload an attachment (file) to this run:
   curl -X POST ${uploadUrl} -H "Authorization: Bearer ${apiKey}" -F "file=@/path/to/file.png"
@@ -181,15 +203,12 @@ export function resolveFinalizeMode(provider, sessionId) {
  * but enforced by the harness re-checking status after the turn, not by the
  * model remembering.
  *
- * @param {object} api
- * @param {string} apiKey
  * @param {object} opts
  * @param {'resume'|'fresh'} opts.mode
  * @param {string} [opts.activityContext] - the run's activity log, inlined ONLY
  *   in fresh mode (a resumed session already has it).
  */
-export function buildFinalizePrompt(api, apiKey, { mode = "resume", activityContext = "" } = {}) {
-  const runStatusUrl = stripVerb(api.endpoints.update_status);
+export function buildFinalizePrompt({ mode = "resume", activityContext = "" } = {}) {
   const set = TERMINAL_STATUSES.join(", ");
 
   let context = "";
@@ -197,8 +216,10 @@ export function buildFinalizePrompt(api, apiKey, { mode = "resume", activityCont
     context = `Here is the activity log of the work that was just done:\n\n${activityContext}\n\n`;
   }
 
-  return `${context}You MUST set a final run status now. Review what you just did and set the run status to exactly one of {${set}} via the status endpoint:
-  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"<status>"}'
+  return `${context}You MUST set a final run status now. Review what you just did and set the run status to exactly one of {${set}}:
+  harbour update status <status>
+
+If that command is denied by this agent's permission policy, say so plainly and stop — do not try to work around it with curl or another tool.
 
 Choose:
   - done    — the task completed successfully
@@ -902,6 +923,10 @@ export async function processNextRun(payload, { url, execToken }) {
   const secretValues = [apiKey, ...Object.values(payload.env || {})].filter(
     (value) => typeof value === "string" && value,
   );
+  // Built once and used by both CLI turns: the work turn and the finalize turn
+  // must report through the same credentials, or an agent that can set a status
+  // during its work can't set one when the harness asks for it.
+  const childEnv = buildRunEnv({ env: payload.env, url, runId, execToken: apiKey });
 
   if (droppedThinking) {
     const warning = `Ignoring unsupported thinking level \`${droppedThinking}\` for ${cli} — running with the CLI default. Fix the agent or job's thinking setting in the dashboard.`;
@@ -1204,7 +1229,7 @@ export async function processNextRun(payload, { url, execToken }) {
       runId,
       agentName,
       sessionId,
-      extraEnv: payload.env || {},
+      extraEnv: childEnv,
       secretValues,
       sessionAlreadyReported: !!sessionId,
     });
@@ -1377,10 +1402,9 @@ export async function processNextRun(payload, { url, execToken }) {
     thinking: agentThinking,
     workingDir,
     policy,
-    extraEnv: payload.env || {},
+    extraEnv: childEnv,
     secretValues,
     activityContext: truncatedOutput,
-    api: payload.api,
   });
 
   return finish(finalized.outcome, finalized.sessionId || workSessionId);
@@ -1413,15 +1437,7 @@ async function runFinalizeLoop({
   extraEnv,
   secretValues,
   activityContext,
-  api,
 }) {
-  // `api` is required to build the status-endpoint curl. Without it we can't
-  // tell the agent how to set status — fail with the backstop note.
-  if (!api) {
-    await failFinalize({ url, apiKey, runId, agentName, sessionId });
-    return { outcome: "failed", sessionId };
-  }
-
   const { mode } = resolveFinalizeMode(provider, sessionId);
   let turnSessionId = sessionId;
 
@@ -1430,7 +1446,7 @@ async function runFinalizeLoop({
       `  [${agentName}] Finalize attempt ${attempt}/${FINALIZE_MAX_ATTEMPTS} (${mode}) — asking for a terminal status`,
     );
 
-    const finalizePrompt = buildFinalizePrompt(api, apiKey, { mode, activityContext });
+    const finalizePrompt = buildFinalizePrompt({ mode, activityContext });
     // Resume mode reuses the session (isNewSession=false). Fresh mode runs a new
     // turn with no session id; the prompt carries the activity log as context.
     const cmd = buildProviderCommand({

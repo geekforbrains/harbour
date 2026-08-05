@@ -4,7 +4,7 @@ Every agent has a **Permissions** setting on its settings page: **Enforced** (th
 
 Harbour validates the policy file but never writes or manages its content. You author it; the runner checks that it exists and is well-formed, refuses the specific shapes that provably cannot work headless (see [what Harbour checks](#what-harbour-checks)), and passes it to the CLI. An enforced agent with no valid policy file does not run: the run fails closed with a reason naming exactly what's missing, rather than silently running unrestricted.
 
-Validation is structural, not semantic — it cannot tell whether your rules let the agent do its job. A well-formed Claude policy that simply doesn't allow `curl` passes every check and still can't complete a run, because the run protocol needs it. The checks catch broken and self-contradictory files; getting the contents right is yours.
+Validation is structural, not semantic — it cannot tell whether your rules let the agent do its job. A well-formed policy that allows nothing the job needs passes every check and still gets no work done. The checks catch broken and self-contradictory files; getting the contents right is yours. The one thing you don't have to get right by hand is reporting: `harbour policy init` scaffolds that, and the section below explains it.
 
 Permissions belong to the agent — there is no per-job override, so one job can't quietly widen what an agent may do.
 
@@ -13,6 +13,22 @@ The workspace is the agent's working directory at `~/.harbour/workspaces/<projec
 ## Just want to play
 
 Set the agent's Permissions to **Unrestricted** in the dashboard (the agent's settings page; the agent then shows an Unrestricted badge). The runner launches the CLI with its bypass flag — `--dangerously-skip-permissions` for Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex — exactly the behavior every agent had before this setting existed. It's the cheapest way to get an agent working, the trade-off is yours to make per agent, and you can flip it back to Enforced whenever you're ready to author a policy file.
+
+## Reporting back: `harbour update`
+
+A restricted agent still has to tell Harbour what happened — set a run title, post progress, and reach a terminal status. That reporting is the `harbour update` command, which the agent runs in its own shell:
+
+```bash
+harbour update title "Reviewed this week's signups"
+harbour update log "Fetched 42 rows, summarizing"
+harbour update status done      # done | failed | waiting | skipped
+```
+
+It needs no URL and no key: the runner puts the run's identity and a per-run credential in the agent's environment (`HARBOUR_URL`, `HARBOUR_RUN_ID`, `HARBOUR_API_KEY`) when it spawns the CLI, and the command reads them from there. Outside a run it exits non-zero and says so.
+
+The point is that **one narrow rule grants all of it**. The alternative — reporting over `curl` — can only be allowed with `Bash(curl *)`, which also hands the agent the entire internet and quietly defeats whatever else the policy restricts. `Bash(harbour update *)` grants reporting and nothing else: an agent holding only that rule cannot fetch a URL, read a file, or run any other command.
+
+The rest of the API (attachments, docs, tables) is still curl, and still needs its own allow rule if a job uses it.
 
 ## Claude Code
 
@@ -23,12 +39,17 @@ A minimal working policy:
 ```json
 {
   "permissions": {
-    "allow": ["Bash(curl *)"]
+    "defaultMode": "dontAsk",
+    "allow": ["Bash(harbour update *)"]
   }
 }
 ```
 
-> **The allow list must permit `curl`.** Harbour's run protocol is executed entirely as `curl` calls to the Harbour API — setting the run title, posting activity, and setting the final status (see the [agent guide](../guide.md)). A policy that doesn't allow `curl` produces an agent that may do work but can never report any of it, so every run ends `failed` at the finalize backstop. `Bash(curl *)` in `permissions.allow` is the floor every Claude policy builds on.
+That's what `harbour policy init` writes, and it's the floor every Claude policy builds on: it grants the agent nothing except the ability to report on its own run — set a title, post to the activity log, and reach a terminal status — through the [`harbour update`](#reporting-back-harbour-update) command.
+
+> **Don't widen this to `Bash(harbour *)`.** That would also grant `harbour user create`, `harbour connect`, and the rest of the admin CLI. Keep the rule scoped to `harbour update`.
+
+An agent with only that rule can't do any actual work — but it *can tell you so*, which is the difference between a run that fails legibly and one that fails mute. Add what the job needs on top.
 
 How the runner launches it: `--settings <workspace>/.claude/settings.json --permission-mode <mode> --setting-sources project`, and no bypass flag. The file is passed explicitly with `--settings` rather than left to working-directory discovery because several sandbox keys (`strictAllowlist`, credential masking, `filesystem.disabled`) are ignored when they arrive from project-scope discovery and honored only from user/managed/`--settings` sources — discovery would silently drop exactly the keys that do the containing. `--setting-sources project` pins the remaining settings to the workspace, so the runner host's own `~/.claude/settings.json` can't loosen (or break) an agent.
 
@@ -39,14 +60,14 @@ How the rules behave:
 - **`Bash(...)` patterns match the literal command string**, not the command's effect: `Bash(curl *)` matches commands beginning with `curl `. Argument-level checks — blocking a particular flag, inspecting a URL — belong in a `PreToolUse` hook, which you can define in the same file (see Claude Code's own documentation for hooks).
 - **`.claude/` is a protected path.** In enforced (non-bypass) modes the CLI refuses to edit files under `.claude/`, even with an allow rule that would otherwise cover them — the agent cannot rewrite its own policy file with its file tools. (This protection does not extend to code run through an allow-listed interpreter; see [Limits](#limits).)
 
-A hardened policy narrows the allow list to what the job actually needs and denies the commands you never want, keeping `curl` allowed throughout:
+A working policy is the scaffolded rule plus whatever the job genuinely needs, and denies for the commands you never want:
 
 ```json
 {
   "permissions": {
     "defaultMode": "dontAsk",
     "allow": [
-      "Bash(curl *)",
+      "Bash(harbour update *)",
       "Bash(git *)",
       "Bash(npm *)"
     ],
@@ -61,7 +82,7 @@ The same file can also carry Claude Code's **OS sandbox** configuration — `san
 
 ### Narrow allow rules with a workspace shim
 
-Because patterns match the literal command string, a rule that has to accommodate a secret or a variable URL tends to get widened until it allows too much — `Bash(curl *)` is broad precisely because the interesting part of the command is unpredictable.
+Because patterns match the literal command string, a rule that has to accommodate a secret or a variable URL tends to get widened until it allows too much — `Bash(curl *)` is broad precisely because the interesting part of the command is unpredictable. (Reporting to Harbour used to have this problem; `harbour update` is the same trick, shipped.)
 
 The workspace `bin/` directory is the way out. If the agent's workspace has one, the runner prepends it to `PATH` (see [agents](../concepts/agents.md#workspaces)), so a small wrapper script there resolves as a bare command name. Put the unpredictable part inside the script — where it reads env vars itself and execs the real tool — and the command the model emits becomes short, fixed, and narrowly matchable:
 
@@ -89,7 +110,7 @@ sandbox_mode = "workspace-write"
 network_access = true
 ```
 
-> **`network_access = true` is not optional.** Under `workspace-write`, Codex's sandbox defaults to `network_access = false`, which blocks *every* connection — loopback included; `curl http://127.0.0.1:<port>` fails outright. Harbour's run protocol is entirely `curl` to the Harbour API, so an agent without network could do work and then be unable to report a title, activity, or status: every run would end `failed` at the finalize backstop with the real cause buried. Harbour refuses such a policy up front, naming the key, rather than letting that happen.
+> **`network_access = true` is not optional.** Under `workspace-write`, Codex's sandbox defaults to `network_access = false`, which blocks *every* connection — loopback included. Reporting to Harbour is an HTTP call either way, so an agent without network could do work and then be unable to report a title, activity, or status: every run would end `failed` at the finalize backstop with the real cause buried. Harbour refuses such a policy up front, naming the key, rather than letting that happen.
 
 The other shapes are rejected for related reasons:
 
@@ -158,6 +179,14 @@ The runner records trust automatically before each enforced run. It merges into 
 After each work turn on an enforced Claude agent, the runner also scrapes Claude's "Ignoring N permissions…" warnings from stderr and posts them as run activity — those tell you a rule didn't apply, usually an untrusted workspace or a malformed pattern.
 
 ## Verifying and migrating
+
+`harbour policy init <agent>` writes the starter policy for an agent, in that agent's CLI format, into its workspace:
+
+```bash
+npm run harbour -- policy init website/dev-agent
+```
+
+It writes the minimal working policy shown above — reporting and nothing else — and refuses to overwrite an existing file unless you pass `--force`. Run it on the host that runs the agent: the policy lives in the workspace, which is on the runner's machine, not the server's. Take a bare slug (`dev-agent`) when it's unique, or qualify it (`website/dev-agent`) when the same slug exists in more than one project.
 
 `harbour policy check` validates every agent's policy without a server, in one command:
 
