@@ -113,6 +113,30 @@ The runner also layers two workspace-derived things onto each spawn: any job-lin
 
 Claude and Codex inherit the runner service's normal environment plus the job env. Captured events and final output are exact-value-redacted against the exec token and job secret values, then size-capped before persistence; transformations or indirect exfiltration can evade redaction, so it is not a security boundary.
 
+### Context files and CLI state
+
+Harbour injects exactly two things into a run: the prompt (assembled per run — see [architecture](../reference/architecture.md#runner-architecture)) and the environment above. Everything else the CLI picks up is the CLI behaving exactly as it does in your own terminal, on purpose — an agent run is a real `claude` / `codex` session, so memory files, skills, MCP servers, and hooks resolve by each CLI's own rules, with no Harbour filtering layer in between. That cuts both ways: drop a `CLAUDE.md` or `AGENTS.md` in a workspace and the agent carries that context across every run (it can even maintain its own notes there), but an agent can also "know" things you never put in a job.
+
+What loads where, verified against Claude Code 2.1.222 and Codex 0.146.0:
+
+| Context source | Claude enforced | Claude unrestricted | Codex (both modes) |
+|---|---|---|---|
+| Workspace file (`CLAUDE.md` / `AGENTS.md` in the cwd) | yes | yes | yes |
+| Ancestor directories (`~/.harbour/CLAUDE.md`, up to and including `~/CLAUDE.md`) | yes | yes | no — Codex walks git root → cwd only, and workspaces aren't git repos |
+| User level (`~/.claude/CLAUDE.md` / `$CODEX_HOME/AGENTS.md`) | **no** | yes | yes |
+| User-scope settings: hooks, MCP servers | **no** | yes | yes — `$CODEX_HOME/config.toml` (including any `mcp_servers`) is global config either way |
+
+The enforced-Claude column is a side effect of the permission flags: the runner passes `--setting-sources project`, which excludes user-scope configuration entirely — memory, hooks, and user-registered MCP servers ([agent permissions](../guides/agent-permissions.md) has the flag details). Workspace-scope context still applies, including CLAUDE.md files in ancestor directories and any `.mcp.json` in the workspace itself.
+
+Practical consequences:
+
+- **`~/.harbour/CLAUDE.md` is a natural host-wide context file for Claude agents.** Every workspace lives under `~/.harbour/workspaces/…`, and Claude reads CLAUDE.md from all ancestors of the cwd, so one file there reaches every Claude agent on the host, in both permission modes. The flip side: so does a stray `~/CLAUDE.md` — the home directory is an ancestor too.
+- **Codex has no equivalent ancestor path.** Its per-workspace file is `AGENTS.md` in the cwd; its host-wide file is `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), which loads in both modes. Setting `project_doc_max_bytes = 0` disables the workspace/project docs; nothing short of relocating `CODEX_HOME` disables the global one, and that relocates `auth.json` and `config.toml` with it.
+- **Repos inside the workspace bring their own context.** When an agent works inside a repo it cloned, that repo's `CLAUDE.md` / `AGENTS.md` join the context by the CLIs' normal rules — same as your terminal.
+- **On a dedicated Harbour machine — the recommended production layout — this is all upside:** the user-level files *are* the machine's agent context. On a shared dev machine, know that your personal `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, hooks, and MCP servers ride along in every run except enforced Claude ones. Claude's `--bare` flag and `CLAUDE_CONFIG_DIR` exist as blunter isolation knobs, but both also sever the CLI's login (keychain/credentials aren't read), so neither is something Harbour sets for you.
+
+When in doubt whether a file loads, test it the boring way: put a distinctive marker word in the suspect file and ask the CLI in the workspace (`claude -p` / `codex exec`) which markers it can see, with the same flags the runner uses.
+
 ### Per-agent permissions
 
 Every agent has a `permissions` setting, set on its settings page in the dashboard: **Enforced** (the default) or **Unrestricted**. It applies to both CLIs, and there is no per-job override — permissions belong to the agent, so one job can't quietly widen what an agent may do.

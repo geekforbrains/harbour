@@ -263,8 +263,24 @@ effectively a no-op at the runner now.)
 
 **Env layering.** Before spawning, the runner strips Claude Code nesting guards,
 then layers the job's decrypted env vars onto the process environment so the
-agent's shell can expand `$VAR` natively. Captured output is redacted against
-the run's known secret values as defense-in-depth.
+agent's shell can expand `$VAR` natively — with the `HARBOUR_URL` /
+`HARBOUR_RUN_ID` / `HARBOUR_API_KEY` trio layered last so a job secret can't
+shadow the reporting channel (`buildRunEnv`). Captured output is redacted
+against the run's known secret values as defense-in-depth.
+
+**Prompt assembly.** The work prompt is built fresh per turn (`buildPrompt` in
+`bin/lib/runner.mjs`), sections in this order: job name → instructions → linked
+docs (full content inlined) → linked tables (ids only, rows via API) → activity
+log (attachments rendered inline under the entry they arrived with) → orphan
+attachments → job env var *names* (values only in the environment) → the
+Harbour API section (`harbour update` + the curl endpoints); prerun output,
+when a gate ran, is appended after all of that. A **resume** turn sends only
+the human's new messages plus the API section — the resumed CLI session
+already holds the rest. Resume is keyed off the *saved session*, not the run
+state: with no compatible session saved (lost, or the agent's `cli` changed),
+a pending run gets a fresh session with the full prompt instead. Anything the
+CLI knows beyond this prompt and env came from its own native context loading
+— see [context files and CLI state](../concepts/agents.md#context-files-and-cli-state).
 
 ## Frontend
 
