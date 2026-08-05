@@ -223,6 +223,7 @@ one; only which token `loadRunnerCredentials` returns differs.
 | `bin/harbour.mjs` | CLI dispatcher (`run`, `connect`, `install`, `uninstall`, `status`, plus `start`/`dev`/`setup`/`user`) |
 | `bin/lib/runner.mjs` | `runPool` (drain loop) → `claimOne` (claim) + `dispatch` (kind branch); the `processNextRun` / `processNextWorkflow` executors; prompt assembly, kill plumbing, session save |
 | `bin/lib/providers.mjs` | `detectCapabilities` (host `kinds`/`clis`/`labels`) and the per-CLI provider: command building, JSONL parsing, SIGTERM/SIGKILL grace |
+| `bin/lib/policy.mjs` | `resolveAgentPolicy` — pre-spawn permission-policy resolution (fail closed) + the workspace trust bootstrap |
 | `bin/lib/install.mjs` | launchd plist install/uninstall for the single `com.harbour.runner` service |
 | `bin/lib/connect.mjs` | `connectRunner` — decode `harbour connect <blob>`, peek-verify, write the token + url |
 | `bin/lib/config.mjs` | read/write `runner.token` (+ `runner.url`) and `sessions.json`; `printRunnerStatus` |
@@ -234,10 +235,15 @@ from a minted credential blob (`{url, token, name}`): it peek-verifies via
 writes the token (0600) and URL. The local runner's token is provisioned by
 `harbour setup` instead. (The exact minting flow lands in a later chunk.)
 
-**Providers.** `claude` runs `--output-format stream-json --verbose`, with
-`--dangerously-skip-permissions` *unless* the agent workspace has a valid
-`.claude/settings.json` with a `permissions` object (then the permission system
-runs); `codex` runs `exec --dangerously-bypass-approvals-and-sandbox --json`.
+**Providers.** Permission flags are decided *before* spawn: the runner resolves
+the agent's `permissions` setting against the workspace policy file
+(`resolveAgentPolicy`, `bin/lib/policy.mjs`) and only then builds the command.
+Enforced (the default) requires a valid CLI-native policy file — missing or
+invalid, the run **fails closed** with the reason as activity and the CLI is
+never spawned; enforced runs also get a pre-spawn trust bootstrap (both CLIs
+honor a workspace's policy only when the host marks that directory trusted).
+Unrestricted agents keep the legacy bypass flags. Exact flags, file formats,
+and checks: [agent permissions](../guides/agent-permissions.md).
 
 Both providers normalize to the event vocab
 `text_delta`/`thinking`/`tool_start`/`tool_end`/`info`/`result`/`error`, batched

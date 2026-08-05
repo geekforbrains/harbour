@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
+import { PermissionsSelect, UnrestrictedBadge } from "@/components/app/agent-permissions";
 import { BackLink } from "@/components/app/back-link";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -67,6 +68,8 @@ type Agent = {
   eager: number | null;
   /** Runner label this agent's runs route to; defaults to "local". */
   placement: string | null;
+  /** "enforced" (workspace policy file required) or "unrestricted" (bypass). */
+  permissions?: string | null;
   created_at: number;
   /** Slug path segments for the agent's on-disk workspace on the runner. */
   workspace?: { project: string; agent: string } | null;
@@ -124,6 +127,7 @@ export default function AgentDetailPage() {
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editPlacement, setEditPlacement] = useState("");
+  const [editPermissions, setEditPermissions] = useState("enforced");
 
   async function handleUpdateAgent() {
     if (!agent) return;
@@ -135,6 +139,7 @@ export default function AgentDetailPage() {
         model: editModel,
         thinking: editThinking,
         placement: editPlacement.trim() || "local",
+        permissions: editPermissions,
       });
     } catch {
       return; // surfaced inline from updateAgent.error; leave dialog open
@@ -181,6 +186,7 @@ export default function AgentDetailPage() {
                   {agent.cli}
                 </span>
               )}
+              {agent.permissions === "unrestricted" && <UnrestrictedBadge />}
             </div>
             {agent.description && (
               <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>
@@ -202,6 +208,7 @@ export default function AgentDetailPage() {
               const cliConfig = agent.cli ? CLI_CONFIG[agent.cli] : undefined;
               setEditThinking(agent.thinking || cliConfig?.thinkingOptions[0] || "");
               setEditPlacement(agent.placement || "local");
+              setEditPermissions(agent.permissions || "enforced");
               updateAgent.reset();
               setShowSettings(true);
             }}
@@ -452,6 +459,7 @@ export default function AgentDetailPage() {
                 runner; use a custom label to target a runner minted in Settings → Runners.
               </p>
             </div>
+            <PermissionsSelect value={editPermissions} onChange={setEditPermissions} />
             {updateAgent.isError && (
               <p className="text-xs text-destructive">
                 {mutationErrorMessage(updateAgent.error, "Failed to update agent")}

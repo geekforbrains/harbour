@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { v4 as uuid } from "uuid";
+import { normalizePermissions } from "../cli-config";
 import { defaultRunTitle } from "../run-title";
 import { DEFAULT_RUNTIME, type Gate, isRuntime } from "../runtimes";
 import { slugify } from "../slug";
@@ -1305,13 +1306,19 @@ export function buildRunPayload(runId: string) {
 
   // Agent runtime config — read live so runners (local or remote) pick up
   // dashboard changes without reconnecting. The runner config is identity-only;
-  // cli/model/thinking/eager all come from here. Job-level model/thinking still
-  // override these agent defaults (see job.model/job.thinking above).
+  // cli/model/thinking/eager/permissions all come from here. Job-level
+  // model/thinking still override these agent defaults (see job.model/job.thinking above).
   const agentRow = run.agent_id
     ? (db
-        .prepare(`SELECT cli, model, thinking, eager FROM agents WHERE id = ?`)
+        .prepare(`SELECT cli, model, thinking, eager, permissions FROM agents WHERE id = ?`)
         .get(run.agent_id) as
-        | { cli: string | null; model: string | null; thinking: string | null; eager: number }
+        | {
+            cli: string | null;
+            model: string | null;
+            thinking: string | null;
+            eager: number;
+            permissions: string;
+          }
         | undefined)
     : undefined;
   const agent = agentRow
@@ -1320,6 +1327,9 @@ export function buildRunPayload(runId: string) {
         model: agentRow.model || null,
         thinking: agentRow.thinking || null,
         eager: !!agentRow.eager,
+        // Fail closed: anything but the exact stored "unrestricted" ships as
+        // "enforced" — the runner refuses bypass without a deliberate opt-out.
+        permissions: normalizePermissions(agentRow.permissions),
       }
     : undefined;
 

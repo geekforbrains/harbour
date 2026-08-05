@@ -30,7 +30,8 @@ function harbourHome() {
   return process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 }
 
-function dbPath() {
+/** Resolve the SQLite DB file the CLI operates on. Shared by other bin/ commands. */
+export function dbPath() {
   return process.env.HARBOUR_DB_PATH || path.join(harbourHome(), "harbour.db");
 }
 
@@ -38,7 +39,7 @@ function dbPath() {
 // ABI it was built against. If the active Node changed since `npm install`
 // (common when nvm hands different windows different versions), the raw loader
 // error is a cryptic NODE_MODULE_VERSION stack trace. Translate it into the fix.
-function describeNativeError(err) {
+export function describeNativeError(err) {
   const msg = String(err?.message ?? err);
   if (err?.code === "ERR_DLOPEN_FAILED" || msg.includes("NODE_MODULE_VERSION")) {
     return new Error(

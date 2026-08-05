@@ -125,7 +125,24 @@ The `Researcher` agent from Section 1 already works here — its `local` placeme
 
 There's no per-agent runner config to write — the local runner the setup provisioned claims every agent (and workflow) whose placement belongs on this host, resolving each one's CLI, model, and thinking live from the claim payload (see [`src/app/api/agents/route.ts`](../../src/app/api/agents/route.ts)).
 
-### 3. Run the local runner
+### 3. Decide the agent's permissions
+
+New agents default to **Enforced**, which means the CLI runs under a permission policy file you write in the agent's workspace — and *until that file exists the agent's runs fail closed*, with an activity message saying so. That is deliberate: an agent that can run any command on your machine should be a choice you made, not a default you inherited.
+
+For a first run, the quickest path is to make that choice explicitly. Either:
+
+- **Set the agent to Unrestricted** on its settings page — the CLI gets its permission-bypass flag, which is how every agent behaved before this setting existed. Fine for trying things out on your own machine; you can tighten it later.
+- **Or write the policy file** now. For a Claude Code agent, the minimum that can complete a run is `~/.harbour/workspaces/<project-slug>/<agent-slug>/.claude/settings.json` containing:
+
+  ```json
+  { "permissions": { "allow": ["Bash(curl *)"] } }
+  ```
+
+  `curl` has to be allowed because the run protocol reports the title, activity, and final status through it.
+
+Either way, `npm run harbour -- policy check` tells you where every agent stands before you run anything. The full picture — Codex's format, what's validated, and how to tighten a policy — is in [agent permissions](agent-permissions.md).
+
+### 4. Run the local runner
 
 The runner is the single process that claims and drains all due work each cycle — agent jobs *and* workflows, running distinct units in parallel. It polls `POST /api/runner/claim` with the local runner token and uses each run's per-run exec token for callbacks.
 
@@ -150,7 +167,7 @@ Check whether the runner is provisioned and where it points at any time:
 npm run harbour -- status
 ```
 
-### 4. Schedule polling
+### 5. Schedule polling
 
 On macOS, if you didn't say yes to the install prompt during `setup`, schedule it now:
 

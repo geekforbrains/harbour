@@ -112,6 +112,7 @@ agent, job, run, doc, secret, and table under the project goes with it.
 | `color` | TEXT | | stored identity hue (user-selectable; name-hash fallback when null) |
 | `eager` | INTEGER | NN, default 0 | legacy/no-op — the pool drains all due work each cycle regardless (kept for compatibility) |
 | `placement` | TEXT | NN, default `'local'` | routes this agent's runs to a runner tier/label (denormalized onto `runs.placement` at creation) |
+| `permissions` | TEXT | NN, default `'enforced'` | `enforced` (workspace policy file required, fail closed) / `unrestricted` (CLI permission-bypass flag) |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
 There is no stored `type` column — every agent is CLI-driven and claimed by the

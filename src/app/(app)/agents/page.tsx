@@ -4,6 +4,7 @@ import { Bot, Briefcase, CheckCircle, Loader2, Plus, XCircle } from "lucide-reac
 import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
+import { PermissionsSelect, UnrestrictedBadge } from "@/components/app/agent-permissions";
 import { ListState } from "@/components/app/list-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
@@ -39,6 +40,8 @@ type Agent = {
   cli: string | null;
   model: string | null;
   color: string | null;
+  /** "enforced" (workspace policy file required) or "unrestricted" (bypass). */
+  permissions?: string | null;
   job_count: number;
   waiting_count: number;
   pending_count: number;
@@ -68,6 +71,7 @@ export default function AgentsPage() {
     enabled: !!newAgent,
   });
   const [placement, setPlacement] = useState("");
+  const [permissions, setPermissions] = useState("enforced");
 
   // CLI tool selection — every v2 agent is a harbour CLI agent; cli is required.
   const [cliTools, setCliTools] = useState<CliTool[]>([]);
@@ -111,6 +115,7 @@ export default function AgentsPage() {
     if (selectedModel) body.model = selectedModel;
     if (selectedThinking) body.thinking = selectedThinking;
     if (placement.trim()) body.placement = placement.trim();
+    if (permissions === "unrestricted") body.permissions = permissions;
 
     try {
       const data = await createAgent.mutateAsync(body);
@@ -139,6 +144,7 @@ export default function AgentsPage() {
     setSelectedThinking("");
     setCliTools([]);
     setPlacement("");
+    setPermissions("enforced");
   }
 
   if (loading) {
@@ -224,6 +230,7 @@ export default function AgentsPage() {
                       {agent.cli}
                     </span>
                   )}
+                  {agent.permissions === "unrestricted" && <UnrestrictedBadge />}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
@@ -368,6 +375,7 @@ export default function AgentsPage() {
                   Which runner pool runs this agent (default: local).
                 </p>
               </div>
+              <PermissionsSelect value={permissions} onChange={setPermissions} />
               <DialogFooter>
                 <Button
                   type="button"

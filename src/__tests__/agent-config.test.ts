@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -9,6 +12,7 @@ import {
   createWorkflow,
 } from "@/lib/db/queries";
 import { getDb, initializeSchema, resetDb, setDb } from "@/lib/db/schema";
+import { resolveAgentPolicy } from "../../bin/lib/policy.mjs";
 import { getProvider, resolveRunConfig, sanitizeThinking } from "../../bin/lib/providers.mjs";
 
 // End-to-end coverage for the "harbour is the source of truth for agent config"
@@ -36,7 +40,7 @@ afterEach(() => {
 });
 
 describe("run payload carries live agent config", () => {
-  it("includes the agent's cli/model/thinking/eager", () => {
+  it("includes the agent's cli/model/thinking/eager/permissions", () => {
     const project = createProject("Website")!;
     const agent = createAgent(project.id, "Dev", undefined, {
       cli: "codex",
@@ -53,7 +57,32 @@ describe("run payload carries live agent config", () => {
       model: "gpt-5",
       thinking: "high",
       eager: true,
+      permissions: "enforced",
     });
+  });
+
+  it("carries an explicit unrestricted opt-out to the runner", () => {
+    const project = createProject("Website")!;
+    const agent = createAgent(project.id, "Yolo", undefined, {
+      cli: "claude",
+      permissions: "unrestricted",
+    });
+    const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
+    const payload = buildRunPayload(createRun(job.id, agent.id)!.id)!;
+    expect(payload.agent?.permissions).toBe("unrestricted");
+  });
+
+  it("reflects a dashboard permissions change on the next run", () => {
+    const project = createProject("Website")!;
+    const agent = createAgent(project.id, "Dev", undefined, { cli: "claude" });
+    const job = createJob(project.id, agent.id, { name: "Build", schedule: '{"every":60}' })!;
+    expect(buildRunPayload(createRun(job.id, agent.id)!.id)!.agent?.permissions).toBe("enforced");
+
+    getDb().prepare(`UPDATE agents SET permissions = 'unrestricted' WHERE id = ?`).run(agent.id);
+
+    expect(buildRunPayload(createRun(job.id, agent.id)!.id)!.agent?.permissions).toBe(
+      "unrestricted",
+    );
   });
 
   it("reflects a dashboard model change on the next run without touching the runner", () => {
@@ -94,6 +123,7 @@ describe("resolveRunConfig precedence", () => {
       cli: "codex",
       model: "gpt-5",
       thinking: "medium",
+      permissions: "enforced",
     });
   });
 
@@ -106,11 +136,43 @@ describe("resolveRunConfig precedence", () => {
       cli: "claude",
       model: "opus",
       thinking: "high",
+      permissions: "enforced",
     });
   });
 
   it("returns null cli when nothing provides one", () => {
     expect(resolveRunConfig({ agent: {}, job: {} }).cli).toBeNull();
+  });
+});
+
+// The permissions field is the security-relevant one: it decides whether the
+// run gets the CLI's permission bypass. Its defaulting direction is the whole
+// property — anything that isn't exactly "unrestricted" must come out
+// "enforced", so a stale server, a typo, or a missing field can never produce
+// a fleet of unrestricted agents.
+describe("resolveRunConfig — permissions default fail-closed", () => {
+  it("passes through an explicit unrestricted opt-out", () => {
+    const payload = { agent: { cli: "claude", permissions: "unrestricted" }, job: {} };
+    expect(resolveRunConfig(payload).permissions).toBe("unrestricted");
+  });
+
+  it("defaults to enforced when the agent block omits permissions (older server)", () => {
+    expect(resolveRunConfig({ agent: { cli: "claude" }, job: {} }).permissions).toBe("enforced");
+  });
+
+  it("normalizes junk, casing, and wrong types to enforced", () => {
+    for (const value of ["Unrestricted", "UNRESTRICTED", "yolo", "", null, 1, true, {}]) {
+      const payload = { agent: { cli: "claude", permissions: value }, job: {} };
+      expect(resolveRunConfig(payload).permissions, JSON.stringify(value)).toBe("enforced");
+    }
+  });
+
+  it("ignores a job-level permissions field — permissions belong to the agent", () => {
+    const payload = {
+      agent: { cli: "claude", permissions: "enforced" },
+      job: { permissions: "unrestricted" },
+    };
+    expect(resolveRunConfig(payload).permissions).toBe("enforced");
   });
 });
 
@@ -124,6 +186,7 @@ describe("resolveRunConfig — agent block is authoritative", () => {
       cli: "claude",
       model: "opus",
       thinking: "high",
+      permissions: "enforced",
     });
   });
 
@@ -133,6 +196,7 @@ describe("resolveRunConfig — agent block is authoritative", () => {
       cli: "claude",
       model: null,
       thinking: null,
+      permissions: "enforced",
     });
   });
 
@@ -145,6 +209,7 @@ describe("resolveRunConfig — agent block is authoritative", () => {
       cli: "claude",
       model: "opus",
       thinking: "high",
+      permissions: "enforced",
     });
   });
 });
@@ -155,11 +220,15 @@ describe("resolveRunConfig — agent block is authoritative", () => {
 describe("payload -> command, all CLIs", () => {
   const CWD = "/tmp/ws";
   const PROMPT = "do it";
+  // These cases are about model/effort plumbing, so they run with the simplest
+  // policy. Policy-specific argv is covered in providers.test.ts, and the
+  // payload → policy → argv chain below.
+  const BYPASS = { ok: true, mode: "unrestricted" };
 
   it("claude: model via --model, effort via --effort", () => {
     const payload = { agent: { cli: "claude", model: "opus", thinking: "high" }, job: {} };
     const { cli, model, thinking } = resolveRunConfig(payload);
-    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, thinking);
+    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, thinking, BYPASS);
     expect(cmd.args[cmd.args.indexOf("--model") + 1]).toBe("opus");
     expect(cmd.args[cmd.args.indexOf("--effort") + 1]).toBe("high");
   });
@@ -167,7 +236,7 @@ describe("payload -> command, all CLIs", () => {
   it("codex: model via -m, effort via -c model_reasoning_effort", () => {
     const payload = { agent: { cli: "codex", model: "gpt-5", thinking: "medium" }, job: {} };
     const { cli, model, thinking } = resolveRunConfig(payload);
-    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, null, true, thinking);
+    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, null, true, thinking, BYPASS);
     expect(cmd.args[cmd.args.indexOf("-m") + 1]).toBe("gpt-5");
     expect(cmd.args).toContain("model_reasoning_effort=medium");
   });
@@ -180,7 +249,15 @@ describe("payload -> command, all CLIs", () => {
     const { cli, model, thinking } = resolveRunConfig(payload);
     const sanitized = sanitizeThinking(cli, thinking);
     expect(sanitized).toEqual({ thinking: null, dropped: "off" });
-    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, sanitized.thinking);
+    const cmd = getProvider(cli).buildCommand(
+      PROMPT,
+      model,
+      CWD,
+      "uuid",
+      true,
+      sanitized.thinking,
+      BYPASS,
+    );
     expect(cmd.args).not.toContain("--effort");
     expect(cmd.args).not.toContain("off");
   });
@@ -191,8 +268,78 @@ describe("payload -> command, all CLIs", () => {
       job: { model: "opus", thinking: "high" },
     };
     const { cli, model, thinking } = resolveRunConfig(payload);
-    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, thinking);
+    const cmd = getProvider(cli).buildCommand(PROMPT, model, CWD, "uuid", true, thinking, BYPASS);
     expect(cmd.args[cmd.args.indexOf("--model") + 1]).toBe("opus");
     expect(cmd.args[cmd.args.indexOf("--effort") + 1]).toBe("high");
+  });
+});
+
+// The full permission chain, end to end in one place: what the dashboard stored
+// -> the claim payload -> resolveRunConfig -> resolveAgentPolicy -> the argv the
+// CLI is actually spawned with. This is the contract that decides whether a
+// bypass flag reaches a real subprocess, so assert it against a real workspace
+// on disk rather than a hand-built policy object.
+describe("payload -> policy -> command", () => {
+  const PROMPT = "do it";
+  let ws: string;
+
+  beforeEach(() => {
+    ws = fs.mkdtempSync(path.join(os.tmpdir(), "harbour-perm-chain-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("an unrestricted claude agent gets the bypass flag", () => {
+    const payload = { agent: { cli: "claude", permissions: "unrestricted" }, job: {} };
+    const { cli, permissions } = resolveRunConfig(payload);
+    const policy = resolveAgentPolicy({ cli, workingDir: ws, permissions });
+    const cmd = getProvider(cli).buildCommand(PROMPT, null, ws, "uuid", true, null, policy);
+    expect(cmd.args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("an enforced claude agent with a policy file gets --settings and no bypass", () => {
+    fs.mkdirSync(path.join(ws, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ws, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { defaultMode: "dontAsk", allow: ["Bash(curl *)"] } }),
+    );
+    const payload = { agent: { cli: "claude", permissions: "enforced" }, job: {} };
+    const { cli, permissions } = resolveRunConfig(payload);
+    const policy = resolveAgentPolicy({ cli, workingDir: ws, permissions });
+    expect(policy.ok).toBe(true);
+    const cmd = getProvider(cli).buildCommand(PROMPT, null, ws, "uuid", true, null, policy);
+    expect(cmd.args).not.toContain("--dangerously-skip-permissions");
+    expect(cmd.args).toContain("--settings");
+    expect(cmd.args[cmd.args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+  });
+
+  it("an enforced agent with NO policy file never reaches a command at all", () => {
+    const payload = { agent: { cli: "claude", permissions: "enforced" }, job: {} };
+    const { cli, permissions } = resolveRunConfig(payload);
+    const policy = resolveAgentPolicy({ cli, workingDir: ws, permissions });
+    expect(policy.ok).toBe(false);
+    // The runner returns before building a command; if a caller tried anyway,
+    // the provider refuses rather than falling back to bypass.
+    expect(() =>
+      getProvider(cli).buildCommand(PROMPT, null, ws, "uuid", true, null, policy),
+    ).toThrow(/policy/i);
+  });
+
+  it("an enforced codex agent gets its sandbox mode, never the bypass flag", () => {
+    fs.mkdirSync(path.join(ws, ".codex"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ws, ".codex", "config.toml"),
+      'sandbox_mode = "workspace-write"\n\n[sandbox_workspace_write]\nnetwork_access = true\n',
+    );
+    const payload = { agent: { cli: "codex", permissions: "enforced" }, job: {} };
+    const { cli, permissions } = resolveRunConfig(payload);
+    const policy = resolveAgentPolicy({ cli, workingDir: ws, permissions });
+    expect(policy.ok).toBe(true);
+    const cmd = getProvider(cli).buildCommand(PROMPT, null, ws, null, true, null, policy);
+    expect(cmd.args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd.args[cmd.args.indexOf("-s") + 1]).toBe("workspace-write");
+    expect(cmd.args).toContain("--skip-git-repo-check");
   });
 });

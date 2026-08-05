@@ -1,4 +1,5 @@
 import { v4 as uuid } from "uuid";
+import { normalizePermissions } from "../cli-config";
 import { InvalidNameError, NameCollisionError, slugify } from "../slug";
 import { deleteRunAttachmentsDir } from "./attachments";
 import { getDb, isUniqueViolation } from "./schema";
@@ -21,6 +22,7 @@ export function createAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
+    permissions?: string;
   },
 ) {
   const db = getDb();
@@ -40,10 +42,11 @@ export function createAgent(
   const color = opts?.color || null;
   const eager = opts?.eager ? 1 : 0;
   const placement = opts?.placement?.trim() || "local";
+  const permissions = normalizePermissions(opts?.permissions);
   const create = db.transaction(() => {
     db.prepare(
-      `INSERT INTO agents (id, project_id, name, slug, description, cli, model, thinking, color, eager, placement)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agents (id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, permissions)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       projectId,
@@ -56,6 +59,7 @@ export function createAgent(
       color,
       eager,
       placement,
+      permissions,
     );
   });
   try {
@@ -78,11 +82,16 @@ export function getAgentById(id: string) {
   const db = getDb();
   const agent = db
     .prepare(
-      `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, created_at, updated_at
+      `SELECT id, project_id, name, slug, description, cli, model, thinking, color, eager, placement, permissions, created_at, updated_at
        FROM agents WHERE id = ?`,
     )
     .get(id) as any;
-  return agent ?? null;
+  if (!agent) return null;
+  // Normalize on read as well as write, so a value outside the enum (only
+  // reachable by editing the DB by hand) can never be displayed as something
+  // the API would reject — and never reads as anything but enforced.
+  agent.permissions = normalizePermissions(agent.permissions);
+  return agent;
 }
 
 /**
@@ -110,7 +119,7 @@ export function listAgents(projectId?: string) {
   const db = getDb();
   const agents = db
     .prepare(`
-    SELECT a.id, a.project_id, p.name as project_name, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.created_at,
+    SELECT a.id, a.project_id, p.name as project_name, a.name, a.slug, a.description, a.cli, a.model, a.thinking, a.color, a.eager, a.placement, a.permissions, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -121,6 +130,9 @@ export function listAgents(projectId?: string) {
     ORDER BY a.name
   `)
     .all(...(projectId ? [projectId] : [])) as any[];
+  // See getAgentById: normalized on read too, so the list can never surface a
+  // permissions value outside the enum.
+  for (const agent of agents) agent.permissions = normalizePermissions(agent.permissions);
   return agents;
 }
 
@@ -135,6 +147,7 @@ export function updateAgent(
     color?: string;
     eager?: boolean;
     placement?: string;
+    permissions?: string;
   },
 ) {
   const db = getDb();
@@ -172,6 +185,11 @@ export function updateAgent(
   if (data.placement !== undefined) {
     fields.push("placement = ?");
     values.push(data.placement.trim() || "local");
+  }
+  if (data.permissions !== undefined) {
+    // Fail closed: anything but the exact "unrestricted" stores "enforced".
+    fields.push("permissions = ?");
+    values.push(normalizePermissions(data.permissions));
   }
   if (fields.length > 0) {
     fields.push("updated_at = unixepoch()");

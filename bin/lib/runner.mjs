@@ -9,6 +9,13 @@ import {
   saveSessions,
 } from "./config.mjs";
 import {
+  describePolicy,
+  ensureClaudeWorkspaceTrust,
+  ensureCodexWorkspaceTrust,
+  extractPermissionWarnings,
+  resolveAgentPolicy,
+} from "./policy.mjs";
+import {
   detectCapabilities,
   ensureWorkingDir,
   getProvider,
@@ -29,8 +36,31 @@ export function buildProviderCommand({
   sessionId,
   isNewSession,
   thinking,
+  policy,
 }) {
-  return provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
+  return provider.buildCommand(
+    prompt,
+    model,
+    workingDir,
+    sessionId,
+    isNewSession,
+    thinking,
+    policy,
+  );
+}
+
+/**
+ * Grant the host-side trust each CLI needs before it will honor a workspace
+ * policy at all — Claude drops `permissions.allow` in an untrusted workspace,
+ * Codex won't load a `.codex/` layer in one. Both are normally granted by an
+ * interactive dialog no headless runner will ever see. Returns any warning to
+ * surface as run activity; a failure here is not fatal (the run may still work,
+ * just more restricted than intended), but it must never be silent.
+ */
+export function ensureWorkspaceTrust(cli, workingDir) {
+  if (cli === "claude") return ensureClaudeWorkspaceTrust(workingDir);
+  if (cli === "codex") return ensureCodexWorkspaceTrust(workingDir);
+  return { changed: false };
 }
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
@@ -945,6 +975,55 @@ export async function processNextRun(payload, { url, execToken }) {
     return { outcome: "config-error", eager: false };
   }
 
+  // ---- Permission policy ----------------------------------------------------
+  // Resolved from the agent's `permissions` setting plus the CLI-native policy
+  // file in its workspace. An `enforced` agent with no valid policy file fails
+  // CLOSED here: refusing the run with an actionable reason is the whole point
+  // of the setting — the alternative (running it anyway) is the unrestricted
+  // default this replaced. `unrestricted` is the operator's deliberate opt-out
+  // and resolves without touching the filesystem.
+  const policy = resolveAgentPolicy({
+    cli,
+    workingDir,
+    permissions: payload.agent?.permissions,
+  });
+  if (!policy.ok) {
+    const message = `Refusing to run: this agent's permissions are set to Enforced, but its policy could not be resolved.\n\n${policy.reason}`;
+    console.error(`  [${agentName}] ${message}`);
+    // Independent best-effort calls: a failed activity POST must not skip the
+    // status PUT, or the run dangles in 'running'.
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: message });
+    } catch {
+      /* best effort */
+    }
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch {
+      /* best effort */
+    }
+    // The CLI never spawned, so the agent turn did not execute — postrun (a hook
+    // on the agent's work) does not fire. Returning directly (rather than via
+    // finish()) mirrors the prerun-failure paths, and deliberately LEAVES any
+    // saved session in place: commenting on a failed run flips it back to
+    // `pending`, so fixing the policy file and replying resumes the agent with
+    // its context intact instead of restarting it from nothing.
+    return { outcome: "failed", eager };
+  }
+  console.log(`  [${agentName}] Permissions: ${describePolicy(policy)}`);
+
+  if (policy.mode === "enforced") {
+    const trust = ensureWorkspaceTrust(cli, workingDir);
+    if (trust.warning) {
+      console.warn(`  [${agentName}] ${trust.warning}`);
+      apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: trust.warning,
+      }).catch(() => {
+        /* best effort */
+      });
+    }
+  }
+
   // For Claude, generate a session ID upfront so we can always resume
   if (isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
@@ -1066,6 +1145,7 @@ export async function processNextRun(payload, { url, execToken }) {
     sessionId,
     isNewSession,
     thinking: agentThinking,
+    policy,
   });
 
   // ---- Single exit path -----------------------------------------------------
@@ -1152,6 +1232,18 @@ export async function processNextRun(payload, { url, execToken }) {
 
   const { result, output } = turn;
   const workSessionId = turn.sessionId;
+
+  // Claude reports a policy rule it couldn't apply (untrusted workspace, bad
+  // pattern) only on stderr, where nobody sees it — the visible symptom is an
+  // agent that mysteriously refuses everything. Surface it on the run.
+  for (const warning of extractPermissionWarnings(result.stderr)) {
+    console.warn(`  [${agentName}] ${warning}`);
+    apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+      content: `Permission policy warning from ${cli}: ${warning}`,
+    }).catch(() => {
+      /* best effort */
+    });
+  }
 
   // ---- Kill ----------------------------------------------------------------
   // User-initiated kill: save session, post activity, set status=killed, and
@@ -1284,6 +1376,7 @@ export async function processNextRun(payload, { url, execToken }) {
     model: agentModel,
     thinking: agentThinking,
     workingDir,
+    policy,
     extraEnv: payload.env || {},
     secretValues,
     activityContext: truncatedOutput,
@@ -1316,6 +1409,7 @@ async function runFinalizeLoop({
   model,
   thinking,
   workingDir,
+  policy,
   extraEnv,
   secretValues,
   activityContext,
@@ -1347,6 +1441,7 @@ async function runFinalizeLoop({
       sessionId: mode === "resume" ? turnSessionId : null,
       isNewSession: mode !== "resume",
       thinking,
+      policy,
     });
 
     try {

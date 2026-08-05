@@ -8,6 +8,7 @@ import { runSetup, runUserCreate } from "./lib/bootstrap.mjs";
 import { printRunnerStatus } from "./lib/config.mjs";
 import { connectRunner } from "./lib/connect.mjs";
 import { installRunner, uninstallRunner } from "./lib/install.mjs";
+import { runPolicyCheck } from "./lib/policy-cli.mjs";
 import { runPool } from "./lib/runner.mjs";
 import { buildNextServerArgs } from "./lib/server-config.mjs";
 import { monitorServerProcess } from "./lib/server-process.mjs";
@@ -34,6 +35,7 @@ Usage:
   harbour install            Schedule the runner with launchd (macOS; every 60s)
   harbour uninstall          Remove the launchd runner service (macOS)
   harbour status             Show the runner's provisioning status
+  harbour policy check       Validate every agent's permission policy (exit 1 on failures)
   `.trim(),
   );
 }
@@ -101,6 +103,16 @@ async function main() {
     case "status":
       printRunnerStatus();
       break;
+    case "policy": {
+      if (rest[0] === "check") {
+        process.exitCode = await runPolicyCheck(rest.slice(1));
+      } else {
+        console.error(`Unknown policy command: ${rest[0]}`);
+        usage();
+        process.exit(1);
+      }
+      break;
+    }
     default:
       usage();
       break;

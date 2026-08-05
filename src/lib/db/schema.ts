@@ -157,6 +157,7 @@ export function initializeSchema(db: Database.Database) {
       color TEXT,                         -- stored identity hue (user-selectable; name-hash fallback when null)
       eager INTEGER NOT NULL DEFAULT 0,
       placement TEXT NOT NULL DEFAULT 'local', -- routes this agent's runs to a runner tier/label
+      permissions TEXT NOT NULL DEFAULT 'enforced', -- 'enforced' (policy file) | 'unrestricted'
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );

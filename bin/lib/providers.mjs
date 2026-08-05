@@ -132,6 +132,39 @@ function formatToolInput(toolName, inputJson) {
   }
 }
 
+/**
+ * Guard: every buildCommand needs a policy resolved by resolveAgentPolicy
+ * (bin/lib/policy.mjs) — the runner does that before spawning. Throwing on a
+ * missing or failed policy is deliberate: the alternative to a resolved policy
+ * is not "run with defaults", it's "run the agent unrestricted", and that must
+ * never be reachable by forgetting an argument.
+ */
+function requirePolicy(policy, cli) {
+  if (!policy?.ok) {
+    throw new Error(
+      `Cannot build a ${cli} command without a resolved permission policy (got ${policy?.reason ? `invalid policy: ${policy.reason}` : JSON.stringify(policy)}).`,
+    );
+  }
+}
+
+/**
+ * Codex argv for the resolved policy.
+ *
+ * `--skip-git-repo-check` is required in enforced mode: agent workspaces aren't
+ * usually git repos, and without the flag Codex refuses to start ("Not inside a
+ * trusted directory and --skip-git-repo-check was not specified"). The bypass
+ * flag implied it, which is why unrestricted mode never needed it.
+ *
+ * `-s <mode>` is passed explicitly from the policy file rather than left to
+ * Codex's project-config resolution, so the effective sandbox is deterministic
+ * and visible in the argv (and asserted in tests) instead of depending on
+ * whether the workspace's `.codex` layer was trusted.
+ */
+function codexPolicyArgs(policy) {
+  if (policy.mode === "unrestricted") return ["--dangerously-bypass-approvals-and-sandbox"];
+  return ["--skip-git-repo-check", "-s", policy.sandboxMode, "-c", "approval_policy=never"];
+}
+
 // Provider: how to invoke each CLI tool in batch mode, with streaming support
 
 const PROVIDERS = {
@@ -148,7 +181,8 @@ const PROVIDERS = {
     generateSessionId() {
       return crypto.randomUUID();
     },
-    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
+    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking, policy) {
+      requirePolicy(policy, "claude");
       const args = [
         "-p",
         "--output-format",
@@ -156,29 +190,21 @@ const PROVIDERS = {
         "--verbose",
         "--include-partial-messages",
       ];
-      // If the workspace has a valid .claude/settings.json with a permissions
-      // object, opt into the permission system. Otherwise, fall back to the
-      // legacy unrestricted mode so existing agents keep working without
-      // per-agent config.
-      //
-      // Validate by stat (regular file, not a symlink to /dev/null) and JSON
-      // parse with a permissions object — a corrupt or empty settings file
-      // shouldn't silently switch the agent into a less-protected mode.
-      let hasSettings = false;
-      try {
-        const settingsPath = path.join(workingDir, ".claude", "settings.json");
-        const st = fs.statSync(settingsPath);
-        if (st.isFile() && st.size > 0) {
-          const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-          if (parsed && typeof parsed.permissions === "object") {
-            hasSettings = true;
-          }
-        }
-      } catch {
-        // Missing file, parse error, etc. — fall through to legacy mode.
-      }
-      if (!hasSettings) {
+      if (policy.mode === "unrestricted") {
+        // The agent is explicitly set to Unrestricted in the dashboard.
         args.push("--dangerously-skip-permissions");
+      } else {
+        // Enforced: hand the CLI the operator's own settings file. Passed with
+        // --settings rather than left to cwd discovery because several sandbox
+        // keys (strictAllowlist, credential masking, filesystem.disabled) are
+        // ignored from project-scope settings and honored only from
+        // user/managed/--settings — discovery would silently drop exactly the
+        // keys that do the containing. --setting-sources pins the rest to the
+        // workspace so the runner host's own ~/.claude/settings.json can't
+        // loosen (or break) an agent.
+        args.push("--settings", policy.settingsPath);
+        args.push("--permission-mode", policy.permissionMode);
+        args.push("--setting-sources", "project");
       }
       if (model) args.push("--model", model);
       if (thinking) args.push("--effort", thinking);
@@ -316,19 +342,15 @@ const PROVIDERS = {
     // Levels model_reasoning_effort accepts — kept in sync with CLI_CONFIG
     // (see claude.thinkingLevels above).
     thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking, policy) {
+      requirePolicy(policy, "codex");
       // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
       // generic config override instead: -c model_reasoning_effort=<level>.
-      if (sessionId) {
-        const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
-        if (model) args.push("-m", model);
-        if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
-        args.push(sessionId, prompt);
-        return { binary: resolveBinary("codex"), args, cwd: workingDir };
-      }
-      const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
+      const args = sessionId ? ["exec", "resume"] : ["exec"];
+      args.push(...codexPolicyArgs(policy), "--json");
       if (model) args.push("-m", model);
       if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
+      if (sessionId) args.push(sessionId);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
@@ -504,6 +526,12 @@ export function sanitizeThinking(cli, thinking) {
  * stays cleared. A per-job override always wins.
  *
  * Precedence: job override → agent block.
+ *
+ * `permissions` is the one field with no job-level override and no null: it
+ * normalizes fail-closed, so an older server that sends no value (or any junk)
+ * yields 'enforced' rather than an unrestricted agent. There is no per-job
+ * permission override by design — permissions belong to the agent, so one job
+ * can't quietly widen what an agent may do.
  */
 export function resolveRunConfig(payload) {
   const job = payload?.job || {};
@@ -512,6 +540,7 @@ export function resolveRunConfig(payload) {
     cli: agent.cli ?? null,
     model: job.model || agent.model || null,
     thinking: job.thinking || agent.thinking || null,
+    permissions: agent.permissions === "unrestricted" ? "unrestricted" : "enforced",
   };
 }
 

@@ -4,10 +4,7 @@ Harbour is a control plane for AI agents doing ongoing work.
 
 ## Where to find what
 
-One fact, one home — facts about how Harbour works, and how to run, develop, and
-release it, live in [docs/](docs/README.md), not here. This file only routes you
-there and flags the handful of tripwires below; it never restates doc content.
-Route by task and read the doc first:
+One fact, one home — facts about how Harbour works, and how to run, develop, and release it, live in [docs/](docs/README.md), not here. This file only routes you there and flags the handful of tripwires below; it never restates doc content. Route by task and read the doc first:
 
 - **Running it locally / first run** → [docs/guides/getting-started.md](docs/guides/getting-started.md) — install, `harbour setup`, first boot
 - **The local dev loop** → [docs/guides/local-development.md](docs/guides/local-development.md) — dev server + ports, validate/rebuild/restart, browser review, worktrees
@@ -28,4 +25,5 @@ A few tripwires worth knowing up front — everything else is in the docs above:
 - **Port 4272 is production — never run a dev server on it.** Dev is 3001 (main repo) / 3010–3020 (worktrees). → [local development](docs/guides/local-development.md)
 - **Rebuild + restart after every change.** A running server won't pick up a new build until restarted: `kill $(lsof -ti :4272); npm run build; npm start &`. (A `npm run dev` server hot-reloads and needs none of this.)
 - **Node 24 LTS, enforced.** `npm install` fails on the wrong Node (`engine-strict`); after switching Node versions run `npm rebuild better-sqlite3` or Harbour won't boot (`NODE_MODULE_VERSION`).
+- **Agents default to Enforced permissions — no valid workspace policy file, no run (fails closed).** → [agent permissions](docs/guides/agent-permissions.md)
 - **Validate before calling work done:** `typecheck · lint · test · build` (+ `test:e2e` when UI or routes changed). Full ladder and conventions in [development standards](docs/reference/development-standards.md).

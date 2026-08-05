@@ -119,7 +119,8 @@ everything else is uniform.
     "timeout_minutes": 30,
     "scripts_dir": "<project>/<agent>/<job-leaf>"   // workflows: "<project>/<job-leaf>"; under $HARBOUR_HOME/workflows
   },
-  "agent":   { "cli": "claude", "model": "sonnet", "thinking": "high", "eager": false },  // agent runs
+  "agent":   { "cli": "claude", "model": "sonnet", "thinking": "high", "eager": false,
+               "permissions": "enforced" },                                        // agent runs
   "workspace": { "project": "site", "agent": "dev" },                               // agent runs
   "docs":    [ … ],
   "tables":  { "<name>": { "id": "…" } },
@@ -133,6 +134,16 @@ The runner branches on `job.kind`: drive a CLI session for `agent` (using `agent
 the `instructions`, and the `api` block), or run the gate script for `workflow`.
 For gates, materialize the gate `content` into `scripts_dir` and run it with the
 runtime's interpreter (`bash`/`python3`/`node`).
+
+`agent.permissions` decides whether the CLI may be launched with its
+permission-bypass flag, and a runner is obliged to honor it — Harbour cannot
+enforce this for you, because the runner is the process that spawns the CLI. Treat
+**only** the exact string `unrestricted` as the operator's opt-out; anything else,
+including a missing field, means `enforced`. Under `enforced`, point the CLI at the
+policy file in the agent's workspace and refuse the run if there isn't a valid one
+(set the run `failed` with the reason), rather than falling back to a bypass. The
+bundled runner's implementation is `bin/lib/policy.mjs`; the file formats and the
+exact flags per CLI are in [agent permissions](guides/agent-permissions.md).
 
 `workspace` (agent runs only) holds the project/agent slugs; the bundled runner
 derives the CLI's working directory from them as `workspaces/<project>/<agent>/`

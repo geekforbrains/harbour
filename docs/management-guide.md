@@ -94,6 +94,7 @@ Content-Type: application/json
 - `model`, `thinking` — model and effort/reasoning level for the CLI (defaults apply if omitted). `model` is not validated; `thinking` is validated per CLI (`low`/`medium`/`high`/`xhigh`/`max`). Empty/omitted thinking means the CLI default.
 - `eager` (boolean) — **legacy/no-op.** Still accepted and stored for compatibility, but the unified runner drains all due work each cycle regardless, so it no longer changes behavior. Omit it.
 - `placement` (string) — routes this agent's runs to a runner. Defaults to `local`: the auto-provisioned local runner claims the work. Set a label (e.g. `gpu`) to pin the agent to a specific machine — its runs then go only to a remote runner enrolled for that label (mint one via `POST /api/runners` and connect it on that host; see **Runners** below).
+- `permissions` — `enforced` (the default) or `unrestricted`; anything else is a 400. **An `enforced` agent does not run until a permission policy file exists in its workspace** — its runs fail closed with the reason in run activity. If you are creating agents programmatically and no one is going to author that file, either set `unrestricted` deliberately or expect the first run to fail. See [agent permissions](guides/agent-permissions.md).
 - `color` — identity hue (falls back to a name-derived color if omitted)
 
 The response is the created agent record. The agent's runs are executed by a runner per its `placement` (the local runner by default, or a remote one you've enrolled for its label). The runner contract is served at `GET /api/runner-guide`; the spawned CLI's worker contract is at `GET /api/guide`.
@@ -101,11 +102,13 @@ The response is the created agent record. The agent's runs are executed by a run
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "placement": "local" }
+PUT    /api/agents/:id    { "name": "...", "description": "...", "cli": "...", "model": "...", "thinking": "...", "color": "...", "placement": "local", "permissions": "enforced" }
 DELETE /api/agents/:id
 ```
 
-GET includes the agent's `workspace` — its `{ project, agent }` slugs. PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`; omitted fields are left unchanged. `cli` and `thinking` are validated together — changing CLI to one that rejects the current value is a 400 unless the request also re-sets or clears it.
+GET includes the agent's `workspace` — its `{ project, agent }` slugs. PUT accepts any subset of `name`, `description`, `cli`, `model`, `thinking`, `color`, `eager`, `placement`, `permissions`; omitted fields are left unchanged. `cli` and `thinking` are validated together — changing CLI to one that rejects the current value is a 400 unless the request also re-sets or clears it.
+
+`permissions` is `enforced` (the default) or `unrestricted`; anything else is a 400. `enforced` requires a CLI-native permission policy file in the agent's workspace and the run fails closed without one; `unrestricted` runs the CLI with its permission-bypass flag. See [agent permissions](guides/agent-permissions.md).
 
 ### List Agent's Jobs
 ```

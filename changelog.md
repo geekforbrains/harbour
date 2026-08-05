@@ -24,6 +24,65 @@
   the only path across this change. See [MIGRATION.md](MIGRATION.md) for the
   by-hand cutover notes.
 
+### Breaking: agents no longer bypass CLI permissions by default
+
+- **Every agent now has a Permissions setting, and the default inverts the old
+  always-bypass behavior.** **Enforced** (the new default) requires a policy
+  file in the agent's workspace, written in the CLI's own native format; when
+  the file is missing or invalid, the run fails closed with an actionable
+  reason instead of running without limits. **Unrestricted** is a per-agent
+  dashboard toggle that deliberately restores the old bypass flags
+  (`--dangerously-skip-permissions` /
+  `--dangerously-bypass-approvals-and-sandbox`) and shows a badge on the
+  agent. Harbour validates the policy file and points the CLI at it but never
+  authors its content — see the new
+  [agent permissions guide](docs/guides/agent-permissions.md).
+- **Claude Code policy: `<workspace>/.claude/settings.json`** — the CLI's own
+  settings format (`permissions` rules, `defaultMode`, hooks, and the OS
+  sandbox block). Passed as `--settings <file> --permission-mode <mode>
+  --setting-sources project`; `--settings` rather than cwd discovery because
+  project-scope settings silently ignore the sandbox keys that do the
+  containing. `defaultMode` defaults to `dontAsk` and may not be
+  `bypassPermissions` (bypassing is the dashboard toggle's job). The policy
+  must allow the run protocol's `curl` calls (e.g. `Bash(curl *)`) or every
+  run ends `failed`; Claude's "Ignoring permissions" stderr warnings are
+  surfaced as run activity.
+- **Codex policy: `<workspace>/.codex/config.toml`** — the CLI's own config
+  format, with `sandbox_mode` set to `workspace-write` (`danger-full-access`
+  is refused; use the dashboard toggle instead). Passed as
+  `--skip-git-repo-check -s <mode> -c approval_policy=never`. Optional
+  `.codex/rules/*.rules` execpolicy files add a command deny-list on top,
+  validated up front with `codex execpolicy check`. The OS sandbox is the
+  boundary — rules are a deny-list only, and unmatched commands run.
+- **Codex policies must enable network access** with
+  `[sandbox_workspace_write]` `network_access = true`. Codex's sandbox
+  otherwise blocks every connection — loopback included — and the run
+  protocol is loopback `curl` to the Harbour API, so such an agent could do
+  work but never report a title, activity, or final status, and every run
+  would end `failed` at the finalize backstop. Harbour refuses the policy up
+  front instead; `read-only` is refused for the same reason.
+- **Workspace trust is recorded automatically for both CLIs** before an
+  enforced run spawns — Claude via `hasTrustDialogAccepted` in
+  `~/.claude.json`, Codex via a `[projects."<dir>"]` entry in
+  `$CODEX_HOME/config.toml` — because each CLI silently ignores a workspace
+  policy in a directory it does not trust.
+- **New CLI command: `harbour policy check [--agent <slug>]`** reads the
+  agents table straight from the database (read-only, no server needed) and
+  resolves every agent's policy with the same code the runner uses — one line
+  per agent plus a summary, exit 1 when any enforced agent would be refused.
+  Usable as a pre-deploy gate when upgrading.
+- **Migration.** The orgs removal above already makes a fresh database the only
+  supported path across this release, which covers this change too — a new DB
+  gets the column from the schema. If you are instead carrying data forward by
+  hand, add the column yourself or the server refuses to boot with a
+  schema-drift error: `ALTER TABLE agents ADD COLUMN permissions TEXT NOT NULL
+  DEFAULT 'enforced';`.
+- **Every existing agent becomes Enforced**, however you arrive — that is the
+  point of the change. Before its next run each agent needs a policy file in
+  its workspace or a deliberate flip to Unrestricted in the dashboard; a run
+  that finds neither fails closed with the reason in its activity. Run
+  `harbour policy check` to see where every agent stands.
+
 ### Runs
 
 - The dashboard's Recent feed shows individual runs again — the v2.1.0

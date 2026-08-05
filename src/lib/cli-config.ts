@@ -52,6 +52,34 @@ export function validateCli(cli: unknown): string | null {
   return `Invalid cli "${cli}". Valid options: ${Object.keys(CLI_CONFIG).join(", ")}.`;
 }
 
+// Agent permission policy — whether the runner may launch the agent's CLI with
+// its permission-bypass flag. `enforced` (the default) requires a CLI-native
+// policy file in the agent's workspace; `unrestricted` is the deliberate
+// per-agent opt-out that keeps the bypass flag.
+
+export const AGENT_PERMISSIONS = ["enforced", "unrestricted"] as const;
+export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
+
+export function validatePermissions(permissions: unknown): string | null {
+  if (
+    typeof permissions === "string" &&
+    (AGENT_PERMISSIONS as readonly string[]).includes(permissions)
+  ) {
+    return null;
+  }
+  return `Invalid permissions "${permissions}". Valid options: ${AGENT_PERMISSIONS.join(", ")}.`;
+}
+
+/**
+ * Storage/read normalization, fail-closed: only the exact string
+ * "unrestricted" passes through; anything else (absent, junk, wrong case)
+ * becomes "enforced". The API validates first (400 on junk) — this guards the
+ * db layer and values written outside it.
+ */
+export function normalizePermissions(permissions: unknown): AgentPermissions {
+  return permissions === "unrestricted" ? "unrestricted" : "enforced";
+}
+
 export function validateThinking(cli: unknown, thinking: unknown): string | null {
   // Empty means "use the CLI default" and is always valid.
   if (thinking === undefined || thinking === null || thinking === "") return null;

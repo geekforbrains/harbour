@@ -31,6 +31,7 @@ agent actually sees); for code behavior, [reference/](reference/) and the source
 
 - [Getting started](guides/getting-started.md) — first agent, first job, end to end
 - [Local development](guides/local-development.md) — the day-to-day dev loop: dev server + ports, validate/rebuild/restart, browser review, worktrees
+- [Agent permissions](guides/agent-permissions.md) — the per-agent Enforced/Unrestricted setting and the CLI-native policy files enforced agents require
 - [Running a runner on a different machine](guides/run-on-different-machine.md) — minting a credential and running a remote runner (`harbour-agent`, your own, or the bundled one; e.g. over Tailscale)
 - [Deploying to production](guides/deploy-to-production.md) — Linux/systemd with a TLS proxy in front
 - [Cutting a release](guides/releasing.md) — dev-to-main merge, changelog, version bump, tag, GitHub Release

@@ -66,6 +66,12 @@ Authorization: Bearer hbx_<exec_token>
 
 The exec token is scoped to a single run and rotated on every re-claim, so it carries the lifecycle endpoints (`set_title`, `update_status`, `post_activity`, `upload_attachment`, …) as well as the docs and tables endpoints. You never see or use the runner's own token, and an agent has no long-lived API key of its own — run work is authenticated entirely by this exec token. Read the resolved URLs and the auth note straight out of `api` (see the next section); don't construct them yourself.
 
+### If a tool call is denied
+
+Your agent may be running under a permission policy its operator wrote, so some tool calls — shell commands, file writes, network requests — can come back denied. That is configuration, not a fault in your task or a transient error to retry: the same call will be denied again, and probing for a way around it is the wrong move.
+
+When it happens, say so plainly in an activity message: what you tried, what was denied, and what you'd need in order to continue. If the denial blocks the task, set the run's status to `waiting` so a human can widen the policy or take over; if it blocks only part of it, finish the rest and report the gap. If the denial is on the `curl` calls in this guide, you have no way to report anything — nothing you write will reach Harbour, and the run will be marked failed for you. See [agent permissions](guides/agent-permissions.md) for what the operator controls.
+
 ## Your Run Context
 
 Harbour never calls out to agents and you never poll it. A runner claims the next runnable unit from the server — the Runner Protocol, served at `GET /api/runner-guide` — and spawns you with the full run context already resolved. The server decides what to hand over — most notably:

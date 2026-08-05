@@ -159,6 +159,7 @@ The split is straightforward but worth being explicit about.
 - The runner process itself.
 - The CLI tool subprocess — Claude Code or Codex, whichever the agent picked.
 - Working directories at `~/.harbour/workspaces/<project-slug>/<agent-slug>/` — this is where the CLI's `cwd` lives. Clone repos here. (See [agents](../concepts/agents.md) for how the path is derived.)
+- **The agent's permission policy file**, inside that working directory (`.claude/settings.json` or `.codex/config.toml`). The `permissions` setting travels in the claim payload, but the file it points at does not — it lives on whichever host spawns the CLI. An Enforced agent whose policy file exists only on the harbour server fails closed on the remote, with the reason in run activity. Author it on the remote, and run `harbour policy check` **there** to verify it. See [agent permissions](agent-permissions.md).
 - **Gate runtimes.** Prerun/postrun gate scripts are `{ runtime, content }` gists stored in Harbour; the runner materializes each body into `~/.harbour/workflows/<scripts_dir>` from the claim payload and runs it there — nothing to hand-place or sync. You only need the gate's **runtime** installed on the remote: `bash`, `python3`, or `node`, depending on which the gate uses.
 - Anything env vars and API keys reference. Job Secrets are decrypted by Harbour into `env`. The runner and spawned agent have the plaintext at run time, and the *services* those keys point at must be reachable from the remote. Use HTTPS or a private mesh between Harbour and the runner.
 

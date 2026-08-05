@@ -23,11 +23,31 @@ import {
 const CWD = "/tmp/test-workspace";
 const PROMPT = "do the thing";
 
+// Policy fixtures — buildCommand demands a resolved policy (7th param). The
+// bypass flags exist ONLY behind mode:"unrestricted"; enforced mode carries the
+// CLI-native config resolveAgentPolicy validated.
+const UNRESTRICTED = { ok: true, mode: "unrestricted" };
+const ENFORCED_CLAUDE = {
+  ok: true,
+  mode: "enforced",
+  cli: "claude",
+  settingsPath: `${CWD}/.claude/settings.json`,
+  permissionMode: "dontAsk",
+};
+const ENFORCED_CODEX = {
+  ok: true,
+  mode: "enforced",
+  cli: "codex",
+  configPath: `${CWD}/.codex/config.toml`,
+  sandboxMode: "workspace-write",
+  rulesFiles: [`${CWD}/.codex/rules/harbour.rules`],
+};
+
 describe("claude provider", () => {
   const claude = getProvider("claude");
 
   it("builds a basic command without thinking", () => {
-    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "abc-123", true, null);
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "abc-123", true, null, UNRESTRICTED);
     expect(cmd.cwd).toBe(CWD);
     expect(cmd.args).toContain("-p");
     expect(cmd.args).toContain(PROMPT);
@@ -37,20 +57,60 @@ describe("claude provider", () => {
   });
 
   it("passes thinking via --effort", () => {
-    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "abc-123", true, "high");
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "abc-123", true, "high", UNRESTRICTED);
     expect(cmd.args).toContain("--effort");
     const effortIdx = cmd.args.indexOf("--effort");
     expect(cmd.args[effortIdx + 1]).toBe("high");
   });
 
   it("uses --session-id for new sessions and --resume for existing", () => {
-    const fresh = claude.buildCommand(PROMPT, "sonnet", CWD, "uuid-1", true, null);
+    const fresh = claude.buildCommand(PROMPT, "sonnet", CWD, "uuid-1", true, null, UNRESTRICTED);
     expect(fresh.args).toContain("--session-id");
     expect(fresh.args).not.toContain("--resume");
 
-    const resume = claude.buildCommand(PROMPT, "sonnet", CWD, "uuid-1", false, null);
+    const resume = claude.buildCommand(PROMPT, "sonnet", CWD, "uuid-1", false, null, UNRESTRICTED);
     expect(resume.args).toContain("--resume");
     expect(resume.args).not.toContain("--session-id");
+  });
+});
+
+describe("claude provider — permission policy argv", () => {
+  const claude = getProvider("claude");
+
+  it("unrestricted mode passes the bypass flag", () => {
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "u", true, null, UNRESTRICTED);
+    expect(cmd.args).toContain("--dangerously-skip-permissions");
+    expect(cmd.args).not.toContain("--settings");
+  });
+
+  it("enforced mode passes settings/permission-mode/setting-sources and never the bypass flag", () => {
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "u", true, null, ENFORCED_CLAUDE);
+    expect(cmd.args).not.toContain("--dangerously-skip-permissions");
+    expect(cmd.args[cmd.args.indexOf("--settings") + 1]).toBe(ENFORCED_CLAUDE.settingsPath);
+    expect(cmd.args[cmd.args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(cmd.args[cmd.args.indexOf("--setting-sources") + 1]).toBe("project");
+  });
+
+  it("enforced mode carries the policy file's own permissionMode", () => {
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "u", true, null, {
+      ...ENFORCED_CLAUDE,
+      permissionMode: "acceptEdits",
+    });
+    expect(cmd.args[cmd.args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
+  });
+
+  it("enforced flags survive on a resumed session too", () => {
+    const cmd = claude.buildCommand(PROMPT, "sonnet", CWD, "u", false, null, ENFORCED_CLAUDE);
+    expect(cmd.args).toContain("--resume");
+    expect(cmd.args).not.toContain("--dangerously-skip-permissions");
+    expect(cmd.args).toContain("--settings");
+  });
+
+  it("throws without a resolved policy — no silent fallback into bypass", () => {
+    expect(() => claude.buildCommand(PROMPT, "sonnet", CWD, "u", true, null)).toThrow(/policy/i);
+    expect(() =>
+      claude.buildCommand(PROMPT, "sonnet", CWD, "u", true, null, { ok: false, reason: "x" }),
+    ).toThrow(/policy/i);
   });
 });
 
@@ -58,12 +118,12 @@ describe("codex provider (issue #24)", () => {
   const codex = getProvider("codex");
 
   it("does NOT use the removed --reasoning-effort flag", () => {
-    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, "low");
+    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, "low", UNRESTRICTED);
     expect(cmd.args).not.toContain("--reasoning-effort");
   });
 
   it("passes thinking via -c model_reasoning_effort=<level> on a fresh session", () => {
-    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, "high");
+    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, "high", UNRESTRICTED);
     expect(cmd.args).toContain("-c");
     expect(cmd.args).toContain("model_reasoning_effort=high");
     // The -c and its value must be adjacent
@@ -72,7 +132,15 @@ describe("codex provider (issue #24)", () => {
   });
 
   it("passes thinking via -c on a resumed session", () => {
-    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, "session-uuid", false, "medium");
+    const cmd = codex.buildCommand(
+      PROMPT,
+      "gpt-5",
+      CWD,
+      "session-uuid",
+      false,
+      "medium",
+      UNRESTRICTED,
+    );
     expect(cmd.args[0]).toBe("exec");
     expect(cmd.args[1]).toBe("resume");
     expect(cmd.args).toContain("-c");
@@ -83,9 +151,58 @@ describe("codex provider (issue #24)", () => {
     expect(cmd.args[cmd.args.length - 1]).toBe(PROMPT);
   });
 
-  it("omits -c when no thinking value is set", () => {
-    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null);
-    expect(cmd.args).not.toContain("-c");
+  it("omits model_reasoning_effort when no thinking value is set", () => {
+    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null, UNRESTRICTED);
+    expect(cmd.args.join(" ")).not.toContain("model_reasoning_effort");
+  });
+});
+
+describe("codex provider — permission policy argv", () => {
+  const codex = getProvider("codex");
+
+  it("unrestricted mode passes the bypass flag (fresh and resume)", () => {
+    const fresh = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null, UNRESTRICTED);
+    expect(fresh.args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    const resume = codex.buildCommand(PROMPT, "gpt-5", CWD, "sid", false, null, UNRESTRICTED);
+    expect(resume.args).toContain("--dangerously-bypass-approvals-and-sandbox");
+  });
+
+  it("enforced mode drops the bypass flag and pins approval_policy=never (fresh and resume)", () => {
+    for (const [sessionId, isNew] of [
+      [null, true],
+      ["sid", false],
+    ] as const) {
+      const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, sessionId, isNew, null, ENFORCED_CODEX);
+      expect(cmd.args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+      const cIdx = cmd.args.indexOf("-c");
+      expect(cmd.args[cIdx + 1]).toBe("approval_policy=never");
+    }
+  });
+
+  it("enforced mode passes the policy file's sandbox mode via -s", () => {
+    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null, ENFORCED_CODEX);
+    expect(cmd.args[cmd.args.indexOf("-s") + 1]).toBe("workspace-write");
+  });
+
+  it("enforced mode passes --skip-git-repo-check — agent workspaces are not git repos", () => {
+    // Without it codex refuses to start ("Not inside a trusted directory and
+    // --skip-git-repo-check was not specified"). The bypass flag implied it.
+    const fresh = codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null, ENFORCED_CODEX);
+    expect(fresh.args).toContain("--skip-git-repo-check");
+    const resume = codex.buildCommand(PROMPT, "gpt-5", CWD, "sid", false, null, ENFORCED_CODEX);
+    expect(resume.args).toContain("--skip-git-repo-check");
+  });
+
+  it("keeps exec/resume leading and sessionId+prompt trailing in enforced mode", () => {
+    const cmd = codex.buildCommand(PROMPT, "gpt-5", CWD, "sid", false, "high", ENFORCED_CODEX);
+    expect(cmd.args[0]).toBe("exec");
+    expect(cmd.args[1]).toBe("resume");
+    expect(cmd.args[cmd.args.length - 2]).toBe("sid");
+    expect(cmd.args[cmd.args.length - 1]).toBe(PROMPT);
+  });
+
+  it("throws without a resolved policy — no silent fallback into bypass", () => {
+    expect(() => codex.buildCommand(PROMPT, "gpt-5", CWD, null, true, null)).toThrow(/policy/i);
   });
 });
 

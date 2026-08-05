@@ -4,6 +4,7 @@ import {
   buildApiPrompt,
   buildFinalizePrompt,
   buildPrompt,
+  buildProviderCommand,
   FINALIZE_MAX_ATTEMPTS,
   finalizeStep,
   isTerminalStatus,
@@ -204,6 +205,72 @@ describe("resolveFinalizeMode", () => {
     for (const cli of ["claude", "codex"]) {
       expect(getProvider(cli).canResume).toBe(true);
     }
+  });
+});
+
+// ===========================================================================
+// The finalize turn spawns the CLI a second time, so it must carry the SAME
+// permission policy as the work turn. buildProviderCommand is the one seam both
+// turns go through; if it stopped forwarding `policy`, every enforced run would
+// throw at finalize (the provider refuses to build a command without one) —
+// after the work was already done. Lock the forwarding here.
+// ===========================================================================
+
+describe("buildProviderCommand forwards the permission policy", () => {
+  const CWD = "/tmp/ws";
+  const ENFORCED = {
+    ok: true,
+    mode: "enforced",
+    cli: "claude",
+    settingsPath: `${CWD}/.claude/settings.json`,
+    permissionMode: "dontAsk",
+  };
+
+  it("passes an enforced policy through to the argv", () => {
+    const cmd = buildProviderCommand({
+      provider: getProvider("claude"),
+      prompt: "finalize",
+      model: "sonnet",
+      workingDir: CWD,
+      sessionId: "sess-1",
+      isNewSession: false,
+      thinking: null,
+      policy: ENFORCED,
+    });
+    expect(cmd.args).toContain("--settings");
+    expect(cmd.args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("passes an unrestricted policy through to the argv", () => {
+    const cmd = buildProviderCommand({
+      provider: getProvider("claude"),
+      prompt: "finalize",
+      model: "sonnet",
+      workingDir: CWD,
+      sessionId: "sess-1",
+      isNewSession: false,
+      thinking: null,
+      policy: { ok: true, mode: "unrestricted" },
+    });
+    expect(cmd.args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("throws rather than silently dropping the policy", () => {
+    // The omission is the point, so it has to be forced past the type that now
+    // requires `policy` — that type is the first line of defense, this is the
+    // runtime backstop behind it.
+    const args = {
+      provider: getProvider("claude"),
+      prompt: "finalize",
+      model: "sonnet",
+      workingDir: CWD,
+      sessionId: "sess-1",
+      isNewSession: false,
+      thinking: null,
+    };
+    expect(() => buildProviderCommand(args as typeof args & { policy: unknown })).toThrow(
+      /policy/i,
+    );
   });
 });
 

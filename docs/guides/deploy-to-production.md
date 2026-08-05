@@ -14,7 +14,7 @@ Assumes Ubuntu-ish, but nothing here is distro-specific beyond package names. Yo
 - **A domain you control**, with an A record you can point at the host.
 - Whatever AI CLIs your agents use (Claude Code or Codex) — installed later and visible on the runner service's PATH.
 
-Create a dedicated user. By default the runner launches Claude Code with `--dangerously-skip-permissions` (it's omitted only when an agent's workspace has a valid `.claude/settings.json` with a `permissions` object), and Claude Code refuses that flag when running as root — so both services run unprivileged:
+Create a dedicated user. The runner passes `--dangerously-skip-permissions` for any Claude Code agent explicitly set to **Unrestricted** ([agent permissions](agent-permissions.md)), and Claude Code refuses that flag when running as root — the non-root user is what makes the Unrestricted path work at all. So both services run unprivileged:
 
 ```bash
 useradd -m -s /bin/bash harbour

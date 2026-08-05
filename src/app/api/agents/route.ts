@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { validateCli, validateThinking } from "@/lib/cli-config";
+import { validateCli, validatePermissions, validateThinking } from "@/lib/cli-config";
 import { createAgent, listAgents } from "@/lib/db/queries";
 import {
   optionalBoolean,
@@ -26,6 +26,7 @@ export const POST = withAuthenticatedUser(async (req) => {
   const eager = optionalBoolean(body.eager, "eager");
   const placement = optionalString(body.placement, "placement");
   const thinking = optionalString(body.thinking, "thinking");
+  const permissions = optionalString(body.permissions, "permissions");
   const cli = body.cli;
   if (!cli) {
     return NextResponse.json({ error: "cli is required" }, { status: 400 });
@@ -34,6 +35,10 @@ export const POST = withAuthenticatedUser(async (req) => {
   if (cliError) return NextResponse.json({ error: cliError }, { status: 400 });
   const thinkingError = validateThinking(cli, thinking);
   if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
+  if (permissions !== undefined) {
+    const permissionsError = validatePermissions(permissions);
+    if (permissionsError) return NextResponse.json({ error: permissionsError }, { status: 400 });
+  }
 
   let agent: ReturnType<typeof createAgent>;
   try {
@@ -44,6 +49,8 @@ export const POST = withAuthenticatedUser(async (req) => {
       color,
       eager: !!eager,
       placement: placement ?? undefined,
+      // Omitted → the fail-closed default 'enforced' (set in createAgent).
+      permissions,
     });
   } catch (err) {
     if (err instanceof NameCollisionError) {

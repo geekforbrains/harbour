@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuthenticatedUser } from "@/lib/auth";
-import { validateCli, validateThinking } from "@/lib/cli-config";
+import { validateCli, validatePermissions, validateThinking } from "@/lib/cli-config";
 import { deleteAgent, getAgentById, getAgentWorkspace, updateAgent } from "@/lib/db/queries";
 import { optionalBoolean, optionalString, readJson } from "@/lib/http";
 
@@ -27,6 +27,7 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
   const thinking = optionalString(body.thinking, "thinking");
   const eager = optionalBoolean(body.eager, "eager");
   const placement = optionalString(body.placement, "placement");
+  const permissions = optionalString(body.permissions, "permissions");
   // `remote` is accepted but not a stored agent field — validate it anyway so a
   // wrong-typed value is a clean 400 rather than silently ignored.
   optionalBoolean(body.remote, "remote");
@@ -44,6 +45,10 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
     const thinkingError = validateThinking(effectiveCli, effectiveThinking);
     if (thinkingError) return NextResponse.json({ error: thinkingError }, { status: 400 });
   }
+  if (permissions !== undefined) {
+    const permissionsError = validatePermissions(permissions);
+    if (permissionsError) return NextResponse.json({ error: permissionsError }, { status: 400 });
+  }
 
   const updates = {
     name,
@@ -54,6 +59,7 @@ export const PUT = withAuthenticatedUser(async (req, _auth, { params }) => {
     color,
     eager,
     placement: placement ?? undefined,
+    permissions,
   };
   const updated = updateAgent(id, updates);
   // No runner config to sync — the runner reads cli/model/thinking live from

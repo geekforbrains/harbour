@@ -52,7 +52,11 @@ See [deploying to production](docs/guides/deploy-to-production.md) for the Linux
 
 ### Running agents
 
-Built-in support for [Claude Code](https://claude.ai/claude-code) and [Codex](https://github.com/openai/codex). Create a **Harbour Agent** in the dashboard, and the **local runner** (provisioned at setup) claims and runs it. If you haven't scheduled the runner yet:
+Built-in support for [Claude Code](https://claude.ai/claude-code) and [Codex](https://github.com/openai/codex). Create a **Harbour Agent** in the dashboard, and the **local runner** (provisioned at setup) claims and runs it.
+
+New agents default to **Enforced** permissions: the CLI runs under a policy file you write in the agent's workspace, and until that file exists the agent's runs fail closed rather than running unrestricted. To try an agent out immediately, set it to **Unrestricted** on its settings page — that's the old always-bypass behavior, chosen deliberately per agent. `npm run harbour -- policy check` shows where every agent stands. See [agent permissions](docs/guides/agent-permissions.md).
+
+If you haven't scheduled the runner yet:
 
 ```bash
 npm run harbour -- install   # macOS launchd; polls every 60s
