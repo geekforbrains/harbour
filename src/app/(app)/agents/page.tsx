@@ -1,6 +1,7 @@
 "use client";
 
-import { Bot, Briefcase, CheckCircle, Loader2, Plus, XCircle } from "lucide-react";
+import { Bot, Brain, Briefcase, CheckCircle, Folder, Loader2, Plus, XCircle } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { ActionTooltip } from "@/components/app/action-tooltip";
 import { AgentColorPicker } from "@/components/app/agent-color-picker";
@@ -8,8 +9,6 @@ import { PermissionsSelect, UnrestrictedBadge } from "@/components/app/agent-per
 import { ListState } from "@/components/app/list-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageHeader, PageLoading } from "@/components/app/page-header";
-import { ProjectBadge } from "@/components/app/project-badge";
-import { RowLink } from "@/components/app/row-link";
 import { SlugPreview } from "@/components/app/slug-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +29,7 @@ import { mutationErrorMessage } from "@/lib/hooks/mutation-error";
 import { useAgentRunnerStatus, useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { useRunnerHealth } from "@/lib/hooks/use-runner-health";
+import { statusStyle } from "@/lib/status";
 import { timeAgo } from "@/lib/time";
 
 type Agent = {
@@ -201,57 +201,69 @@ export default function AgentsPage() {
         }
       >
         <div className="grid gap-2">
-          {agents.map((agent) => (
-            <RowLink key={agent.id} href={`/agents/${agent.id}`}>
-              {agent.waiting_count > 0 ? (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
-                  <Bot className="h-4 w-4 text-amber-500" />
-                </div>
-              ) : agent.pending_count > 0 ? (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/10">
-                  <Bot className="h-4 w-4 text-violet-500" />
-                </div>
-              ) : (
+          {agents.map((agent) => {
+            const tint =
+              agent.waiting_count > 0
+                ? statusStyle("waiting")
+                : agent.pending_count > 0
+                  ? statusStyle("pending")
+                  : null;
+            const agentColor = resolveAgentColor(agent.color, agent.name);
+            return (
+              <Link
+                key={agent.id}
+                href={`/agents/${agent.id}`}
+                className="flex min-w-0 items-start gap-3 rounded-lg border border-border bg-card px-3 py-2 hover:border-foreground/20 hover:bg-accent/40 transition-colors"
+              >
                 <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                  style={{
-                    backgroundColor: `${resolveAgentColor(agent.color, agent.name)}1f`,
-                    color: resolveAgentColor(agent.color, agent.name),
-                  }}
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                    tint ? tint.bg : ""
+                  }`}
+                  style={
+                    tint ? undefined : { backgroundColor: `${agentColor}1f`, color: agentColor }
+                  }
                 >
-                  <Bot className="h-4 w-4" />
+                  <Bot className={`h-4 w-4 ${tint ? tint.fg : ""}`} />
                 </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{agent.name}</span>
-                  {agent.cli && (
-                    <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                      {agent.cli}
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{agent.name}</span>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    {agent.cli && (
+                      <span className="inline-flex shrink-0 items-center gap-1">
+                        <Brain className="h-3 w-3" /> {agent.cli}
+                      </span>
+                    )}
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <Briefcase className="h-3 w-3" /> {agent.job_count} jobs
                     </span>
-                  )}
-                  {agent.permissions === "unrestricted" && <UnrestrictedBadge />}
+                    {!activeProjectId && (
+                      <span className="inline-flex shrink-0 items-center gap-1">
+                        <Folder className="h-3 w-3" /> {agent.project_name}
+                      </span>
+                    )}
+                    {agent.permissions === "unrestricted" && <UnrestrictedBadge />}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Briefcase className="h-3 w-3" /> {agent.job_count} jobs
+                {agent.waiting_count > 0 ? (
+                  <Badge
+                    className={`shrink-0 text-[10px] ${statusStyle("waiting").bg} ${statusStyle("waiting").text}`}
+                  >
+                    {agent.waiting_count} waiting
+                  </Badge>
+                ) : agent.pending_count > 0 ? (
+                  <Badge
+                    className={`shrink-0 text-[10px] ${statusStyle("pending").bg} ${statusStyle("pending").text}`}
+                  >
+                    {agent.pending_count} pending
+                  </Badge>
+                ) : (
+                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                    {agent.last_activity ? `Active ${timeAgo(agent.last_activity)}` : "No activity"}
                   </span>
-                  {agent.last_activity && <span>Active {timeAgo(agent.last_activity)}</span>}
-                </div>
-              </div>
-              {!activeProjectId && <ProjectBadge name={agent.project_name} />}
-              {agent.waiting_count > 0 && (
-                <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10 shrink-0">
-                  {agent.waiting_count} waiting
-                </Badge>
-              )}
-              {agent.pending_count > 0 && (
-                <Badge className="text-[10px] bg-violet-500/10 text-violet-600 hover:bg-violet-500/10 shrink-0">
-                  {agent.pending_count} pending
-                </Badge>
-              )}
-            </RowLink>
-          ))}
+                )}
+              </Link>
+            );
+          })}
         </div>
       </ListState>
 

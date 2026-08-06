@@ -6,7 +6,6 @@ import {
   Bot,
   Brain,
   Briefcase,
-  Calendar,
   Cpu,
   Folder,
   Settings,
@@ -20,13 +19,12 @@ import { AgentColorPicker } from "@/components/app/agent-color-picker";
 import { PermissionsSelect, UnrestrictedBadge } from "@/components/app/agent-permissions";
 import { BackLink } from "@/components/app/back-link";
 import { EmptyState } from "@/components/app/empty-state";
+import { JobRow } from "@/components/app/job-row";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { PageLoading } from "@/components/app/page-header";
 import { RowLink } from "@/components/app/row-link";
 import { RunStatusIcon } from "@/components/app/run-status";
-import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 import { SectionHeader } from "@/components/app/section-header";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -48,7 +46,6 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from "@/lib/hooks/use-agents";
-import { statusStyle } from "@/lib/status";
 import { timeAgo } from "@/lib/time";
 
 // Every v2 agent is a harbour CLI agent. Where it runs is controlled by
@@ -274,71 +271,13 @@ export default function AgentDetailPage() {
         ) : (
           <div className="space-y-2">
             {jobs.map((job) => (
-              <RowLink key={job.id} href={`/jobs/${job.id}`}>
-                <div
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                    !job.active
-                      ? "bg-muted"
-                      : job.waiting_runs > 0
-                        ? statusStyle("waiting").bg
-                        : job.pending_runs > 0
-                          ? statusStyle("pending").bg
-                          : "bg-muted"
-                  }`}
-                >
-                  <Briefcase
-                    className={`h-4 w-4 ${
-                      !job.active
-                        ? "text-muted-foreground"
-                        : job.waiting_runs > 0
-                          ? statusStyle("waiting").fg
-                          : job.pending_runs > 0
-                            ? statusStyle("pending").fg
-                            : "text-muted-foreground"
-                    }`}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium">{job.name}</span>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 mt-1 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}
-                    </span>
-                    {job.prerun_script && (
-                      <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">prerun</span>
-                    )}
-                    {job.total_runs > 0 && (
-                      <span className="hidden sm:inline">{job.total_runs} runs</span>
-                    )}
-                    {job.last_run_at && (
-                      <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>
-                    )}
-                  </div>
-                </div>
-                {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    {!job.active && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Paused
-                      </Badge>
-                    )}
-                    {job.waiting_runs > 0 && (
-                      <Badge
-                        className={`text-[10px] ${statusStyle("waiting").bg} ${statusStyle("waiting").text} hover:bg-amber-500/10`}
-                      >
-                        {job.waiting_runs} waiting
-                      </Badge>
-                    )}
-                    {job.pending_runs > 0 && (
-                      <Badge
-                        className={`text-[10px] ${statusStyle("pending").bg} ${statusStyle("pending").text} hover:bg-violet-500/10`}
-                      >
-                        {job.pending_runs} pending
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </RowLink>
+              <JobRow
+                key={job.id}
+                job={job}
+                href={`/jobs/${job.id}`}
+                showAgent={false}
+                showProject={false}
+              />
             ))}
           </div>
         )}

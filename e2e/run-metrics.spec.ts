@@ -4,9 +4,11 @@ import { expect, test } from "@playwright/test";
 // usage; jobs roll them up. Seed project → agent → job over the API with the
 // logged-in session, trigger a run, claim it over the Runner Protocol to mint
 // its exec token, and post usage the way the bundled runner does after a CLI
-// turn — then assert the metric surfaces render on the run detail, job detail,
-// and jobs list pages. Duration stays 0 here (the claim and finish happen in
-// the same second), so its cells assert the em-dash default.
+// turn — then assert the metric surfaces render on the run detail and job
+// detail pages. Duration stays 0 here (the claim and finish happen in the
+// same second), so its cells assert the em-dash default. The jobs list
+// deliberately doesn't surface run-count/avg-duration rollups (that's on the
+// job detail page instead), so it's not asserted here.
 
 test("run and job pages surface duration and token metrics", async ({ page }) => {
   const projectRes = await page.request.post("/api/projects", {
@@ -74,8 +76,7 @@ test("run and job pages surface duration and token metrics", async ({ page }) =>
   await expect(page.locator(".lucide-timer")).toBeVisible();
   await expect(page.getByText("47.3k tokens")).toBeVisible();
 
-  // Jobs list: the rollup span still renders (no avg — nothing measured).
+  // Jobs list: the job is still findable — no run-count/avg rollup here by design.
   await page.goto("/jobs");
   await expect(page.getByText("Metrics Job")).toBeVisible();
-  await expect(page.getByText("1 runs", { exact: false }).first()).toBeVisible();
 });
