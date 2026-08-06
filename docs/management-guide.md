@@ -293,7 +293,7 @@ Returns `{ "runs": [...], "hasMore": <bool>, "nextOffset": <number|null> }` — 
 ```
 GET /api/runs/:id
 ```
-Returns the run (including its `project_name`) with its full activity log and attachments.
+Returns the run (including its `project_name`) with its full activity log and attachments. Run objects also carry cumulative metrics — `attempts`, `duration_seconds` (time spent `running` only), and `input_tokens` / `output_tokens` — accumulated across resumes and retries.
 
 ### Get Run Activity
 ```

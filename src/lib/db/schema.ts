@@ -211,6 +211,10 @@ export function initializeSchema(db: Database.Database) {
       extra_instructions TEXT,
       session_id TEXT,
       session_cwd TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,          -- running attempts started (claim + each pending→running resume)
+      duration_seconds INTEGER NOT NULL DEFAULT 0,  -- cumulative seconds spent in 'running' across attempts
+      input_tokens INTEGER NOT NULL DEFAULT 0,      -- cumulative input-side tokens (incl. cache read/creation) across CLI turns
+      output_tokens INTEGER NOT NULL DEFAULT 0,     -- cumulative output tokens across CLI turns
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );

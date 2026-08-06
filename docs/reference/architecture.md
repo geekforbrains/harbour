@@ -168,6 +168,13 @@ scheduled --> running ----------+
   occurrence still fires; the user can also resume the killed run via a comment
   (the in-flight lock keeps the resumed run and the next occurrence from overlapping).
 
+The lifecycle also drives the run's cumulative metrics: each entry into
+`running` increments `runs.attempts`, and every exit from `running` (waiting
+included — the finalize turn's exit too) folds `now − claimed_at` into
+`runs.duration_seconds` inside the same status UPDATE. Token usage arrives
+separately: the bundled runner posts each CLI turn's delta to
+`POST /api/runs/:id/usage` and the server accumulates it (`addRunUsage`).
+
 Transitions are **mechanically enforced**: `updateRunStatus` (the
 single chokepoint) validates against a `LEGAL_RUN_TRANSITIONS` map and throws
 `IllegalRunStatusTransition`; `PUT /api/runs/:id/status` returns **409** for an
@@ -175,7 +182,7 @@ illegal edge (vs 400 for a bad enum value). `createRun`/`requeueWorkflowRun` are
 documented direct-write bypasses.
 
 The lifecycle endpoints the runner drives during a run
-(`title`/`status`/`activity`/`output`/`kill`/`session`/`attachments`) authenticate
+(`title`/`status`/`activity`/`output`/`kill`/`session`/`usage`/`attachments`) authenticate
 with that run's **exec token** (`withRunExecutorOrUser` — the token is bound to a
 single run id; any authenticated user also passes).
 

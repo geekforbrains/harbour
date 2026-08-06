@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { useUpdateJob } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
-import { timeAgo } from "@/lib/time";
+import { formatDuration, timeAgo } from "@/lib/time";
 
 export type RunRowData = {
   id: string;
@@ -28,6 +28,7 @@ export type RunRowData = {
   created_at: number;
   updated_at: number;
   completed_at: number | null;
+  duration_seconds: number;
 };
 
 type Props = {
@@ -79,6 +80,7 @@ export function RunRow({ run, showActions = true }: Props) {
               </>
             )}
             {!activeProjectId && <ProjectBadge name={run.project_name} className="h-4 px-1.5" />}
+            {run.duration_seconds > 0 && <span>{`· ${formatDuration(run.duration_seconds)}`}</span>}
           </div>
         </div>
         <span className="text-xs text-muted-foreground shrink-0">

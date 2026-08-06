@@ -42,8 +42,8 @@ export function createRun(jobId: string, agentId: string | null) {
   const placement = resolveRunPlacement(agentId, job.placement);
   const title = defaultRunTitle(job.name, Math.floor(Date.now() / 1000));
   db.prepare(`
-    INSERT INTO runs (id, project_id, job_id, agent_id, status, placement, claimed_at, title)
-    VALUES (?, ?, ?, ?, 'running', ?, unixepoch(), ?)
+    INSERT INTO runs (id, project_id, job_id, agent_id, status, placement, claimed_at, attempts, title)
+    VALUES (?, ?, ?, ?, 'running', ?, unixepoch(), 1, ?)
   `).run(id, job.project_id, jobId, agentId || null, placement, title);
   return getRunById(id);
 }
@@ -202,8 +202,8 @@ export function updateRunStatus(id: string, status: string) {
   // no-ops (the runner re-checks status). createRun (INSERT 'running') and
   // requeueWorkflowRun (direct multi-column reset to 'scheduled') are
   // deliberate, documented bypasses — see their comments.
-  const current = db.prepare(`SELECT status FROM runs WHERE id = ?`).get(id) as
-    | { status: string }
+  const current = db.prepare(`SELECT status, claimed_at FROM runs WHERE id = ?`).get(id) as
+    | { status: string; claimed_at: number | null }
     | undefined;
   if (current) {
     if (current.status === status) return getRunById(id); // idempotent no-op
@@ -229,9 +229,20 @@ export function updateRunStatus(id: string, status: string) {
   // so the token must stay valid for that trailing window. A leaked token's blast
   // radius is bounded instead by the executor gates in the auth layer (it can't
   // resurrect a run or write docs/tables once the run is terminal).
-  const enterRunning = status === "running" ? ", claimed_at = unixepoch()" : "";
+  const enterRunning =
+    status === "running" ? ", claimed_at = unixepoch(), attempts = attempts + 1" : "";
+  // Leaving 'running' ends the current attempt: fold its elapsed time
+  // (now − claimed_at) into the cumulative working duration inside this same
+  // UPDATE — no read-modify-write race. Applies to all five exits from
+  // 'running', waiting included: the CLI parks, but the executing attempt is
+  // over. (current.status === 'running' implies the target differs — the
+  // running → running self-transition already returned above as a no-op.)
+  const endAttempt =
+    current?.status === "running" && current.claimed_at != null
+      ? ", duration_seconds = duration_seconds + (unixepoch() - claimed_at)"
+      : "";
   db.prepare(
-    `UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning} WHERE id = ?`,
+    `UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill}${enterRunning}${endAttempt} WHERE id = ?`,
   ).run(status, id);
 
   // Advance the job's next_run_at on any terminal status, including 'killed'.
@@ -312,6 +323,23 @@ export function updateRunSessionId(id: string, sessionId: string, cwd?: string) 
       id,
     );
   }
+}
+
+/**
+ * Fold one CLI turn's token usage into the run's cumulative counters. The
+ * runner reports per-turn deltas and the server accumulates in a single
+ * additive UPDATE, so resumed runs keep counting across attempts. Values must
+ * be non-negative integers — the usage route validates before calling.
+ */
+export function addRunUsage(id: string, usage: { input_tokens: number; output_tokens: number }) {
+  const db = getDb();
+  const result = db
+    .prepare(
+      `UPDATE runs SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, updated_at = unixepoch() WHERE id = ?`,
+    )
+    .run(usage.input_tokens, usage.output_tokens, id);
+  if (result.changes === 0) return null;
+  return getRunById(id);
 }
 
 export function isKillRequested(id: string): boolean {
@@ -666,9 +694,12 @@ export function listRunOutput(runId: string, afterId = 0) {
 export function failTimedOutRun(runId: string, timeoutMinutes: number): boolean {
   const db = getDb();
   const fail = db.transaction(() => {
+    // This UPDATE bypasses the updateRunStatus chokepoint, so it ends the
+    // running attempt's duration clock itself (COALESCE guards a null
+    // claimed_at, adding nothing).
     const result = db
       .prepare(
-        `UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'running'`,
+        `UPDATE runs SET status = 'failed', duration_seconds = duration_seconds + (unixepoch() - COALESCE(claimed_at, unixepoch())), completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = 'running'`,
       )
       .run(runId);
     if (result.changes !== 1) return false;
@@ -924,7 +955,7 @@ export function claimNextRun(runner: ClaimRunner, capabilities: RunnerCapabiliti
   const claimUpdate = (id: string, from: "scheduled" | "pending") =>
     db
       .prepare(
-        `UPDATE runs SET status = 'running', claimed_by = ?, claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND status = ?`,
+        `UPDATE runs SET status = 'running', claimed_by = ?, claimed_at = unixepoch(), attempts = attempts + 1, updated_at = unixepoch() WHERE id = ? AND status = ?`,
       )
       .run(runner.id, id, from);
 

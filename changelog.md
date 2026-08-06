@@ -23,6 +23,13 @@
 - **Migration: none.** Harbour has no schema migrations — a fresh database is
   the only path across this change.
 
+### Runs record working duration, token usage, and attempts
+
+- **Every run now shows what it cost.** Four cumulative counters on `runs` — `attempts`, `duration_seconds`, `input_tokens`, `output_tokens` — accumulate across resumes and retries for the run's whole life. Duration counts working time only (each exit from `running` folds in the attempt's elapsed time; time parked `waiting`/`pending` is excluded), and input tokens count all input-side usage, cache reads and creation included. The run page shows duration and total tokens, run rows carry duration, and job pages roll up totals plus an average duration.
+- **The Runner Protocol gains an optional usage callback.** The bundled runner normalizes each CLI turn's token usage (Claude's `modelUsage`, Codex's `turn.completed`) and posts the delta to `POST /api/runs/:id/usage` with the run's exec token; the server accumulates. Optional and additive: a runner that omits it — including every existing third-party runner — is unaffected, and the run simply records no tokens. See the [Runner Protocol](docs/runner-guide.md).
+- **Workflow runs get duration and attempts for free** — the same lifecycle transitions drive them; tokens stay 0 (no CLI).
+- **Migration.** The orgs removal above already makes a fresh database the only supported path across this release, which covers this change too. If you are instead carrying data forward by hand, add the columns yourself or the server refuses to boot with a schema-drift error: `ALTER TABLE runs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;` `ALTER TABLE runs ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0;` `ALTER TABLE runs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;` `ALTER TABLE runs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;`
+
 ### Agents report through `harbour update`, and policies can be scaffolded
 
 - **New command: `harbour update {title,log,status}`** — the channel a running
@@ -87,6 +94,15 @@
   work but never report a title, activity, or final status, and every run
   would end `failed` at the finalize backstop. Harbour refuses the policy up
   front instead; `read-only` is refused for the same reason.
+- **Scoping a Codex agent's network reach takes two more keys**, both
+  documented in the permissions guide: `[features.network_proxy]` with a
+  `domains` allow-list (keep `127.0.0.1`/`localhost` on it, or reporting
+  breaks), and `web_search = "disabled"` to remove the built-in web tool,
+  which is not a command and so is reachable through any `.rules` deny-list.
+  Codex's own docs present named `[permissions.<name>]` profiles for this;
+  that form silently does nothing in a workspace policy under `codex exec`,
+  so the guide steers to the proxy form. Harbour validates neither — a policy
+  can pass every check with network wide open.
 - **Workspace trust is recorded automatically for both CLIs** before an
   enforced run spawns — Claude via `hasTrustDialogAccepted` in
   `~/.claude.json`, Codex via a `[projects."<dir>"]` entry in

@@ -60,6 +60,7 @@ How the rules behave:
 - **`defaultMode` decides what happens to anything not allow-listed.** If the file doesn't set `permissions.defaultMode`, the runner applies `dontAsk`, which auto-denies unmatched tool calls — the right default headless, where a permission prompt has no UI to appear in. Accepted values are `dontAsk`, `acceptEdits`, `default`, `manual`, `plan`, and `auto`. `bypassPermissions` is refused: a workspace file may not grant itself a bypass — that's the dashboard's Unrestricted toggle, so the bypass stays visible where agents are managed.
 - **Deny beats allow.** A command matching both lists is denied.
 - **`Bash(...)` patterns match the literal command string**, not the command's effect: `Bash(curl *)` matches commands beginning with `curl `. Argument-level checks — blocking a particular flag, inspecting a URL — belong in a `PreToolUse` hook, which you can define in the same file (see Claude Code's own documentation for hooks).
+- **Rules are scoped to the tool they name, so network access takes two separate decisions.** `WebFetch(domain:example.com)` scopes the WebFetch tool by domain and says nothing about Bash; a shell fetcher needs its own rule and is domain-blind either way, since `Bash(curl *)` matches on the command string, not the URL. To confine an agent to one domain, allow that domain for WebFetch *and* leave every shell fetcher unmatched (`dontAsk` then denies them) or deny them outright. Verified: with `WebFetch(domain:example.com)` allowed, an agent fetched example.com and was refused geekforbrains.com in the same run, while `curl` was denied for both.
 - **`.claude/` is a protected path.** In enforced (non-bypass) modes the CLI refuses to edit files under `.claude/`, even with an allow rule that would otherwise cover them — the agent cannot rewrite its own policy file with its file tools. (This protection does not extend to code run through an allow-listed interpreter; see [Limits](#limits).)
 
 A working policy is the scaffolded rule plus whatever the job genuinely needs, and denies for the commands you never want:
@@ -101,9 +102,9 @@ This also keeps `$SECRET` references out of the command the model writes, which 
 
 ## Codex
 
-The policy file is `<workspace>/.codex/config.toml` — Codex's own config format. The boundary here is Codex's OS sandbox (`sandbox_mode`), which confines writes to the workspace; optional rules files (below) layer a command deny-list on top.
+The policy file is `<workspace>/.codex/config.toml` — Codex's own config format. Three separate controls do the work, and each covers something the others don't: the OS sandbox (`sandbox_mode`) confines **writes** to the workspace, a network proxy (`[features.network_proxy]`) confines **outbound traffic** to domains you list, and `web_search` governs the **built-in web tool**, which no command rule can reach. Optional rules files layer a command deny-list on top.
 
-The minimal working policy — and the only working shape:
+The minimal policy Harbour will accept:
 
 ```toml
 sandbox_mode = "workspace-write"
@@ -111,6 +112,8 @@ sandbox_mode = "workspace-write"
 [sandbox_workspace_write]
 network_access = true
 ```
+
+That is the write boundary only. It leaves the agent the whole internet — see [restricting network access](#restricting-network-access) for the domain allow-list, which is a separate opt-in.
 
 > **`network_access = true` is not optional.** Under `workspace-write`, Codex's sandbox defaults to `network_access = false`, which blocks *every* connection — loopback included. Reporting to Harbour is an HTTP call either way, so an agent without network could do work and then be unable to report a title, activity, or status: every run would end `failed` at the finalize backstop with the real cause buried. Harbour refuses such a policy up front, naming the key, rather than letting that happen.
 
@@ -121,6 +124,32 @@ The other shapes are rejected for related reasons:
 - An absent `sandbox_mode` defaults to `workspace-write` (Codex's own default), but the `network_access = true` line is still required — write both explicitly so the file says what it does.
 
 How the runner launches it: `--skip-git-repo-check -s <sandbox_mode> -c approval_policy=never`, and no bypass flag. The sandbox mode is passed explicitly from the policy file so the effective mode is deterministic and visible in the process arguments; `--skip-git-repo-check` is required because agent workspaces usually aren't git repositories and Codex refuses to start in one otherwise; `approval_policy=never` because there is no UI to approve anything in.
+
+### Restricting network access
+
+`network_access = true` is all-or-nothing: it turns the sandbox's network gate on, and every host is then reachable. To bound *where* the agent can reach, add a proxy allow-list and turn off the built-in web tool:
+
+```toml
+sandbox_mode = "workspace-write"
+web_search = "disabled"
+
+[sandbox_workspace_write]
+network_access = true
+
+[features.network_proxy]
+enabled = true
+domains = { "api.github.com" = "allow", "127.0.0.1" = "allow", "localhost" = "allow" }
+```
+
+Traffic to a host that isn't allowed fails at the proxy, which refuses it with a 403: over HTTPS `curl` reports `CONNECT tunnel failed, response 403` and an empty status code, while a plain-HTTP request simply returns 403. Domain patterns are exact hosts, `*.example.com` for subdomains only, or `**.example.com` for apex and subdomains; a `deny` entry beats an `allow`.
+
+Three things about this are easy to get wrong, and each one is silent:
+
+- **Keep `127.0.0.1` and `localhost` on the allow-list.** Reporting to Harbour is an HTTP call to the loopback server. Leave them off and `harbour update` fails, so the run reaches no terminal status and ends `failed` at the finalize backstop — which reads as a broken agent rather than a policy mistake.
+- **`web_search` defaults to `cached`, not off.** That default leaves the agent a working web tool, and it is *not* a command, so no `.rules` deny-list and no proxy rule applies to it — an agent whose every command-line fetcher is forbidden will still read a site through it. `"disabled"` removes the tool; `"live"`, `"indexed"`, and `"cached"` all leave it in place.
+- **Don't use the `[permissions.<name>]` profile form.** Codex's own documentation presents named permission profiles (`default_permissions`, `[permissions.<name>.network.domains]`) as the way to scope network access. **In a workspace policy file under `codex exec`, it silently does nothing** — no error, no warning, and Codex's startup banner reports only `network access enabled`. A file written that way passes `harbour policy check`, looks hardened, and blocks nothing. Verified against a live agent: identical job, identical instructions, profile form reached a denied domain with HTTP 200; `[features.network_proxy]` returned 403. Use the proxy form.
+
+Two limits worth stating plainly. The proxy bounds *hosts*, not content — an allowed host is still an allowed host for exfiltration. And MCP servers are separate processes outside the sandbox, so their network reach is unaffected by any of this.
 
 ### Optional command deny rules
 
@@ -134,7 +163,9 @@ prefix_rule(
 ```
 
 - A rule matches when the command's argv begins with `pattern`. Decisions are `allow`, `prompt`, and `forbidden`; when several rules match one command, the most restrictive decision wins. Harbour runs Codex with approvals disabled, so use `forbidden` for anything you mean to block.
+- **Matching sees through the shell wrapper.** Codex runs commands as `<login-shell> -lc '<command>'`, and the rule is applied to the command *inside* the wrapper, not to `zsh`. Compound commands are split too, so `forbidden` on `rm` blocks `touch x && rm x` as well as a bare `rm x`. A rejected command fails before it spawns, with `rejected: policy forbids commands starting with 'rm'`.
 - **These are a deny-list, not an allow-list.** A command matching no rule simply runs, and there is no catch-all pattern — rules cannot express default-deny. The sandbox is the boundary; rules are a tripwire for specific commands.
+- **They only cover commands.** Codex edits files through an internal patch tool, not a shell command, so a rule forbidding `touch` or `tee` doesn't stop it writing files — only the sandbox does. The built-in web tool is likewise out of reach; see [restricting network access](#restricting-network-access).
 - **A prefix deny-list is routed around trivially.** Forbid `touch` and the agent can still create a file with `python3 -c 'open("x","w")'`. Use rules to stop the obvious spelling of something, not to contain an adversary.
 
 Validate a rules file with Codex itself:
@@ -143,7 +174,9 @@ Validate a rules file with Codex itself:
 codex execpolicy check --rules <file> -- <cmd> [args...]
 ```
 
-A parseable file prints a JSON verdict to stdout and exits 0 regardless of the decision (`{"matchedRules":[],...}` means no rule matched — the command would run); a parse error prints to stderr and exits 1. Harbour runs this same check on every `.rules` file before each run: an absent `rules/` directory is fine, but a present-and-broken file fails the run, because Codex would otherwise skip it silently while you believe the deny-list is in force.
+A parseable file prints a JSON verdict to stdout and exits 0 regardless of the decision (`{"matchedRules":[],...}` means no rule matched — the command would run); a parse error prints to stderr and exits 1.
+
+> **Check the bare command, not the shell wrapper.** This command matches literally what you hand it, so `-- zsh -lc "rm x"` reports no match while the runtime blocks that exact command — the checker doesn't model the unwrapping described above. Write `-- rm x`. Checking the wrapper form gives a false all-clear. Harbour runs this same check on every `.rules` file before each run: an absent `rules/` directory is fine, but a present-and-broken file fails the run, because Codex would otherwise skip it silently while you believe the deny-list is in force.
 
 ## What Harbour checks
 
@@ -166,6 +199,8 @@ For Codex, additionally:
 - top-level `sandbox_mode`, if present, must be `workspace-write` — `read-only`, `danger-full-access`, and unrecognized values are refused,
 - the file must contain `network_access = true`,
 - every `<workspace>/.codex/rules/*.rules` file, if the directory exists, must be a regular, non-symlink, non-empty file that Codex can parse.
+
+These Codex checks confirm the run protocol stays reachable; they say nothing about how far the agent can reach. Harbour does not inspect `[features.network_proxy]`, `web_search`, or `writable_roots`, so a file that scopes none of them — or scopes them in the profile form that [doesn't take effect](#restricting-network-access) — passes every check with network wide open. `harbour policy check` reporting `OK` means the policy resolves, not that it confines.
 
 When a check fails, the run gets an activity message with the precise reason — including the expected path and the remediation (write the policy file, or set the agent to Unrestricted in the dashboard) — and finishes `failed`. Nothing was executed.
 
@@ -218,7 +253,8 @@ Be clear-eyed about what this setting does and does not give you:
 
 - **Redaction is not a boundary.** The runner redacts known secret values from output before it's logged or persisted, but the agent process has the plaintext in its environment — a policy file doesn't change that.
 - **A broad Claude allow rule defeats the policy.** `Bash(python3 *)` hands the agent a general-purpose interpreter that can write any file the OS permits — including the policy file, since the `.claude/` protection covers the CLI's own file tools, not code run through an allow-listed interpreter. Keep allow rules narrow; patterns match literal command strings, nothing more.
-- **Codex rules are bypassable by construction** — they're a prefix deny-list with no catch-all. The sandbox is the real write boundary; and because an enforced Codex agent must have `network_access = true` (the run protocol requires it), the sandbox confines writes, not network reach.
+- **Codex rules are bypassable by construction** — they're a prefix deny-list with no catch-all, and they cover only commands. The sandbox is the real write boundary, and `network_access = true` alone leaves network reach unbounded — narrowing that takes the separate proxy allow-list in [restricting network access](#restricting-network-access).
+- **A blocked Codex command may leave no trace in the run.** Harbour logs a command when Codex reports it as an execution, which it does for commands that ran — including ones that ran and failed at the proxy. A command rejected by a `.rules` file, or refused by the sandbox, never becomes an execution at all: the run shows the surrounding successful commands, a terminal status, and nothing about the denial. The agent's own prose is the only trace, and only if it chooses to mention it. Don't read a clean Codex run as evidence that nothing was blocked — check the workspace, or reproduce the command yourself.
 - **A Codex policy can widen its own sandbox.** Harbour validates `sandbox_mode` and `network_access`; it does not police the rest of the file. `writable_roots` under `[sandbox_workspace_write]` grants write access to paths you list, so `writable_roots = ["/"]` passes validation and gives the agent the whole filesystem. That's yours to choose deliberately, the same way a broad allow rule is on the Claude side — just don't read "the sandbox confines writes to the workspace" as true of a file that says otherwise.
 - **The Codex sandbox doesn't cover global config or MCP servers.** `$CODEX_HOME/config.toml` is Codex's base configuration in enforced runs too — the workspace file layers on top of it — so anything registered there applies, including `mcp_servers`. And MCP servers are separate processes running *outside* the sandbox: their tools reach whatever the server process can reach, regardless of `sandbox_mode`. `$CODEX_HOME/AGENTS.md` and user-level skills likewise load into enforced runs. (Enforced Claude runs exclude user-scope config entirely — see [Claude Code](#claude-code) above.)
 - **An agent holding a management API key can rewrite these settings.** A management key is a full user credential ([management guide](../management-guide.md)), so an agent whose job env carries one can flip any agent — including itself — to Unrestricted through the API, indistinguishable from an operator doing it. Per-run exec tokens can't: the agents routes reject them. Don't hand a management key to an agent you're deliberately constraining.

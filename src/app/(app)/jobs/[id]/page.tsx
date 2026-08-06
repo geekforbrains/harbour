@@ -3,6 +3,7 @@
 import {
   Calendar,
   CalendarClock,
+  Coins,
   Cpu,
   FileText,
   KeyRound,
@@ -13,6 +14,7 @@ import {
   RotateCcw,
   Settings,
   Table2,
+  Timer,
   Trash2,
   X,
   Zap,
@@ -52,6 +54,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { ApiError } from "@/lib/api/client";
+import { formatTokens } from "@/lib/format";
 import { useAgent } from "@/lib/hooks/use-agents";
 import { useDocs } from "@/lib/hooks/use-docs";
 import { useEnvVars } from "@/lib/hooks/use-env-vars";
@@ -64,7 +67,7 @@ import {
 } from "@/lib/hooks/use-jobs";
 import { useTables } from "@/lib/hooks/use-tables";
 import { DEFAULT_RUNTIME, type Gate, isRuntime, RUNTIME_META } from "@/lib/runtimes";
-import { formatTimestamp, timeAgo } from "@/lib/time";
+import { formatDuration, formatTimestamp, timeAgo } from "@/lib/time";
 
 type Job = {
   id: string;
@@ -91,6 +94,9 @@ type Job = {
   active: number;
   last_run_at: number | null;
   next_run_at: number | null;
+  total_tokens: number;
+  measured_duration_seconds: number;
+  measured_runs: number;
   docs: { id: string; title: string }[];
   tables: { id: string; name: string; table_name: string }[];
   envVars: { id: string; name: string }[];
@@ -415,6 +421,20 @@ export default function JobDetailPage() {
             {formatTimestamp(job.next_run_at, timezone) || "—"}
           </span>
         </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Timer className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {job.measured_runs > 0
+              ? `avg ${formatDuration(Math.round(job.measured_duration_seconds / job.measured_runs))}`
+              : "—"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Coins className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {job.total_tokens > 0 ? `${formatTokens(job.total_tokens)} tokens` : "—"}
+          </span>
+        </div>
       </div>
 
       {!isWorkflow && job.instructions && <InstructionsBlock text={job.instructions} />}
@@ -581,6 +601,7 @@ export default function JobDetailPage() {
                     {run.title || run.status}
                   </span>
                   <span className="text-xs text-muted-foreground shrink-0">
+                    {run.duration_seconds > 0 ? `${formatDuration(run.duration_seconds)} · ` : ""}
                     {timeAgo(run.completed_at || run.created_at)}
                   </span>
                 </RowLink>

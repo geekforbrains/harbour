@@ -1,6 +1,6 @@
 # Jobs and runs
 
-A **job** is configuration: instructions, a trigger (when to fire), and links to docs/tables/env vars that a run will need. A **run** is a single execution of that job — a row with a status, an activity log, an optional CLI session, and a deadline.
+A **job** is configuration: instructions, a trigger (when to fire), and links to docs/tables/env vars that a run will need. A **run** is a single execution of that job — a row with a status, an activity log, an optional CLI session, a deadline, and cumulative metrics (attempts, working duration, token usage).
 
 Jobs don't *do* anything on their own. They sit in the database and wait. When the job is due and a runner claims it, Harbour creates a run and hands the runner everything bundled. The job stays put; the run is what moves through the lifecycle.
 
@@ -115,6 +115,16 @@ A user comment on a `waiting`, `done`, `failed`, or `killed` run flips it to `pe
 
 `jobs.timeout_minutes` defaults to 30. The runner does **not** enforce it on the agent CLI — the only runner-side limit there is an inactivity window (SIGTERM after 3 minutes with no output, tunable via `HARBOUR_CLI_INACTIVITY_MS`), so a productive long run is never killed at a wallclock cap as long as it keeps streaming. The runner does apply `timeout_minutes` as the subprocess timeout for workflow gate scripts. Harbour itself enforces it server-side via `reapStaleRuns`: if `claimed_at + timeout_minutes*60 < now`, the run is marked `failed` on the next poll. This is a hard wallclock ceiling per running attempt — `claimed_at` is stamped on every entry into `running` (the initial claim, and again on each `pending → running` resume), so a resumed run gets a fresh clock, but nothing resets it while the run stays `running`. It is deliberately not a sliding inactivity window keyed on `updated_at`: a run that keeps streaming output can still be wedged (looping, stuck repeating itself), and resetting the clock on activity would let it hold its agent forever. The ceiling guarantees a run can never stay `running` past `timeout_minutes`, so the agent is never gated indefinitely.
 
+### Metrics
+
+Every run carries three cumulative counters that never reset for the run's whole life — retries and resumes keep adding, which is the point: they show what a run actually cost end to end.
+
+- `attempts` counts running attempts started: the initial claim plus each `pending → running` resume.
+- `duration_seconds` counts **working time only** — each exit from `running` (waiting included) folds `now − claimed_at` into the total, so time parked in `waiting`/`pending` is excluded by construction.
+- `input_tokens` / `output_tokens` accumulate the per-CLI-turn deltas the runner reports (`POST /api/runs/:id/usage` — the [Runner Protocol](../runner-guide.md) owns the wire semantics). Input counts all input-side tokens, cache reads and creation included.
+
+Workflow runs have no CLI, so their tokens stay 0 while duration and attempts still accrue. A killed or timed-out CLI turn emits no usage event, so that turn's tokens are lost — an accepted gap; its duration still accumulates server-side. Job pages roll the counters up: total duration, total tokens, and an average duration over the runs that actually spent time running.
+
 ### Retry
 
 ```
@@ -153,7 +163,7 @@ A few invariants worth knowing:
 ## Source-of-truth pointers
 
 - `src/lib/db/jobs.ts` — `createJob`, `createWorkflow`, `updateJob`, `triggerJobRun`, `advanceJobSchedule`.
-- `src/lib/db/runs.ts` — the unified claim (`claimNextRun`, `peekClaim`), `reapStaleRuns`, `updateRunStatus`, `requestKillRun`, `mintExecToken`, `buildRunPayload`.
+- `src/lib/db/runs.ts` — the unified claim (`claimNextRun`, `peekClaim`), `reapStaleRuns`, `updateRunStatus`, `addRunUsage`, `requestKillRun`, `mintExecToken`, `buildRunPayload`.
 - `src/lib/schedule.ts` — `normalizeSchedule` (the human-readable / cron parser) and `getNextRunTime` (timezone-aware advancer).
 - `src/lib/db/schema.ts` — the `runs` CHECK constraint and the `jobs` columns that drive triggers.
 - `src/app/api/runs/[id]/status/route.ts` — status transitions.

@@ -16,7 +16,7 @@ import { useAgents } from "@/lib/hooks/use-agents";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { statusStyle } from "@/lib/status";
-import { timeAgo } from "@/lib/time";
+import { formatDuration, timeAgo } from "@/lib/time";
 
 type Job = {
   id: string;
@@ -33,6 +33,8 @@ type Job = {
   skipped_runs: number;
   waiting_runs: number;
   pending_runs: number;
+  measured_duration_seconds: number;
+  measured_runs: number;
   last_run_at: number | null;
   prerun_script: string | null;
 };
@@ -132,6 +134,11 @@ export default function JobsPage() {
                       <span className="hidden sm:inline">
                         {job.total_runs} runs
                         {job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}
+                        {job.measured_runs > 0
+                          ? ` · avg ${formatDuration(
+                              Math.round(job.measured_duration_seconds / job.measured_runs),
+                            )}`
+                          : ""}
                       </span>
                     )}
                     {job.last_run_at && (

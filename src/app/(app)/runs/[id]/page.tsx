@@ -6,6 +6,7 @@ import {
   Check,
   CheckCheck,
   Cog,
+  Coins,
   Copy,
   MoreVertical,
   Play,
@@ -13,6 +14,7 @@ import {
   Send,
   Server,
   Terminal,
+  Timer,
   Trash2,
   User,
 } from "lucide-react";
@@ -45,8 +47,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { resolveAgentColor } from "@/lib/agent-color";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import type { SerializedAttachment } from "@/lib/attachments-serialize";
+import { formatTokens } from "@/lib/format";
 import { useRun, useRunMutations } from "@/lib/hooks/use-runs";
-import { timeAgo } from "@/lib/time";
+import { formatDuration, timeAgo } from "@/lib/time";
 import { detectEmbedProvider } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
 
@@ -77,6 +80,10 @@ type Run = {
   claimed_by_tier: "local" | "remote" | null;
   session_id: string | null;
   session_cwd: string | null;
+  attempts: number;
+  duration_seconds: number;
+  input_tokens: number;
+  output_tokens: number;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -563,6 +570,28 @@ export default function RunDetailPage() {
           <CheckCheck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">
             {run.completed_at ? timeAgo(run.completed_at) : "\u2014"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Timer className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {formatDuration(run.duration_seconds)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Coins className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span
+            className="text-muted-foreground truncate"
+            title={
+              run.input_tokens + run.output_tokens > 0
+                ? // A measured zero side reads "0", not the em-dash no-data marker.
+                  `${run.input_tokens > 0 ? formatTokens(run.input_tokens) : "0"} in \u00b7 ${run.output_tokens > 0 ? formatTokens(run.output_tokens) : "0"} out`
+                : undefined
+            }
+          >
+            {run.input_tokens + run.output_tokens > 0
+              ? `${formatTokens(run.input_tokens + run.output_tokens)} tokens`
+              : "\u2014"}
           </span>
         </div>
         {run.claimed_by_name && (

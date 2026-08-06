@@ -59,6 +59,7 @@ present — an agent run is handed out only if the agent's CLI is in `clis`.
 | `PUT`  | `/api/runs/:id/status` | Drive the lifecycle: `done`/`failed`/`skipped`/`killed`, plus `waiting` for agent runs. (`pending` is human-set — the exec token can't set it.) |
 | `PUT`  | `/api/runs/:id/title` | Set a short run title (agent runs). |
 | `PUT`  | `/api/runs/:id/session` | Save the CLI session id (+ cwd) so a killed/waiting run resumes in place. |
+| `POST` | `/api/runs/:id/usage` | Report one CLI turn's token usage delta (agent runs). Optional — see Lifecycle. |
 | `GET`  | `/api/runs/:id/kill` | Poll the advisory kill flag; stop the child when set. |
 | `POST` | `/api/runs/:id/attachments` | Upload run artifacts. |
 
@@ -166,6 +167,8 @@ for agent runs; the server rejects them on workflow runs. `pending` is a human
 action (a comment or retry) — an exec token asking for it gets a 403. The
 exit-code convention for gates: `0` continues / succeeds, `77` skips, anything
 else fails.
+
+Token usage is reported via `POST /api/runs/:id/usage` — one call per CLI turn with that turn's delta, body `{ "input_tokens": N, "output_tokens": N }` (non-negative integers; `input_tokens` counts **all** input-side tokens, cache reads and creation included). The server folds each delta into the run's cumulative counters, so a resumed run keeps counting across attempts — never send running totals. The endpoint is **optional and additive**: a runner that never posts usage (including every existing third-party runner) is unaffected, and the run simply records no tokens. Working duration and attempt counts are measured server-side from the lifecycle transitions themselves — runners don't report them.
 
 ## The kill flow
 

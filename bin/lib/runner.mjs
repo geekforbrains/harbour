@@ -198,6 +198,39 @@ export function resolveFinalizeMode(provider, sessionId) {
 }
 
 /**
+ * Fold one parsed usage payload ({ input_tokens, output_tokens }) into a
+ * running total. `total` may be null (nothing seen yet) and `usage` may be
+ * null/absent (a turn that emitted none) — a missing payload passes the total
+ * through untouched, so "no usage reported" stays distinguishable from
+ * "reported 0" (only non-null totals get POSTed). Fields are coerced finite so
+ * token math can never go NaN.
+ */
+export function addUsage(total, usage) {
+  if (!usage || typeof usage !== "object") return total;
+  const input = Number.isFinite(usage.input_tokens) ? usage.input_tokens : 0;
+  const output = Number.isFinite(usage.output_tokens) ? usage.output_tokens : 0;
+  if (!total) return { input_tokens: input, output_tokens: output };
+  return {
+    input_tokens: total.input_tokens + input,
+    output_tokens: total.output_tokens + output,
+  };
+}
+
+/**
+ * POST one CLI turn's token usage delta to the run. The server accumulates
+ * (addRunUsage), so each turn reports only its own numbers. Best effort by
+ * design: metrics must never fail a run, so errors are logged and swallowed.
+ */
+async function reportTurnUsage({ url, apiKey, runId, agentName, usage }) {
+  if (!usage) return;
+  try {
+    await apiCall(`${url}/api/runs/${runId}/usage`, apiKey, "POST", usage);
+  } catch (err) {
+    console.error(`  [${agentName}] Failed to report token usage: ${err.message}`);
+  }
+}
+
+/**
  * The FINALIZE prompt: a tight, single-purpose turn whose only job is to set a
  * valid terminal status. This is where the old work-prompt mandate now lives —
  * but enforced by the harness re-checking status after the turn, not by the
@@ -717,11 +750,13 @@ export function postrunKillStatus(_args) {
  * turn and the finalize turn (issue #34) go through this — the kill/stream
  * plumbing exists in exactly one place.
  *
- * Returns { result, sessionId, output, killed, statusAtKill }:
+ * Returns { result, sessionId, output, usage, killed, statusAtKill }:
  *   - result      — the raw { code, stdout, stderr, aborted } from runCliTool
  *   - sessionId   — the session id captured during the turn (may be newer than
  *                   the one passed in, e.g. a provider that mints it at init)
  *   - output      — parsed final content (provider.parseResult)
+ *   - usage       — summed token usage the turn reported ({ input_tokens,
+ *                   output_tokens }), or null when the CLI emitted none
  *   - killed      — true if a kill request fired during the turn
  *   - statusAtKill— the run's status read back after a kill (only when killed)
  *
@@ -802,6 +837,7 @@ async function runCliTurn({
   // Line handler: parse each JSONL line from the CLI tool
   let turnSessionId = sessionId;
   let sessionReported = !!sessionAlreadyReported;
+  let turnUsage = null;
   function onLine(line) {
     if (!parser.parseLine) return;
     const parsed = parser.parseLine(line);
@@ -810,6 +846,12 @@ async function runCliTurn({
     // Capture session ID from init events
     if (parsed.sessionId) {
       turnSessionId = parsed.sessionId;
+    }
+
+    // Sum every usage payload the stream reports (claude emits one on its
+    // terminal result event; codex one per turn.completed).
+    if (parsed.usage) {
+      turnUsage = addUsage(turnUsage, parsed.usage);
     }
 
     // Report session ID to the server (once) so it's available on the dashboard
@@ -864,6 +906,13 @@ async function runCliTurn({
   );
   const finalSessionId = parsed.sessionId || turnSessionId;
 
+  // Loss-proof usage fallback: if the streaming path missed the terminal line
+  // (flush-on-close partial line), take parseResult's — never both, so a
+  // usage seen by both paths is not double-counted.
+  if (!turnUsage && parsed.usage) {
+    turnUsage = addUsage(null, parsed.usage);
+  }
+
   // On a kill, re-read the server's status: the agent may have finished
   // naturally in the tiny window between the kill request and SIGTERM landing.
   let statusAtKill = null;
@@ -877,7 +926,14 @@ async function runCliTurn({
     }
   }
 
-  return { result: safeResult, sessionId: finalSessionId, output, killed, statusAtKill };
+  return {
+    result: safeResult,
+    sessionId: finalSessionId,
+    output,
+    usage: turnUsage,
+    killed,
+    statusAtKill,
+  };
 }
 
 /**
@@ -1258,6 +1314,10 @@ export async function processNextRun(payload, { url, execToken }) {
   const { result, output } = turn;
   const workSessionId = turn.sessionId;
 
+  // Report the work turn's token usage before any outcome branching — the
+  // tokens were spent whether the run finishes, fails, or was killed.
+  await reportTurnUsage({ url, apiKey, runId, agentName, usage: turn.usage });
+
   // Claude reports a policy rule it couldn't apply (untrusted workspace, bad
   // pattern) only on stderr, where nobody sees it — the visible symptom is an
   // agent that mysteriously refuses everything. Surface it on the run.
@@ -1474,6 +1534,8 @@ async function runFinalizeLoop({
         sessionAlreadyReported: true,
       });
       if (turn.sessionId) turnSessionId = turn.sessionId;
+      // Finalize turns burn tokens too — report each turn's delta.
+      await reportTurnUsage({ url, apiKey, runId, agentName, usage: turn.usage });
       // A kill during finalize is honored as a kill outcome (user said stop) —
       // UNLESS the agent set a terminal status during this turn before the kill
       // landed, in which case forcing `killed` would be an illegal transition

@@ -85,6 +85,19 @@ export function optionalPositiveInt(value: unknown, name: string): number | unde
   return requirePositiveInt(value, name);
 }
 
+/**
+ * Require a non-negative integer — zero allowed (a counter delta can be 0).
+ * Safe integers only: Number.isInteger accepts integer-valued doubles like
+ * 1e308, which better-sqlite3 would bind as REAL and silently degrade an
+ * INTEGER counter column (two such adds overflow to Infinity → null in JSON).
+ */
+export function requireNonNegativeInt(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    badRequest(`${name} must be a non-negative integer`);
+  }
+  return value as number;
+}
+
 /** An optional boolean (omitted → undefined; any present value must be boolean). */
 export function optionalBoolean(value: unknown, name: string): boolean | undefined {
   if (value === undefined || value === null) return undefined;

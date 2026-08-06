@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getProvider } from "../../bin/lib/providers.mjs";
 import {
+  addUsage,
   buildApiPrompt,
   buildFinalizePrompt,
   buildPrompt,
@@ -353,5 +354,42 @@ describe("resolveKillOutcome", () => {
     // pending/scheduled are mid-lifecycle, not a reported outcome — a kill wins.
     expect(resolveKillOutcome("pending")).toBe("killed");
     expect(resolveKillOutcome("scheduled")).toBe("killed");
+  });
+});
+
+// ===========================================================================
+// addUsage — the pure summing seam for per-turn token usage (run metrics).
+// runCliTurn sums every parsed.usage the stream emits into a turn total; a
+// null total/payload passes through untouched so "no usage reported" stays
+// distinguishable from "reported 0" (only non-null totals get POSTed).
+// ===========================================================================
+
+describe("addUsage (usage summing seam)", () => {
+  it("starts a total from null", () => {
+    expect(addUsage(null, { input_tokens: 5, output_tokens: 2 })).toEqual({
+      input_tokens: 5,
+      output_tokens: 2,
+    });
+  });
+
+  it("sums onto an existing total", () => {
+    const first = addUsage(null, { input_tokens: 5, output_tokens: 2 });
+    expect(addUsage(first, { input_tokens: 3, output_tokens: 1 })).toEqual({
+      input_tokens: 8,
+      output_tokens: 3,
+    });
+  });
+
+  it("passes a missing payload through without inventing zeros", () => {
+    expect(addUsage(null, null)).toBeNull();
+    const total = { input_tokens: 5, output_tokens: 2 };
+    expect(addUsage(total, undefined)).toBe(total);
+  });
+
+  it("coerces non-finite fields to 0 — token math never NaN", () => {
+    expect(addUsage(null, { input_tokens: Number.NaN, output_tokens: undefined })).toEqual({
+      input_tokens: 0,
+      output_tokens: 0,
+    });
   });
 });

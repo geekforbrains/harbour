@@ -183,6 +183,10 @@ A single execution of a job.
 | `kill_requested_at` | INTEGER | | dashboard kill trigger |
 | `extra_instructions` | TEXT | | trigger-time append |
 | `session_id` / `session_cwd` | TEXT | | CLI session + cwd for resume |
+| `attempts` | INTEGER | NN, default 0 | running attempts started: the initial claim + each `pending → running` resume |
+| `duration_seconds` | INTEGER | NN, default 0 | cumulative seconds spent `running` across attempts (each exit from `running` folds in `now − claimed_at`); `completed_at − claimed_at` spans only the last attempt |
+| `input_tokens` | INTEGER | NN, default 0 | cumulative input-side tokens (cache read/creation included) across CLI turns |
+| `output_tokens` | INTEGER | NN, default 0 | cumulative output tokens across CLI turns |
 | `created_at` / `updated_at` | INTEGER | NN | |
 
 Indexes: `idx_runs_project`, `idx_runs_job`, `idx_runs_agent`,

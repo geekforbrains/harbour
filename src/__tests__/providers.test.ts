@@ -8,6 +8,7 @@ import {
   detectCapabilities,
   ensureWorkingDir,
   getProvider,
+  normalizeUsage,
   resetBinaryCache,
   resolveBinary,
   runCliTool,
@@ -231,6 +232,183 @@ describe("codex createParser", () => {
     const first = parser.parseLine(agentMessage("Hello."));
 
     expect(first.events[0].content).toBe("Hello.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token usage capture (run metrics)
+//
+// Both CLIs report token usage only on their terminal stream event, where the
+// parsers used to drop it. Each parser now returns an optional normalized
+// `usage` field ({ input_tokens, output_tokens }) beside `sessionId`, and
+// parseResult mirrors it as the loss-proof fallback (the terminal line can
+// arrive as a flush-on-close partial the streaming path never sees). The
+// fixtures below are real captures (claude 2.1.223 / codex 0.144.0).
+// ---------------------------------------------------------------------------
+
+const CLAUDE_RESULT = {
+  type: "result",
+  subtype: "success",
+  total_cost_usd: 0.197,
+  usage: {
+    input_tokens: 6,
+    cache_creation_input_tokens: 9615,
+    cache_read_input_tokens: 67316,
+    output_tokens: 140,
+  },
+  modelUsage: {
+    "claude-haiku-4-5-20251001": {
+      inputTokens: 545,
+      outputTokens: 14,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    },
+    "claude-opus-5[1m]": {
+      inputTokens: 6,
+      outputTokens: 140,
+      cacheReadInputTokens: 67316,
+      cacheCreationInputTokens: 9615,
+    },
+  },
+  session_id: "sess-1",
+};
+// modelUsage summed: input 545+0+0 + 6+67316+9615, output 14+140.
+const CLAUDE_EXPECTED = { input_tokens: 77482, output_tokens: 154 };
+// Top-level usage fallback: input 6+67316+9615, output 140.
+const CLAUDE_FALLBACK_EXPECTED = { input_tokens: 76937, output_tokens: 140 };
+
+const CODEX_TURN_COMPLETED = {
+  type: "turn.completed",
+  usage: {
+    input_tokens: 17977,
+    cached_input_tokens: 9984,
+    output_tokens: 5,
+    reasoning_output_tokens: 0,
+  },
+};
+// cached_input_tokens is a SUBSET of input_tokens — verbatim, never added.
+const CODEX_EXPECTED = { input_tokens: 17977, output_tokens: 5 };
+
+describe("normalizeUsage", () => {
+  it("sums input-side tokens across every modelUsage model (claude)", () => {
+    expect(normalizeUsage(CLAUDE_RESULT)).toEqual(CLAUDE_EXPECTED);
+  });
+
+  it("falls back to top-level usage when modelUsage is absent", () => {
+    const { modelUsage: _dropped, ...withoutModels } = CLAUDE_RESULT;
+    expect(normalizeUsage(withoutModels)).toEqual(CLAUDE_FALLBACK_EXPECTED);
+  });
+
+  it("codex: input_tokens verbatim — cached is a subset, reasoning not output", () => {
+    expect(normalizeUsage(CODEX_TURN_COMPLETED)).toEqual(CODEX_EXPECTED);
+  });
+
+  it("guards missing or junk fields to 0 — never NaN", () => {
+    expect(normalizeUsage({ usage: {} })).toEqual({ input_tokens: 0, output_tokens: 0 });
+    expect(normalizeUsage({ usage: { input_tokens: "6", output_tokens: null } })).toEqual({
+      input_tokens: 0,
+      output_tokens: 0,
+    });
+    expect(normalizeUsage({ modelUsage: { m: { inputTokens: Number.NaN } } })).toEqual({
+      input_tokens: 0,
+      output_tokens: 0,
+    });
+  });
+
+  it("returns null when the object carries no usage at all", () => {
+    expect(normalizeUsage(null)).toBeNull();
+    expect(normalizeUsage({})).toBeNull();
+    expect(normalizeUsage({ type: "result", result: "done" })).toBeNull();
+  });
+});
+
+describe("claude parser — usage capture", () => {
+  it("parseLine returns normalized usage (and sessionId) on the result event", () => {
+    const parser = getProvider("claude").createParser();
+    const parsed = parser.parseLine(JSON.stringify(CLAUDE_RESULT));
+    expect(parsed.usage).toEqual(CLAUDE_EXPECTED);
+    expect(parsed.sessionId).toBe("sess-1");
+  });
+
+  it("parseLine falls back to top-level usage without modelUsage", () => {
+    const { modelUsage: _dropped, ...withoutModels } = CLAUDE_RESULT;
+    const parser = getProvider("claude").createParser();
+    const parsed = parser.parseLine(JSON.stringify(withoutModels));
+    expect(parsed.usage).toEqual(CLAUDE_FALLBACK_EXPECTED);
+  });
+
+  it("parseLine omits the usage field when the result carries none", () => {
+    const parser = getProvider("claude").createParser();
+    const parsed = parser.parseLine(JSON.stringify({ type: "result", result: "done" }));
+    expect(parsed.usage).toBeUndefined();
+  });
+
+  it("non-result lines carry no usage", () => {
+    const parser = getProvider("claude").createParser();
+    const parsed = parser.parseLine(
+      JSON.stringify({ type: "system", subtype: "init", model: "m", session_id: "s" }),
+    );
+    expect(parsed.usage).toBeUndefined();
+  });
+
+  it("parseResult captures usage from the full stream (loss-proof fallback)", () => {
+    const stdout = [
+      JSON.stringify({ type: "system", subtype: "init", model: "m", session_id: "sess-1" }),
+      JSON.stringify(CLAUDE_RESULT),
+    ].join("\n");
+    const parsed = getProvider("claude").parseResult(stdout, null);
+    expect(parsed.usage).toEqual(CLAUDE_EXPECTED);
+    expect(parsed.sessionId).toBe("sess-1");
+  });
+
+  it("parseResult reports no usage when the stream has no result line", () => {
+    const parsed = getProvider("claude").parseResult("plain text output", null);
+    expect(parsed.usage).toBeUndefined();
+  });
+});
+
+describe("codex parser — usage capture", () => {
+  it("parseLine returns normalized usage on turn.completed", () => {
+    const parsed = getProvider("codex").parseLine(JSON.stringify(CODEX_TURN_COMPLETED));
+    expect(parsed.usage).toEqual(CODEX_EXPECTED);
+  });
+
+  it("the stateful createParser wrapper passes usage through untouched", () => {
+    const parser = getProvider("codex").createParser();
+    const parsed = parser.parseLine(JSON.stringify(CODEX_TURN_COMPLETED));
+    expect(parsed.usage).toEqual(CODEX_EXPECTED);
+  });
+
+  it("parseLine omits the usage field when turn.completed carries none", () => {
+    const parsed = getProvider("codex").parseLine(JSON.stringify({ type: "turn.completed" }));
+    expect(parsed.usage).toBeUndefined();
+  });
+
+  it("malformed JSON yields no events and no usage", () => {
+    const parsed = getProvider("codex").parseLine("not json {");
+    expect(parsed).toEqual({ events: [] });
+  });
+
+  it("parseResult captures the last turn.completed's usage", () => {
+    const stdout = [
+      JSON.stringify({ type: "thread.started", thread_id: "t-1" }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Did it." } }),
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }),
+      JSON.stringify(CODEX_TURN_COMPLETED),
+    ].join("\n");
+    const parsed = getProvider("codex").parseResult(stdout);
+    expect(parsed.usage).toEqual(CODEX_EXPECTED);
+    expect(parsed.content).toBe("Did it.");
+    expect(parsed.sessionId).toBe("t-1");
+  });
+
+  it("parseResult reports no usage when the stream has no turn.completed", () => {
+    const stdout = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "Did it." },
+    });
+    const parsed = getProvider("codex").parseResult(stdout);
+    expect(parsed.usage).toBeUndefined();
   });
 });
 

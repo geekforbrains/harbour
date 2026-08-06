@@ -156,16 +156,17 @@ in the `POST /api/runner/claim` payload (`job.prerun` / `job.postrun` /
 | POST | `/api/runs/:id/retry` | `withAuthenticatedUser` | Retry terminal → `pending` (agent) / `scheduled` (workflow) |
 | GET / PUT | `/api/runs/:id/status` | `withRunExecutorOrUser` | Read / set status (409 on illegal transition) |
 | PUT | `/api/runs/:id/session` | `withRunExecutorOrUser` | Executor reports CLI session id + cwd |
+| POST | `/api/runs/:id/usage` | `withRunExecutorOrUser` | Executor reports one CLI turn's token-usage delta; accumulated server-side |
 | PUT | `/api/runs/:id/title` | `withRunExecutorOrUser` | Set the run title |
 
 The `withRunExecutorOrUser` routes accept either the run's per-run **exec
 token** (`hbx_`, minted at claim and bound to this run id — a token for another
 run is rejected) or any authenticated user. The runner and the CLI it spawns
 authenticate every call here with the exec token, never the runner token — see
-[architecture.md](architecture.md#auth-model). Two of these routes are
-executor-only despite the shared wrapper: `POST /api/runs/:id/output` and
-`PUT /api/runs/:id/session` return **403** to user callers in-handler — users
-never write run output or sessions.
+[architecture.md](architecture.md#auth-model). Three of these routes are
+executor-only despite the shared wrapper: `POST /api/runs/:id/output`,
+`PUT /api/runs/:id/session`, and `POST /api/runs/:id/usage` return **403** to
+user callers in-handler — users never write run output, sessions, or usage.
 
 ### Run attachments
 

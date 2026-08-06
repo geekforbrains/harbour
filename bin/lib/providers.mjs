@@ -132,6 +132,55 @@ function formatToolInput(toolName, inputJson) {
   }
 }
 
+// A usage field is only ever a finite number — anything else counts as 0 so
+// token sums can never go NaN on a malformed or partial terminal event.
+function usageNum(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Normalize a CLI's terminal usage payload into the one cross-provider shape
+ * the server accumulates: `{ input_tokens, output_tokens }`, where
+ * input_tokens counts ALL input-side tokens (fresh + cache reads + cache
+ * creation). Both parsers route through here so the server never branches on
+ * CLI.
+ *
+ * claude `result` events carry `modelUsage` (per-model breakdown including
+ * background models the top-level `usage` misses) — preferred — with additive
+ * camelCase cache fields; the top-level `usage` fallback has the same additive
+ * cache fields in snake_case. codex `turn.completed` carries only `usage`,
+ * whose `cached_input_tokens` is a SUBSET of `input_tokens` (never added — it
+ * matches none of the summed keys). Returns null when the object carries no
+ * usage at all, so callers can omit the field entirely.
+ */
+export function normalizeUsage(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const models =
+    obj.modelUsage && typeof obj.modelUsage === "object" ? Object.values(obj.modelUsage) : [];
+  if (models.length > 0) {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    for (const model of models) {
+      if (!model || typeof model !== "object") continue;
+      inputTokens +=
+        usageNum(model.inputTokens) +
+        usageNum(model.cacheReadInputTokens) +
+        usageNum(model.cacheCreationInputTokens);
+      outputTokens += usageNum(model.outputTokens);
+    }
+    return { input_tokens: inputTokens, output_tokens: outputTokens };
+  }
+  const usage = obj.usage;
+  if (!usage || typeof usage !== "object") return null;
+  return {
+    input_tokens:
+      usageNum(usage.input_tokens) +
+      usageNum(usage.cache_read_input_tokens) +
+      usageNum(usage.cache_creation_input_tokens),
+    output_tokens: usageNum(usage.output_tokens),
+  };
+}
+
 /**
  * Guard: every buildCommand needs a policy resolved by resolveAgentPolicy
  * (bin/lib/policy.mjs) — the runner does that before spawning. Throwing on a
@@ -306,7 +355,10 @@ const PROVIDERS = {
                 event_type: "result",
                 content: obj.result || null,
               });
-              return { events, sessionId: obj.session_id };
+              // The result event is the only place claude reports token usage —
+              // surface it beside sessionId (omitted when the event has none).
+              const usage = normalizeUsage(obj);
+              return { events, sessionId: obj.session_id, ...(usage ? { usage } : {}) };
             }
 
             return { events };
@@ -321,11 +373,16 @@ const PROVIDERS = {
       const lines = stdout.trim().split("\n");
       let content = "";
       let sessionId = presetSessionId;
+      let usage = null;
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
-          if (obj.type === "result" && obj.result) {
-            content = obj.result;
+          if (obj.type === "result") {
+            if (obj.result) content = obj.result;
+            // Loss-proof usage fallback: the streaming path can miss the
+            // result line (flush-on-close partial line); this rescan sees it.
+            const resultUsage = normalizeUsage(obj);
+            if (resultUsage) usage = resultUsage;
           }
           if (obj.session_id) sessionId = obj.session_id;
         } catch {
@@ -333,7 +390,7 @@ const PROVIDERS = {
         }
       }
       if (!content) content = stdout;
-      return { content: content.trim(), sessionId };
+      return { content: content.trim(), sessionId, ...(usage ? { usage } : {}) };
     },
   },
 
@@ -417,6 +474,10 @@ const PROVIDERS = {
               ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out`
               : null,
           });
+          // turn.completed is the only place codex reports token usage —
+          // surface the normalized shape (omitted when the event has none).
+          const usage = normalizeUsage(obj);
+          return { events, ...(usage ? { usage } : {}) };
         }
 
         return { events };
@@ -432,12 +493,19 @@ const PROVIDERS = {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
       let lastMessage = "";
+      let usage = null;
 
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
           if (obj.type === "thread.started" && obj.thread_id) {
             sessionId = obj.thread_id;
+          }
+          // Loss-proof usage fallback (see claude.parseResult): the last
+          // turn.completed carries the turn's totals.
+          if (obj.type === "turn.completed") {
+            const turnUsage = normalizeUsage(obj);
+            if (turnUsage) usage = turnUsage;
           }
           if (obj.type === "item.completed" && obj.item) {
             if (obj.item.text) {
@@ -471,7 +539,7 @@ const PROVIDERS = {
       }
 
       if (!lastMessage.trim()) lastMessage = stdout;
-      return { content: lastMessage.trim(), sessionId };
+      return { content: lastMessage.trim(), sessionId, ...(usage ? { usage } : {}) };
     },
   },
 };

@@ -125,7 +125,14 @@ export function getJobById(id: string) {
   const db = getDb();
   const job = db
     .prepare(`
-    SELECT j.*, a.name as agent_name, a.color as agent_color
+    SELECT j.*, a.name as agent_name, a.color as agent_color,
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id) as total_duration_seconds,
+      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM runs WHERE job_id = j.id) as total_tokens,
+      -- measured_* feed UI averages. Prerun-gated skips ARE claimed (a few seconds
+      -- of gate time accrues before the skip), so they must be excluded here or a
+      -- mostly-skipping job's avg collapses to gate time.
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id AND status != 'skipped') as measured_duration_seconds,
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND duration_seconds > 0 AND status != 'skipped') as measured_runs
     FROM jobs j
     LEFT JOIN agents a ON j.agent_id = a.id
     WHERE j.id = ?
@@ -168,7 +175,14 @@ export function listJobsByAgent(agentId: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs,
-      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id) as total_duration_seconds,
+      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM runs WHERE job_id = j.id) as total_tokens,
+      -- measured_* feed UI averages. Prerun-gated skips ARE claimed (a few seconds
+      -- of gate time accrues before the skip), so they must be excluded here or a
+      -- mostly-skipping job's avg collapses to gate time.
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id AND status != 'skipped') as measured_duration_seconds,
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND duration_seconds > 0 AND status != 'skipped') as measured_runs
     FROM jobs j WHERE j.kind = 'agent' AND j.agent_id = ? ORDER BY j.name
   `)
     .all(agentId);
@@ -183,7 +197,14 @@ export function listAllJobs(projectId?: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status NOT IN ('skipped')) as total_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'skipped') as skipped_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
-      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs,
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id) as total_duration_seconds,
+      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM runs WHERE job_id = j.id) as total_tokens,
+      -- measured_* feed UI averages. Prerun-gated skips ARE claimed (a few seconds
+      -- of gate time accrues before the skip), so they must be excluded here or a
+      -- mostly-skipping job's avg collapses to gate time.
+      (SELECT COALESCE(SUM(duration_seconds), 0) FROM runs WHERE job_id = j.id AND status != 'skipped') as measured_duration_seconds,
+      (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND duration_seconds > 0 AND status != 'skipped') as measured_runs
     FROM jobs j
     JOIN projects p ON j.project_id = p.id
     LEFT JOIN agents a ON j.agent_id = a.id
