@@ -25,7 +25,7 @@ export default function WorkflowsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Workflows"
-        subtitle="Scheduled shell commands — deterministic, no agent."
+        subtitle="Scheduled shell commands and scripts."
         actions={
           <ActionTooltip
             hint={activeProjectId ? undefined : "Select a project to create a workflow."}
