@@ -168,7 +168,7 @@ Content-Type: application/json
 
 The job is created in the agent's project. Only `name` and `schedule` are required — `instructions` is optional. `schedule` must be a string — either canonical JSON (e.g. `"{\"every\":60}"` or `"{\"days\":[1,2,3,4,5],\"time\":\"09:00\"}"`) or a human-readable form like `"every 5 minutes"`, `"daily at 9am"`, `"weekly on friday at 9am"` (full rules under **Schedule Format** below).
 
-Optional fields: `instructions`, `prerun` (a **gate** run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrun` (a gate run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `description`, `docIds`, `envVarIds`, `tableIds`, `active` (defaults to true; set `false` to create the job paused). The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
+Optional fields: `instructions`, `prerun` (a **gate** run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `postrun` (a gate run after the run finishes), `postrunGates` (boolean — when true the postrun verifies the work: it runs after `done` only, and a nonzero exit flips the run to `failed`; when false it's informational, running on any terminal outcome without changing status), `model`, `thinking` (override of the agent's level), `titleFormat` (e.g. `"Issue #XXX — short summary"`; agents are instructed to follow it when setting each run's title), `docIds`, `envVarIds`, `tableIds`, `active` (defaults to true; set `false` to create the job paused). The `timeout_minutes` field defaults to 30 and is only settable via `PUT /api/jobs/:id` (as `timeoutMinutes`).
 
 Model/thinking overrides follow the agent's CLI rules.
 
@@ -191,7 +191,6 @@ Content-Type: application/json
 {
   "projectId": "uuid",
   "name": "Health Check",
-  "description": "Check API health every hour",
   "schedule": "{\"every\":60}",
   "command": { "runtime": "python", "content": "import urllib.request\nurllib.request.urlopen('https://example.com/health')\n" }
 }
@@ -235,7 +234,7 @@ PUT    /api/jobs/:id    { "name": "...", "instructions": "...", "schedule": "...
 DELETE /api/jobs/:id
 ```
 
-PUT accepts: `name`, `description`, `instructions`, `schedule` (string, same formats as create), `prerun`/`postrun`/`postrunGates` (agent jobs), `command` (workflows; `workflow` alias accepted), `model`, `thinking` (agent jobs only, validated against the agent's effective CLI/provider), `titleFormat`, `timeoutMinutes` (camelCase), `placement` (workflows), `docIds`, `envVarIds`, `tableIds`, `active`, `nextRunAt`. `prerun`, `postrun`, and `command` are each a gate object `{ runtime, content }` or `null` — passing the gate object replaces it, `null` clears it, and omitting the field leaves it unchanged. A job's project is fixed at creation — it can't move between projects. To pause a job, set `active: false`; to resume, `active: true`.
+PUT accepts: `name`, `instructions`, `schedule` (string, same formats as create), `prerun`/`postrun`/`postrunGates` (agent jobs), `command` (workflows; `workflow` alias accepted), `model`, `thinking` (agent jobs only, validated against the agent's effective CLI/provider), `titleFormat`, `timeoutMinutes` (camelCase), `placement` (workflows), `docIds`, `envVarIds`, `tableIds`, `active`, `nextRunAt`. `prerun`, `postrun`, and `command` are each a gate object `{ runtime, content }` or `null` — passing the gate object replaces it, `null` clears it, and omitting the field leaves it unchanged. A job's project is fixed at creation — it can't move between projects. To pause a job, set `active: false`; to resume, `active: true`.
 
 ### Trigger a Job Immediately
 ```

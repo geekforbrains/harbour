@@ -14,7 +14,6 @@ export function createJob(
   agentId: string | null,
   data: {
     name: string;
-    description?: string;
     instructions?: string;
     schedule: string;
     prerun?: Gate | null;
@@ -36,14 +35,13 @@ export function createJob(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
+      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       projectId,
       agentId,
       data.name,
-      data.description || null,
       data.instructions || null,
       data.schedule,
       data.prerun?.runtime ?? null,
@@ -74,7 +72,6 @@ export function createWorkflow(
   projectId: string,
   data: {
     name: string;
-    description?: string;
     schedule: string;
     workflow: Gate;
     timeoutMinutes?: number;
@@ -93,13 +90,12 @@ export function createWorkflow(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, description, instructions, schedule, workflow_runtime, workflow_script, placement, timeout_minutes, active, next_run_at)
-      VALUES (?, ?, 'workflow', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, instructions, schedule, workflow_runtime, workflow_script, placement, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, 'workflow', NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       projectId,
       data.name,
-      data.description || null,
       data.schedule,
       data.workflow.runtime,
       data.workflow.content,
@@ -220,7 +216,6 @@ export function updateJob(
   id: string,
   data: {
     name?: string;
-    description?: string;
     instructions?: string;
     schedule?: string;
     prerun?: Gate | null;
@@ -245,10 +240,6 @@ export function updateJob(
   if (data.name !== undefined) {
     fields.push("name = ?");
     values.push(data.name);
-  }
-  if (data.description !== undefined) {
-    fields.push("description = ?");
-    values.push(data.description);
   }
   if (data.instructions !== undefined) {
     fields.push("instructions = ?");

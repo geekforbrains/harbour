@@ -144,7 +144,7 @@ Static configuration for recurring work (agent or workflow).
 | `project_id` | TEXT | NN, FK → `projects` (CASCADE) | |
 | `kind` | TEXT | NN, default `agent`, CHECK in (`agent`, `workflow`) | |
 | `agent_id` | TEXT | FK → `agents` (CASCADE) | set for agent jobs, **NULL for workflow jobs** |
-| `name` / `description` / `instructions` | TEXT | | `instructions` is the agent prompt body |
+| `name` / `instructions` | TEXT | | `instructions` is the agent prompt body |
 | `schedule` | TEXT | NN | normalized JSON: `{"every":N}` or `{"days":[0-6],"time":"HH:MM"}` |
 | `prerun_runtime` | TEXT | CHECK NULL or in (`bash`, `python`, `node`) | runtime for the prerun gist; NULL exactly when `prerun_script` is |
 | `prerun_script` | TEXT | | agent gate body: exit 0 continues, 77 skips, other fails |

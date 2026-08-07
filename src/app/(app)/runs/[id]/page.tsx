@@ -544,9 +544,9 @@ export default function RunDetailPage() {
         <div className="flex items-center gap-2 text-sm">
           {run.agent_id && run.agent_name ? (
             <>
-              <span
-                className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-                style={{ backgroundColor: resolveAgentColor(run.agent_color, run.agent_name) }}
+              <Bot
+                className="h-3.5 w-3.5 shrink-0"
+                style={{ color: resolveAgentColor(run.agent_color, run.agent_name) }}
               />
               <Link
                 href={`/agents/${run.agent_id}`}

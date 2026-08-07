@@ -168,7 +168,6 @@ export function initializeSchema(db: Database.Database) {
       kind TEXT NOT NULL DEFAULT 'agent' CHECK(kind IN ('agent','workflow')),
       agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,   -- set for agent jobs, NULL for workflow jobs
       name TEXT NOT NULL,
-      description TEXT,
       instructions TEXT,
       schedule TEXT NOT NULL,
       -- Gate scripts. Each gate is a gist — a runtime plus a body the runner

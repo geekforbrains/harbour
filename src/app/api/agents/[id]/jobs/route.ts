@@ -30,7 +30,6 @@ export const POST = withAuthenticatedUser(async (req, _auth, { params }) => {
     return NextResponse.json({ error: "name and schedule are required" }, { status: 400 });
   }
   const name = requireNonEmptyString(body.name, "name");
-  const description = optionalString(body.description, "description");
   const instructions = optionalString(body.instructions, "instructions");
   const prerun = optionalGate(body.prerun, "prerun");
   const postrun = optionalGate(body.postrun, "postrun");
@@ -61,7 +60,6 @@ export const POST = withAuthenticatedUser(async (req, _auth, { params }) => {
   try {
     const job = createJob(agent.project_id, id, {
       name,
-      description,
       instructions,
       schedule: normalized,
       prerun,

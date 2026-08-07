@@ -37,7 +37,6 @@ export const POST = withAuthenticatedUser(async (req) => {
   const name = requireNonEmptyString(body.name, "name");
   // The workflow command is a gate: { runtime, content }. Accept either key.
   const workflow = requireGate(body.command ?? body.workflow, "command");
-  const description = optionalString(body.description, "description");
   const docIds = optionalStringArray(body.docIds, "docIds");
   const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
   const tableIds = optionalStringArray(body.tableIds, "tableIds");
@@ -59,7 +58,6 @@ export const POST = withAuthenticatedUser(async (req) => {
   try {
     const job = createWorkflow(projectId, {
       name,
-      description,
       schedule: normalized,
       workflow,
       timeoutMinutes,

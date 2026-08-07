@@ -62,7 +62,6 @@ Content-Type: application/json
 
 {
   "name": "Health Check",
-  "description": "Check API health every hour",
   "schedule": "{\"every\":60}",
   "command": { "runtime": "python", "content": "import json, sys\n..." },
   "timeoutMinutes": 10

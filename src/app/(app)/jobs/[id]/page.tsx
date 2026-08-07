@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  Bot,
   Calendar,
   CalendarClock,
   Coins,
   Cpu,
   FileText,
+  Hourglass,
   KeyRound,
   Pause,
   Pin,
@@ -14,6 +16,7 @@ import {
   RotateCcw,
   Settings,
   Table2,
+  TextCursorInput,
   Timer,
   Trash2,
   X,
@@ -77,7 +80,6 @@ type Job = {
   agent_name: string | null;
   agent_color: string | null;
   name: string;
-  description: string | null;
   instructions: string | null;
   schedule: string;
   prerun_runtime: string | null;
@@ -172,7 +174,6 @@ export default function JobDetailPage() {
   const [showEnvVars, setShowEnvVars] = useState(false);
   const [showTables, setShowTables] = useState(false);
   const [editName, setEditName] = useState("");
-  const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   // Gates: workflow command (workflow jobs), prerun + postrun (agent jobs).
@@ -199,7 +200,6 @@ export default function JobDetailPage() {
         id,
         body: {
           name: editName,
-          description: editDesc,
           instructions: editingWorkflow ? "" : editInstructions,
           schedule: serializeSchedule(editSchedule),
           // Gates: workflow sends `command`; agents send prerun/postrun (null
@@ -322,9 +322,6 @@ export default function JobDetailPage() {
             <ProjectBadge name={projectName} />
             {!job.active && <Badge variant="secondary">Paused</Badge>}
           </div>
-          {job.description && (
-            <p className="text-sm text-muted-foreground mt-0.5">{job.description}</p>
-          )}
         </div>
         <div className="flex gap-1.5">
           <Button
@@ -352,7 +349,6 @@ export default function JobDetailPage() {
             onClick={() => {
               if (job) {
                 setEditName(job.name);
-                setEditDesc(job.description || "");
                 setEditInstructions(job.instructions || "");
                 setEditSchedule(parseSchedule(job.schedule));
                 setEditWorkflow(toGate(job.workflow_runtime, job.workflow_script));
@@ -379,9 +375,9 @@ export default function JobDetailPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-3 gap-x-4 rounded-lg border p-3">
         {!isWorkflow ? (
           <div className="flex items-center gap-2 text-sm">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full ring-2 ring-background"
-              style={{ backgroundColor: resolveAgentColor(job.agent_color, job.agent_name) }}
+            <Bot
+              className="h-3.5 w-3.5 shrink-0"
+              style={{ color: resolveAgentColor(job.agent_color, job.agent_name) }}
             />
             <Link
               href={`/agents/${job.agent_id}`}
@@ -435,6 +431,20 @@ export default function JobDetailPage() {
             {job.total_tokens > 0 ? `${formatTokens(job.total_tokens)} tokens` : "—"}
           </span>
         </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Hourglass className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {job.timeout_minutes ?? 30}m timeout
+          </span>
+        </div>
+        {!isWorkflow && job.title_format && (
+          <div className="flex items-center gap-2 text-sm">
+            <TextCursorInput className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate" title={job.title_format}>
+              {job.title_format}
+            </span>
+          </div>
+        )}
       </div>
 
       {!isWorkflow && job.instructions && <InstructionsBlock text={job.instructions} />}
@@ -768,10 +778,6 @@ export default function JobDetailPage() {
             <div className="space-y-2">
               <Label>Name</Label>
               <Input value={editName} onChange={(e) => setEditName(e.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
             </div>
             {!isWorkflow && (
               <>

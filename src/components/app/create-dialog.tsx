@@ -192,7 +192,6 @@ export function CreateDialog({
 
   // Job fields. Gates (prerun/postrun for agents, the command for workflows)
   // are gist-style { runtime, content } scripts, null until set.
-  const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
   const [workflowGate, setWorkflowGate] = useState<Gate | null>(null);
   const [prerun, setPrerun] = useState<Gate | null>(null);
@@ -228,7 +227,6 @@ export function CreateDialog({
     setSelectedTableIds([]);
     setPinnedSeeded(false);
     setSubmitting(false);
-    setDescription("");
     setSchedule(parseSchedule(null));
     setWorkflowGate(null);
     setPrerun(null);
@@ -256,7 +254,6 @@ export function CreateDialog({
 
     const body = {
       name,
-      description: description || undefined,
       instructions: !isWorkflow ? instructions || undefined : undefined,
       schedule: serializeSchedule(schedule),
       command: isWorkflow ? (workflowGate ?? undefined) : undefined,
@@ -380,15 +377,6 @@ export function CreateDialog({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Morning Tweet"
                 required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Brief description"
               />
             </div>
 
