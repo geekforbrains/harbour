@@ -8,11 +8,11 @@ A workflow's command and an agent job's prerun/postrun are each a **gate**: a `{
 
 ## The Boundary
 
-| Feature | Own schedule | Uses an agent | Uses an LLM | Purpose |
-|---|---:|---:|---:|---|
-| Agent job | Yes | Yes | Yes | LLM-driven recurring work |
-| Agent prerun gate | No | Yes | No | Cheap gate before the LLM |
-| Workflow | Yes | No | No | Deterministic recurring work |
+| Feature           | Own schedule | Uses an agent | Uses an LLM | Purpose                      |
+| ----------------- | -----------: | ------------: | ----------: | ---------------------------- |
+| Agent job         |          Yes |           Yes |         Yes | LLM-driven recurring work    |
+| Agent prerun gate |           No |           Yes |          No | Cheap gate before the LLM    |
+| Workflow          |          Yes |            No |          No | Deterministic recurring work |
 
 Use a workflow when the script itself can finish the job: poll an API, reconcile a local file, sync a dataset, send a webhook, run a health check, or maintain a table.
 
@@ -22,23 +22,23 @@ Use an agent job with a prerun gate when the script is only deciding whether the
 
 Workflow jobs are stored in `jobs`:
 
-| Column | Meaning |
-|---|---|
-| `kind = 'workflow'` | This job is a deterministic workflow |
-| `agent_id = NULL` | No agent owns or runs it |
-| `workflow_runtime` | The runtime the command is run with: `bash`, `python`, or `node` |
-| `workflow_script` | The command's script body, run by the runner |
-| `timeout_minutes` | Maximum runtime before stale runs are failed |
+| Column              | Meaning                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `kind = 'workflow'` | This job is a deterministic workflow                             |
+| `agent_id = NULL`   | No agent owns or runs it                                         |
+| `workflow_runtime`  | The runtime the command is run with: `bash`, `python`, or `node` |
+| `workflow_script`   | The command's script body, run by the runner                     |
+| `timeout_minutes`   | Maximum runtime before stale runs are failed                     |
 
 Agent jobs use the same table, but with a different shape:
 
-| Column | Meaning |
-|---|---|
-| `kind = 'agent'` | This job is agent-backed |
-| `agent_id` | Owning agent |
-| `prerun_runtime` / `prerun_script` | Optional prerun gate before the LLM |
+| Column                               | Meaning                                         |
+| ------------------------------------ | ----------------------------------------------- |
+| `kind = 'agent'`                     | This job is agent-backed                        |
+| `agent_id`                           | Owning agent                                    |
+| `prerun_runtime` / `prerun_script`   | Optional prerun gate before the LLM             |
 | `postrun_runtime` / `postrun_script` | Optional postrun hook after status finalization |
-| `postrun_gates` | `0` = informational postrun, `1` = enforcing |
+| `postrun_gates`                      | `0` = informational postrun, `1` = enforcing    |
 
 Each `*_runtime` column is constrained by a CHECK to `bash`, `python`, or `node`,
 and the paired `*_script` column holds the body. Together they form a gate — a
@@ -96,15 +96,15 @@ Because claiming is placement-aware, a workflow whose placement label no runner 
 
 The runner materializes the command gate to a file in the job's per-job scripts directory and runs it there (see [Gates](#gates)):
 
-| Item | Value |
-|---|---|
+| Item              | Value                                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Working directory | The job's per-job scripts directory, `$HARBOUR_HOME/workflows/<scripts_dir>` (default root `~/.harbour/workflows`). See [Gates](#gates) |
-| Interpreter | The gate's `runtime`: `bash` → `bash workflow.sh`, `python` → `python3 workflow.py`, `node` → `node workflow.js` |
-| stdin | Full run payload JSON |
-| stdout | Captured at process exit, posted as the final `workflow` activity entry |
-| stderr | Captured at process exit |
-| timeout | `job.timeout_minutes`, default 30 |
-| env | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY` (the run's exec token), `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME` |
+| Interpreter       | The gate's `runtime`: `bash` → `bash workflow.sh`, `python` → `python3 workflow.py`, `node` → `node workflow.js`                        |
+| stdin             | Full run payload JSON                                                                                                                   |
+| stdout            | Captured at process exit, posted as the final `workflow` activity entry                                                                 |
+| stderr            | Captured at process exit                                                                                                                |
+| timeout           | `job.timeout_minutes`, default 30                                                                                                       |
+| env               | `HARBOUR_RUN_ID`, `HARBOUR_API_KEY` (the run's exec token), `HARBOUR_URL` (run credentials), plus every job-linked env var as `$NAME`   |
 
 Example command body (a `python` gate):
 
@@ -125,11 +125,11 @@ The command should be idempotent. A retry starts it fresh, not from a CLI sessio
 
 Workflow runs have no message thread — but a long-running script can still post breadcrumbs to its **Output** log so a human can watch progress before it exits. The runner injects the run's credentials into the script's environment:
 
-| Variable | Value |
-|---|---|
-| `HARBOUR_RUN_ID` | The current run's id |
+| Variable          | Value                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `HARBOUR_RUN_ID`  | The current run's id                                                                             |
 | `HARBOUR_API_KEY` | The run's exec token (scoped to this run's callbacks; the runner token never reaches the script) |
-| `HARBOUR_URL` | Base URL of the Harbour server |
+| `HARBOUR_URL`     | Base URL of the Harbour server                                                                   |
 
 Post an update any time during the run:
 
@@ -185,11 +185,11 @@ Linked docs, env vars, tables, and attachments are composed the same way as agen
 
 ## Exit Codes
 
-| Exit | Result |
-|---:|---|
-| `0` | Mark run `done`; trimmed stdout is posted as workflow activity |
-| `77` | Mark run `skipped`; stderr is posted as activity if present |
-| other | Mark run `failed`; stderr is preferred, then stdout |
+|  Exit | Result                                                         |
+| ----: | -------------------------------------------------------------- |
+|   `0` | Mark run `done`; trimmed stdout is posted as workflow activity |
+|  `77` | Mark run `skipped`; stderr is posted as activity if present    |
+| other | Mark run `failed`; stderr is preferred, then stdout            |
 
 Stdout is not streamed line-by-line; the trimmed buffer is posted once when the command exits or times out. For mid-run visibility on a long command, have the script post breadcrumbs itself — see [Live Progress Updates](#live-progress-updates).
 
@@ -199,12 +199,12 @@ Workflow runs can be killed from the dashboard. The runner polls the run kill en
 
 Terminal statuses:
 
-| Status | Meaning |
-|---|---|
-| `done` | Command exited `0` |
-| `skipped` | Command exited `77` |
-| `failed` | Command exited non-zero, timed out, or runner hit an execution error |
-| `killed` | User requested kill while the command was running |
+| Status    | Meaning                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `done`    | Command exited `0`                                                   |
+| `skipped` | Command exited `77`                                                  |
+| `failed`  | Command exited non-zero, timed out, or runner hit an execution error |
+| `killed`  | User requested kill while the command was running                    |
 
 These are the only statuses a workflow run moves through (plus `scheduled` and `running`). The human-loop statuses — `waiting` and `pending` — are agent-run concepts and are rejected with 400 on workflow runs.
 
@@ -216,11 +216,11 @@ Retrying a workflow run requeues the same run as `scheduled` with an immediate `
 
 Agent jobs can define a `prerun` gate. The runner materializes it and runs it before invoking the LLM.
 
-| Exit | Result |
-|---:|---|
-| `0` | Continue to the agent; stdout is appended as `## Prerun Output` |
-| `77` | Mark run `skipped`; no LLM is invoked |
-| other | Mark run `failed`; no LLM is invoked |
+|  Exit | Result                                                          |
+| ----: | --------------------------------------------------------------- |
+|   `0` | Continue to the agent; stdout is appended as `## Prerun Output` |
+|  `77` | Mark run `skipped`; no LLM is invoked                           |
+| other | Mark run `failed`; no LLM is invoked                            |
 
 The prerun runs from the job's per-job scripts directory (`$HARBOUR_HOME/workflows/<scripts_dir>`, see [Gates](#gates)) and receives the same stdin payload shape, but it is not independently scheduled — it runs inline as part of its agent run, gated by the run's exec token like the rest of the run's callbacks.
 
@@ -244,6 +244,7 @@ Each gate has two parts:
 Gates travel in the run payload (on both agent and workflow runs) as `{ runtime, content }` objects (or `null`), alongside `job.scripts_dir`:
 
 - `job.scripts_dir` — a **relative** path the server computes from immutable slugs (`getJobScriptsDir`), under the runner's `$HARBOUR_HOME/workflows` root. The runner derives no paths from job data itself. Shapes:
+
   - agent job → `<project-slug>/<agent-slug>/<job-leaf>`
   - workflow → `<project-slug>/<job-leaf>`
 

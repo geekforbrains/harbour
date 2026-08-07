@@ -1,6 +1,63 @@
 # Changelog
 
-## Unreleased
+## v2.2.0 — Unreleased
+
+### Breaking: jobs no longer have a description
+
+- **The `jobs.description` column is gone**, with the create/edit dialogs, both
+  create APIs, and the docs that referenced it. Nothing consumed the field: it
+  never appeared in list rows and was never sent to the agent, so the job's
+  `instructions` were already carrying the meaning. Agent descriptions are
+  unchanged. On an existing database:
+  `ALTER TABLE jobs DROP COLUMN description;`.
+
+### Jobs and gates
+
+- **Timeout is settable when a job is created**, not only via
+  `PUT /api/jobs/:id` afterwards. The create dialog exposes it for both kinds,
+  and `POST /api/agents/:id/jobs` now accepts `timeoutMinutes` the way
+  `POST /api/jobs` already did. Default is still 30 minutes.
+- **The prerun gate gets the same environment as postrun and workflow gates** —
+  job-linked secrets as `$NAME` plus the `HARBOUR_RUN_ID` / `HARBOUR_API_KEY` /
+  `HARBOUR_URL` run credentials. Prerun was the one gate without them even
+  though the same values already arrived in its stdin payload, so a script that
+  worked as a workflow command silently saw empty variables as a prerun. The
+  30-second cap on prerun/postrun (vs the job's `timeout_minutes` for a
+  workflow command) is now documented rather than merely true.
+
+### Agents and runs
+
+- **Agents no longer post their summary twice.** The runner already posts the
+  CLI's final output to the run's activity, but the work prompt buried that and
+  offered `harbour update log` with no guidance on when to use it — so agents
+  logged a summary *and* ended with one. The prompt and the agent guide now
+  frame `log` as mid-run progress only and state that the final response is
+  posted automatically.
+
+### Interface
+
+- Runs, Jobs, and Agents share one list-row shape: title, a meta line of
+  icon+text facts, and a right side that collapses to a single signal instead
+  of a badge pile.
+- The job detail meta block shows the run timeout, and the title format when
+  one is set — both were previously settable but invisible outside the edit
+  dialog.
+- An agent's model and effort read as one fact (`opus / medium`). The model row
+  used to disappear entirely when no override was set, leaving just the CLI and
+  an effort level with nothing to attach it to.
+- Job and run detail pages mark the agent with its colored bot icon rather than
+  a bare dot, matching the list rows.
+- The agent detail header drops the gray CLI pill — the same fact sits in the
+  detail block directly below it.
+
+### Fixed
+
+- A CLI-bootstrapped database now matches a server-created one exactly. The
+  bootstrap path created a redundant `idx_runners_token` index that the canonical
+  schema does not define (`token_hash` is already `UNIQUE`), so the two paths
+  produced schemas that differed by one index. Harmless, but it contradicted the
+  comment promising they were identical. Existing databases can drop it:
+  `DROP INDEX IF EXISTS idx_runners_token;`.
 
 ### Breaking: orgs are gone — Harbour is flat
 
@@ -16,8 +73,7 @@
 - **Renames.** Admin API keys are now just **API keys** (`/api/api-keys`,
   `hbr_` prefix) and the admin guide is the **management guide**, served at
   `/api/management-guide`. The CLI's `harbour admin create` is
-  `harbour user create` (env var `HARBOUR_USER_PASSWORD`); the `harbour
-  migrate` command is removed. Runner scope drops `orgId` (only `agentId`
+  `harbour user create` (env var `HARBOUR_USER_PASSWORD`); the `harbour migrate` command is removed. Runner scope drops `orgId` (only `agentId`
   remains). Workspace and script paths lose the org segment:
   `workspaces/<project>/<agent>` and `workflows/<project>[/<agent>]/<job-leaf>`.
 - **Migration: none.** Harbour has no schema migrations — a fresh database is
@@ -72,8 +128,7 @@
   [agent permissions guide](docs/guides/agent-permissions.md).
 - **Claude Code policy: `<workspace>/.claude/settings.json`** — the CLI's own
   settings format (`permissions` rules, `defaultMode`, hooks, and the OS
-  sandbox block). Passed as `--settings <file> --permission-mode <mode>
-  --setting-sources project`; `--settings` rather than cwd discovery because
+  sandbox block). Passed as `--settings <file> --permission-mode <mode> --setting-sources project`; `--settings` rather than cwd discovery because
   project-scope settings silently ignore the sandbox keys that do the
   containing. `defaultMode` defaults to `dontAsk` and may not be
   `bypassPermissions` (bypassing is the dashboard toggle's job). The policy
@@ -117,8 +172,7 @@
   supported path across this release, which covers this change too — a new DB
   gets the column from the schema. If you are instead carrying data forward by
   hand, add the column yourself or the server refuses to boot with a
-  schema-drift error: `ALTER TABLE agents ADD COLUMN permissions TEXT NOT NULL
-  DEFAULT 'enforced';`.
+  schema-drift error: `ALTER TABLE agents ADD COLUMN permissions TEXT NOT NULL DEFAULT 'enforced';`.
 - **Every existing agent becomes Enforced**, however you arrive — that is the
   point of the change. Before its next run each agent needs a policy file in
   its workspace or a deliberate flip to Unrestricted in the dashboard; a run
@@ -399,12 +453,14 @@ command and its guide were removed later, in the flatten above.)
 ## v1.12.0 — 2026-04-15
 
 ### Mobile
+
 - Run detail view now renders file attachments inline within the activity feed. Image attachments (PNG, JPG) display as expandable thumbnails; other files show as downloadable links. Previously, attachments uploaded via the API were invisible in the UI.
 - Run detail header now stacks into two rows on mobile breakpoints: title on row 1 (full width), status badge and action buttons on row 2. This prevents layout collisions with long job names like "Hearsay Nightly Review" and eliminates text wrapping issues around the status badge.
 
 ## v1.11.1 — 2026-04-14
 
 ### Mobile
+
 - Edit-job dialog now includes Docs and Env Vars management (chip lists with add/remove), matching the create-job dialog. Previously, managing these links on mobile required the detail-page X buttons, which were hover-only and unreachable on touch.
 - Detail-page Docs/Env Vars X buttons are always visible below the `sm:` breakpoint (hover-only is desktop behavior now).
 
@@ -432,11 +488,13 @@ command and its guide were removed later, in the flatten above.)
 ## v1.10.1 — 2026-04-14
 
 ### Mobile
+
 - Render agent-uploaded attachments in the mobile run activity view
 
 ## v1.10.0 — 2026-04-13
 
 ### Workflow Jobs
+
 - New execution mode: workflow-only jobs run shell commands on a schedule with no agent or LLM
 - Three modes: agent-only (default), workflow + agent (workflow gates the agent), workflow-only
 - Workflow-only jobs don't require an agent — standalone scheduled commands
@@ -445,6 +503,7 @@ command and its guide were removed later, in the flatten above.)
 - `check_command` renamed to `workflow_command` with new `workflow_only` flag
 
 ### Agentless Jobs
+
 - Jobs and runs no longer require an agent (`agent_id` nullable)
 - `POST /api/jobs` endpoint for creating workflow-only jobs without an agent
 - `GET /api/workflows/next` endpoint for runner discovery of agentless runs
@@ -452,21 +511,25 @@ command and its guide were removed later, in the flatten above.)
 - `requireAgentOwnership` passes through for agentless runs
 
 ### Jobs Page
+
 - Jobs split into "Agent Jobs" and "Workflow Jobs" sections
 - Workflow-only jobs show without agent name
 
 ### Create Dialog
+
 - Agent/Workflow type toggle with Bot and Terminal icons
 - Workflow-only mode hides agent selector, instructions, and model/thinking fields
 - Workflow-only jobs route to `POST /api/jobs` (no agent required)
 
 ### Run Icons
+
 - Workflow-only runs show Terminal icon instead of Bot in runs list and detail
 - Workflow + agent runs show both Bot and Terminal icons
 - Run detail page shows "Workflow" label instead of agent link for agentless runs
 - Subtitle updated from "All run activity across agents" to "All run activity"
 
 ### Documentation
+
 - README: new Workflows section, updated API table, /next endpoints docs
 - ADMIN_GUIDE: workflow-only job creation endpoint and common workflow
 - GUIDE: exit code 77 clarification on skipped status
@@ -483,25 +546,30 @@ command and its guide were removed later, in the flatten above.)
 ## v1.9.0 — 2026-04-10
 
 ### Run Detail Actions
+
 - Dropdown menu on finished and waiting runs to change status (done/failed/skipped/killed/waiting) or delete the run
 - New `DELETE /api/runs/:id` endpoint with attachment cleanup
 
 ### Copyable Resume Command
+
 - Run detail page shows a ready-to-paste CLI resume command for harbour-agent runs (e.g. `cd ... && claude --resume <id>`)
 - Runner reports session ID and working directory via `PUT /api/runs/:id/session`
 
 ### Console Output
+
 - Tool call details now shown in harbour-agent console output — displays the actual tool invocation (command, file path, pattern) instead of just the tool name for Claude Code agents
 
 ## v1.8.0 — 2026-04-09
 
 ### Trigger & Pause/Play on Runs Page
+
 - Pause/play and trigger (zap) buttons now appear on every run row in the runs list
 - Trigger button opens a confirmation dialog with optional additional instructions
 - Pause/play toggles the parent job's active state directly from the run list
 - Job detail page trigger also upgraded from `confirm()` to the shared trigger dialog
 
 ### Trigger with Additional Instructions
+
 - Manual triggers accept optional extra instructions injected alongside job instructions
 - Extra instructions stored on the run and merged into the `/next` payload for agents
 - A system activity message is posted to the run's thread showing the additional context
@@ -510,23 +578,27 @@ command and its guide were removed later, in the flatten above.)
 ## v1.7.0 — 2026-04-09
 
 ### Inline Attachments & One-Off Run Attachments
+
 - Attachments now appear inline in the activity feed (Slack-style) instead of a separate section
 - Attach files when creating one-off runs — staged locally, uploaded on submit
 - Docs, Env Vars, and Attachments sections restyled as card-like areas with better visibility
 - "When" picker moved to the bottom of the run creation dialog
 
 ### Safari File Input Fix
+
 - File input rendered outside dialog portal to avoid Base UI event interference
 - Uses ref-based state to prevent stale closures on form submission
 - Client-side file size validation with inline error display
 - Server-side upload errors surfaced via alert instead of silently swallowed
 
 ### Other Changes
+
 - Default max upload size increased from 100MB to 500MB (`HARBOUR_MAX_UPLOAD_MB`)
 
 ## v1.6.0 — 2026-04-09
 
 ### Kill Running Runs
+
 - Kill button on the run detail page for harbour-agent runs — stops a stuck or misdirected run mid-execution
 - Runner detects kill via piggyback on `POST /output` responses (~750ms) or a 10s fallback poll
 - SIGTERM with 3-second grace period, then SIGKILL if the CLI hasn't exited
@@ -538,6 +610,7 @@ command and its guide were removed later, in the flatten above.)
 ## v1.5.0 — 2026-04-08
 
 ### Run Attachments
+
 - Attach files (screenshots, PDFs, exports) and video URL embeds (Loom, YouTube, Vimeo) to runs
 - Reply composer supports click-to-attach, drag-and-drop, paste-image (CMD+V screenshots), and paste-embed-URL
 - Files stream to disk via busboy with configurable per-file cap (`HARBOUR_MAX_UPLOAD_MB`, default 100)
@@ -547,17 +620,20 @@ command and its guide were removed later, in the flatten above.)
 - Cascade delete removes both DB rows and on-disk directories when a run is deleted
 
 ### ~/.harbour Home Directory
+
 - All on-disk state now lives under `~/.harbour` by default — database, uploads, encryption key, and runner config
 - Single backup of `~/.harbour` captures everything
 - Existing `./harbour.db` auto-migrates on first start (originals preserved)
 - Configurable via `HARBOUR_HOME` with per-path overrides (`HARBOUR_DB_PATH`, `HARBOUR_UPLOADS_DIR`, `HARBOUR_ENCRYPTION_KEY`)
 
 ### Fixes
+
 - Proxy-aware absolute URLs: `publicBaseUrl()` honours `X-Forwarded-Host` / `X-Forwarded-Proto` so attachment URLs work behind reverse proxies (e.g. Tailscale Serve) instead of baking in `localhost:3000`
 
 ## v1.4.0 — 2026-04-02
 
 ### Admin API Keys
+
 - Admin API keys for external agents to manage Harbour remotely with full user-level access
 - Create and revoke keys from Settings page, each with a name and last-used tracking
 - Key shown once on creation as a copyable invite snippet with URL and bootstrap instructions
@@ -566,6 +642,7 @@ command and its guide were removed later, in the flatten above.)
 - Keys prefixed `hbr_adm_`, stored as SHA-256 hash (never plaintext)
 
 ### Projects
+
 - Optional projects for organizing work — a view layer over agents, jobs, docs, env vars, and databases
 - Project switcher in sidebar (desktop) and header (mobile) with create/switch/all views
 - "Add Existing" buttons on all list pages when viewing a project
@@ -578,29 +655,35 @@ command and its guide were removed later, in the flatten above.)
 ## v1.3.0 — 2026-04-01
 
 ### Jobs
+
 - Trigger run button — instantly start a run for any job (paused or active) with confirmation dialog
 - Per-job CLI timeout — runner uses each job's `timeout_minutes` setting instead of a hardcoded 10-minute limit
 - Re-activating a paused job now computes `next_run_at` from the schedule
 
 ### Runs
+
 - Comment on done/failed runs to reopen them as pending — continues the conversation with the agent
 - Reply form visible on waiting, pending, done, and failed runs (hidden for running/scheduled/skipped)
 - Sanitized error output — timeout and crash errors now show a human-readable reason instead of raw streaming JSON protocol lines
 - Output section hidden for external agent runs (only shown for harbour agents)
 
 ### Runner
+
 - Pre-run check commands now execute as shell processes — the runner runs the command directly, pipes the full payload JSON to stdin, and appends stdout to the prompt (exit 0 = proceed, exit 1 = skip, exit 2+ = error)
 - CLI tool detection uses extended PATH (homebrew, .local/bin, npm-global) for version checks
 
 ### Settings
+
 - Configurable "Recent Runs Shown" limit — controls how many completed runs display on the main Runs page (default: 10)
 
 ### UI
+
 - Version number shown in sidebar footer and mobile More menu
 
 ## v1.2.0 — 2026-03-31
 
 ### Environment Variables
+
 - Encrypted env vars (AES-256-GCM) with key stored at `~/.harbour/encryption.key`
 - Create, edit, delete env vars from the dashboard with eye-toggle to reveal values
 - Pin env vars to auto-attach to all new jobs and one-off runs
@@ -610,12 +693,14 @@ command and its guide were removed later, in the flatten above.)
 - Supports `HARBOUR_ENCRYPTION_KEY` env var override
 
 ### Settings
+
 - New Settings page with system-wide configuration
 - Timezone: auto-detected from system on first run, searchable dropdown of all IANA timezones
 - Timezone used in all schedule calculations and time display
 - Signup toggle: enable/disable new user registration
 
 ### Per-Job Model & Thinking
+
 - Model and thinking/effort level configurable per agent (default) and per job (override)
 - CLI-specific options: Claude (effort: low/medium/high/max), Codex (reasoning: low/medium/high), Gemini (thinking: low/medium/high)
 - Agent detail page shows type, CLI tool, model, and thinking level
@@ -623,6 +708,7 @@ command and its guide were removed later, in the flatten above.)
 - Model/thinking changes synced to `~/.harbour/runners.json`
 
 ### Unified Create Dialog
+
 - Single "New Run / New Job" dialog with tabs, shared fields persist when switching
 - Both tabs support docs and env vars selection with picker sub-dialogs
 - Pinned docs and env vars auto-selected on dialog open
@@ -630,33 +716,39 @@ command and its guide were removed later, in the flatten above.)
 - Replaces separate New Run and New Job dialogs on their respective pages
 
 ### Pinned Docs
+
 - Pin/unpin toggle on docs list and detail views
 - Pinned docs appear at top of docs list
 - Pinned docs auto-attached to all new jobs and one-off runs
 - Can still be manually removed from individual jobs
 
 ### Run Improvements
+
 - Retry button on failed/skipped runs (sets status to pending, agent picks up on next poll)
 - View Job button always visible on run detail (including one-off runs)
 - Live streaming output from harbour agent CLI runs
 
 ### Job Detail Improvements
+
 - Docs section with proper card layout and add dialog (replaces inline dropdown)
 - Env vars section with same pattern
 - Databases section with card layout
 
 ### UI Polish
+
 - Consistent empty states with centered icons matching nav menu across all views
 - Agent detail shows type (Harbour/External), CLI tool badge, model, and thinking level
 - Invite and API key buttons only shown for external agents
 - Error feedback on all dashboard mutation operations
 
 ### Runner Reliability
+
 - Startup timeout (30s) kills hung CLI processes (e.g. unauthenticated Gemini)
 - Stdin closed immediately to prevent interactive prompt hangs
 - Stderr included in error activity logs for better diagnostics
 
 ### Security & Code Quality
+
 - `withAuth`/`withUserAuth` higher-order function wrappers replace manual auth boilerplate across all 36 API routes
 - Agent ownership enforcement: agents can only act on their own resources (runs, status, activity, output)
 - `orderBy` parameter validated against actual column names in database rows endpoint
@@ -668,6 +760,7 @@ command and its guide were removed later, in the flatten above.)
 ## v1.1.0 — 2026-03-30
 
 ### Harbour Agents
+
 - Built-in agent runner for Claude Code, Codex, and Gemini CLI
 - New Agent dialog: choose **Harbour Agent** (local CLI) or **External** (bring your own)
 - Auto-detect installed CLI tools with version display
@@ -679,6 +772,7 @@ command and its guide were removed later, in the flatten above.)
 - Providers: Claude (`--dangerously-skip-permissions`), Codex (`--dangerously-bypass-approvals-and-sandbox`), Gemini (`--yolo`)
 
 ### Schema
+
 - Agents table: added `type` (harbour/external), `cli`, `model` columns with auto-migration
 
 ## v1.0.0 — 2026-03-30
@@ -686,6 +780,7 @@ command and its guide were removed later, in the flatten above.)
 Initial public release.
 
 ### Core
+
 - Agent registration with API keys and invite system
 - Job scheduling (intervals and weekly) with pre-run checks
 - Run lifecycle: scheduled, running, waiting, pending, done, failed, skipped
@@ -695,6 +790,7 @@ Initial public release.
 - Agent-managed databases with schema migrations, linked to jobs
 
 ### Dashboard
+
 - PWA-ready responsive UI (mobile + desktop)
 - Runs view with running, scheduled, waiting, pending, and recent sections
 - Jobs view with run/skip counts
@@ -703,6 +799,7 @@ Initial public release.
 - Database browser
 
 ### Agent API
+
 - Polling-based work distribution (`/next` and `?peek`)
 - Activity logging with markdown support
 - Human-in-the-loop via waiting/pending flow

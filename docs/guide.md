@@ -11,6 +11,7 @@ You don't poll Harbour yourself — a **runner** claims work on your behalf and 
 The runner↔server side of this — how a runner claims a run, what it advertises, the shape of the run payload — is a separate contract served at `GET /api/runner-guide` (the Runner Protocol). This document is the worker-agent contract: what you receive once spawned, and how you call back.
 
 Key concepts:
+
 - **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/tables/env vars
 - **Runs** — a single execution of a job, with an activity log of agent and human messages
 - **Docs** — shared markdown documents, injected into runs automatically
@@ -30,11 +31,13 @@ All schedule times use the instance timezone, set in Settings (it falls back to 
 Schedules are JSON in one of two shapes:
 
 **Interval** — run every N minutes:
+
 ```json
 {"every": 5}
 ```
 
 **Weekly** — run on specific days at a specific time:
+
 ```json
 {"days": [1, 2, 3, 4, 5], "time": "09:00"}
 ```
@@ -42,6 +45,7 @@ Schedules are JSON in one of two shapes:
 Days are 0 (Sunday) through 6 (Saturday). Time is 24-hour `HH:MM`.
 
 **Examples:**
+
 - `{"every": 5}` — every 5 minutes (good default for most jobs)
 - `{"every": 60}` — every hour
 - `{"every": 1440}` — once a day
@@ -50,6 +54,7 @@ Days are 0 (Sunday) through 6 (Saturday). Time is 24-hour `HH:MM`.
 - `{"days": [5], "time": "09:00"}` — Fridays at 9am
 
 For convenience, the API also accepts human-readable strings and common cron expressions. These are automatically normalized to JSON on creation:
+
 - `every 5 minutes` → `{"every": 5}`
 - `daily at 9am` → `{"days": [0,1,2,3,4,5,6], "time": "09:00"}`
 - `weekly on friday at 9am` → `{"days": [5], "time": "09:00"}`
@@ -78,6 +83,8 @@ harbour update status done      # done | failed | waiting | skipped
 
 It authenticates itself from your environment — no URL or key needed — and works even when your agent runs under a restrictive permission policy, which plain `curl` may not. Prefer it for these three. The rest of the API below is curl.
 
+Use `log` for **mid-run progress only** — a milestone reached, a blocker hit, something a human should see while the run is still going. Your final response is posted to the run automatically when you finish, so end with a clear, concise summary and do **not** also post it with `harbour update log`; it would appear twice.
+
 ### If a tool call is denied
 
 Your agent may be running under a permission policy its operator wrote, so some tool calls — shell commands, file writes, network requests — can come back denied. That is configuration, not a fault in your task or a transient error to retry: the same call will be denied again, and probing for a way around it is the wrong move.
@@ -95,6 +102,7 @@ Harbour never calls out to agents and you never poll it. A runner claims the nex
 You don't see that selection — you just receive the chosen run, already flipped to `running`, as the context below.
 
 **Run context (what the runner hands you):**
+
 ```json
 {
   "run": {
@@ -223,11 +231,13 @@ Content-Type: application/json
 ```
 
 Statuses you set (these are the `status_options` in the `api` block):
+
 - `done` — completed successfully
 - `failed` — something broke (or timed out)
 - `waiting` — agent needs human input (surfaces on dashboard)
 
 Statuses you'll see but shouldn't set yourself (they're managed by Harbour or the runner):
+
 - `running` — set when a runner claims the run
 - `pending` — set automatically when a human comments on a `waiting`/`done`/`failed`/`killed` run; queued for agent pickup. An exec token asking for `pending` is rejected with 403
 - `skipped` — a workflow or prerun gate determined there was nothing to do (exit code 77)
@@ -294,10 +304,10 @@ Content-Type: application/json
 **The waiting flow:**
 
 1. You need human input — set the run to `waiting` and add an activity message explaining what you need
-2. The run surfaces on the dashboard. The human reads your message and responds
-3. The status automatically changes from `waiting` to `pending` — the human's response is in the activity log
-4. A runner re-claims this `pending` run on a later poll and re-spawns you — status flipped to `running`, full activity history included, with a freshly minted exec token in the `api` block
-5. You read the human's response from the activity log and continue your work
+1. The run surfaces on the dashboard. The human reads your message and responds
+1. The status automatically changes from `waiting` to `pending` — the human's response is in the activity log
+1. A runner re-claims this `pending` run on a later poll and re-spawns you — status flipped to `running`, full activity history included, with a freshly minted exec token in the `api` block
+1. You read the human's response from the activity log and continue your work
 
 Pending runs **always take priority** over scheduled jobs. Other jobs continue to fire normally while a run is waiting — work doesn't block.
 

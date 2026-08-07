@@ -5,6 +5,7 @@ import { createJob, getAgentById, listJobsByAgent } from "@/lib/db/queries";
 import {
   optionalBoolean,
   optionalGate,
+  optionalPositiveInt,
   optionalString,
   optionalStringArray,
   readJson,
@@ -36,6 +37,7 @@ export const POST = withAuthenticatedUser(async (req, _auth, { params }) => {
   const postrunGates = optionalBoolean(body.postrunGates, "postrunGates");
   const model = optionalString(body.model, "model")?.trim();
   const titleFormat = optionalString(body.titleFormat, "titleFormat");
+  const timeoutMinutes = optionalPositiveInt(body.timeoutMinutes, "timeoutMinutes");
   const active = optionalBoolean(body.active, "active");
   const docIds = optionalStringArray(body.docIds, "docIds");
   const envVarIds = optionalStringArray(body.envVarIds, "envVarIds");
@@ -68,6 +70,7 @@ export const POST = withAuthenticatedUser(async (req, _auth, { params }) => {
       model,
       thinking,
       titleFormat,
+      timeoutMinutes,
       docIds,
       envVarIds,
       tableIds,

@@ -84,13 +84,11 @@ function openDb() {
       tier TEXT NOT NULL CHECK(tier IN ('local','remote')),
       labels TEXT NOT NULL DEFAULT '[]',     -- JSON: placement labels this token is authorized to serve
       capabilities TEXT,                     -- JSON {kinds,clis,labels}: last-advertised host capabilities (health/display)
-      scope TEXT,                            -- JSON {agentId?} or NULL (unscoped — local tier)
+      scope TEXT,                            -- JSON {agentId?} or NULL (no agent restriction; local runners are always NULL)
       last_polled_at INTEGER,                -- updated on every claim/peek; drives the health surface
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_runners_token ON runners(token_hash);
   `);
   return db;
 }

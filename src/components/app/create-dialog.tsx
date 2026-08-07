@@ -193,6 +193,8 @@ export function CreateDialog({
   // Job fields. Gates (prerun/postrun for agents, the command for workflows)
   // are gist-style { runtime, content } scripts, null until set.
   const [schedule, setSchedule] = useState(parseSchedule(null));
+  // Blank means "use the server default" (30) rather than sending 0.
+  const [timeoutMinutes, setTimeoutMinutes] = useState("");
   const [workflowGate, setWorkflowGate] = useState<Gate | null>(null);
   const [prerun, setPrerun] = useState<Gate | null>(null);
   const [postrun, setPostrun] = useState<Gate | null>(null);
@@ -228,6 +230,7 @@ export function CreateDialog({
     setPinnedSeeded(false);
     setSubmitting(false);
     setSchedule(parseSchedule(null));
+    setTimeoutMinutes("");
     setWorkflowGate(null);
     setPrerun(null);
     setPostrun(null);
@@ -255,6 +258,7 @@ export function CreateDialog({
     const body = {
       name,
       instructions: !isWorkflow ? instructions || undefined : undefined,
+      timeoutMinutes: timeoutMinutes.trim() ? Number(timeoutMinutes) : undefined,
       schedule: serializeSchedule(schedule),
       command: isWorkflow ? (workflowGate ?? undefined) : undefined,
       placement:
@@ -383,6 +387,22 @@ export function CreateDialog({
             <div className="space-y-2">
               <Label>Schedule</Label>
               <SchedulePicker schedule={schedule} onChange={setSchedule} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Timeout (minutes)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={timeoutMinutes}
+                onChange={(e) => setTimeoutMinutes(e.target.value)}
+                placeholder="30"
+              />
+              <p className="text-xs text-muted-foreground">
+                {kind === "workflow"
+                  ? "Hard cap on the script's runtime (default: 30)."
+                  : "Hard cap on the run's wallclock time (default: 30)."}
+              </p>
             </div>
 
             {kind === "workflow" && (

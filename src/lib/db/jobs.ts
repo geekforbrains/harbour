@@ -22,6 +22,7 @@ export function createJob(
     model?: string;
     thinking?: string;
     titleFormat?: string;
+    timeoutMinutes?: number;
     docIds?: string[];
     envVarIds?: string[];
     tableIds?: string[];
@@ -35,8 +36,8 @@ export function createJob(
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, project_id, kind, agent_id, name, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, active, next_run_at)
-      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, project_id, kind, agent_id, name, instructions, schedule, prerun_runtime, prerun_script, postrun_runtime, postrun_script, postrun_gates, model, thinking, title_format, timeout_minutes, active, next_run_at)
+      VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       projectId,
@@ -52,6 +53,7 @@ export function createJob(
       data.model || null,
       data.thinking || null,
       data.titleFormat?.trim() || null,
+      data.timeoutMinutes ?? 30,
       data.active !== false ? 1 : 0,
       nextRunAt,
     );
