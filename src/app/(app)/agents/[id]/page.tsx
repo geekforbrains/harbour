@@ -1,17 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  Bot,
-  Brain,
-  Briefcase,
-  Cpu,
-  Folder,
-  Settings,
-  Terminal,
-  Trash2,
-} from "lucide-react";
+import { Activity, Bot, Brain, Briefcase, Folder, Settings, Terminal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -216,15 +206,11 @@ export default function AgentDetailPage() {
           <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{agent.cli || "—"}</span>
         </div>
-        {agent.model && (
-          <div className="flex items-center gap-2 text-sm">
-            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground truncate">{agent.model}</span>
-          </div>
-        )}
         <div className="flex items-center gap-2 text-sm">
           <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
+          <span className="text-muted-foreground truncate">
+            {agent.model || "default"} / {agent.thinking || "default"}
+          </span>
         </div>
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
