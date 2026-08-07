@@ -1136,6 +1136,10 @@ export async function processNextRun(payload, { url, execToken }) {
         runId,
         agentName,
         label: "Prerun",
+        // Same env contract as postrun and workflow gates: job-linked secrets
+        // as $NAME plus the HARBOUR_* run credentials. The values already
+        // arrive in the stdin payload, so this adds convenience, not exposure.
+        extraEnv: childEnv,
       });
 
       if (wfResult.killed) {

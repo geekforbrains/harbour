@@ -224,6 +224,8 @@ Agent jobs can define a `prerun` gate. The runner materializes it and runs it be
 
 The prerun runs from the job's per-job scripts directory (`$HARBOUR_HOME/workflows/<scripts_dir>`, see [Gates](#gates)) and receives the same stdin payload shape, but it is not independently scheduled — it runs inline as part of its agent run, gated by the run's exec token like the rest of the run's callbacks.
 
+All three gates get the same environment: job-linked env vars as `$NAME` plus the `HARBOUR_RUN_ID` / `HARBOUR_API_KEY` / `HARBOUR_URL` run credentials (the [Execution Contract](#execution-contract) env row applies to prerun and postrun too). One difference in limits: the workflow command runs under the job's `timeout_minutes`, while prerun and postrun are capped at **30 seconds** — they're gates around the work, not the work itself.
+
 Agent jobs can also define a `postrun` gate, a hook the runner runs after the run's status is finalized. It executes from the same per-job directory as the prerun (both gates of a job share its `scripts_dir`, so the postrun runs from the same place the prerun did). When the job's `postrun_gates` flag is set, the postrun is enforcing — it runs after a `done` result and a nonzero exit overrides the run to `failed`; otherwise it's informational and never changes status.
 
 ## Gates
