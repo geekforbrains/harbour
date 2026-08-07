@@ -136,15 +136,15 @@ export function buildApiPrompt(api, apiKey) {
 
   return `## Harbour API
 
-Your output will be posted as a comment on this run. Write a clear, concise summary.
-
 Report on this run with the \`harbour update\` command. It knows which run it belongs to and authenticates itself, so it needs no URL or key — and it is the ONLY way to report that works when this agent runs under a restricted permission policy. Prefer it over curl for these three:
 
 Before doing anything else, set a short title (max 80 chars) so humans can identify this run on the dashboard:
   harbour update title "your short title"
 
-Post a message to the activity log (visible on the dashboard):
+Post mid-run progress to the activity log (visible on the dashboard). Use it only when there's something a human should see while the run is still going — a milestone reached, a blocker hit:
   harbour update log "your message"
+
+Your final response is posted to the run automatically when you finish. End with a clear, concise summary of what you did, and do NOT post that summary via \`harbour update log\` — it would appear twice.
 
 If you need human input to continue, set the status to waiting (explain what you need in the log first):
   harbour update status waiting
