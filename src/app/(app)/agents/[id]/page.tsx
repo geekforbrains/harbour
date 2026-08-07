@@ -178,11 +178,6 @@ export default function AgentDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
-              {agent.cli && (
-                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {agent.cli}
-                </span>
-              )}
               {agent.permissions === "unrestricted" && <UnrestrictedBadge />}
             </div>
             {agent.description && (
@@ -257,11 +252,6 @@ export default function AgentDetailPage() {
           </div>
         )}
       </div>
-
-      <p className="text-xs text-muted-foreground">
-        Runs on another machine? Mint a runner in Settings → Runners and enroll it with{" "}
-        <code>npm run harbour-agent -- connect</code>.
-      </p>
 
       {/* Jobs */}
       <section>

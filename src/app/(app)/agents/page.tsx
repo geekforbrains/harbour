@@ -281,7 +281,7 @@ export default function AgentsPage() {
             // poll. Only surface setup guidance when nothing is listening yet.
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                <strong>{newAgent.name}</strong> is ready. The runner picks it up on its next poll —
+                <strong>{newAgent.name}</strong> is ready. The runner picks it up on its next poll,
                 no further setup needed.
               </p>
               {newAgentRunnerStatus && !newAgentRunnerStatus.live && (
