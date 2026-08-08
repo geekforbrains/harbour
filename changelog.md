@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.2.0 — Unreleased
+## v2.2.0 — 2026-08-07
 
 ### Security
 
@@ -37,6 +37,12 @@
   binary a sanitized `PATH` may not carry, which made an installed `claude` or
   `codex` look missing to both the runner's capability detection and the
   dashboard's CLI-tools check.
+- A CLI-bootstrapped database now matches a server-created one exactly. The
+  bootstrap path created a redundant `idx_runners_token` index that the canonical
+  schema does not define (`token_hash` is already `UNIQUE`), so the two paths
+  produced schemas that differed by one index. Harmless, but it contradicted the
+  comment promising they were identical. Existing databases can drop it:
+  `DROP INDEX IF EXISTS idx_runners_token;`.
 
 ### Dependencies
 
@@ -93,15 +99,6 @@
   a bare dot, matching the list rows.
 - The agent detail header drops the gray CLI pill — the same fact sits in the
   detail block directly below it.
-
-### Fixed
-
-- A CLI-bootstrapped database now matches a server-created one exactly. The
-  bootstrap path created a redundant `idx_runners_token` index that the canonical
-  schema does not define (`token_hash` is already `UNIQUE`), so the two paths
-  produced schemas that differed by one index. Harmless, but it contradicted the
-  comment promising they were identical. Existing databases can drop it:
-  `DROP INDEX IF EXISTS idx_runners_token;`.
 
 ### Breaking: orgs are gone — Harbour is flat
 
