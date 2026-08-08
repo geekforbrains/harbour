@@ -18,7 +18,7 @@ Jobs come in two flavors:
 - **Agent jobs** — `agent_id` is set. An LLM CLI runs them.
 - **Workflows** — `kind = 'workflow'`, `agent_id IS NULL`. No LLM. See [Workflows](workflows.md).
 
-Both kinds are picked up the same way: a runner claims due work via `POST /api/runner/claim` (the [Runner Protocol](../runner-guide.md)). The runner branches on `run.kind` — drive a CLI for agent runs, run the gate script for workflows.
+Both kinds are picked up the same way: a runner claims due work via `POST /api/runner/claim` (the [Runner Protocol](../runner-guide.md)). The runner branches on the job's `kind` — drive a CLI for agent runs, run the gate script for workflows.
 
 Agent jobs can also define a prerun gate — a `{ runtime, content }` script (bash/python/node) that runs before the LLM and can skip the run.
 

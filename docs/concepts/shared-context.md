@@ -47,7 +47,7 @@ The agent writes a draft, posts it to Buffer using the env var, then reads `mark
 
 Pinning is the answer to "apply this context to everything in this project automatically." Docs, tables, and env vars all support it.
 
-**Pinning is a live, project-wide auto-attach.** A pinned resource is injected into the run payload of **every job in its own project**, no link row required. It's resolved at payload-build time (`getComposedDocsForJob` / `getComposedTablesForJob` / `getDecryptedEnvVarsForJob`): pinned resources of the job's own project come first, then the job's explicit links (from any project) in link-creation order — so on a name collision, a linked resource overrides a pinned one. A resource that is both pinned and linked appears once.
+**Pinning is a live, project-wide auto-attach.** A pinned resource is injected into the run payload of **every job in its own project**, no link row required. It's resolved at payload-build time (`getComposedDocsForJob` / `getComposedTablesForJob` / `getDecryptedEnvVarsForJob`): pinned resources of the job's own project come first, then the job's explicit links (from any project) in link-creation order. A resource that is both pinned and linked appears once — deduplication is by identity, so for tables and env vars (keyed by name) a linked resource overrides a same-named pinned one, while docs dedupe by id and carry no title uniqueness: two docs sharing a title are two distinct docs and both are injected.
 
 Pinning never crosses projects — a pinned doc in project A is invisible to project B's jobs unless a job there links it explicitly. The New Job dialog also pre-checks pinned items in scope as a convenience, but that's cosmetic: pinned resources reach the run either way.
 
@@ -65,7 +65,7 @@ Tables pin like docs and secrets, but reach for it sparingly — they're heavier
 
 ## Docs
 
-Markdown documents, stored revisioned. Each `docs` row has a title and metadata; each edit appends a new `doc_revisions` row with the full content. The latest revision's content is what gets injected into the run payload (resolved with a correlated subquery on `MAX(created_at)`).
+Markdown documents, stored revisioned. Each `docs` row has a title and metadata; each edit appends a new `doc_revisions` row with the full content. The latest revision's content is what gets injected into the run payload (resolved by a correlated subquery ordering on `created_at DESC, rowid DESC LIMIT 1` — the rowid tiebreak keeps two edits landing in the same second deterministic).
 
 (Columns in [database-schema.md](../reference/database-schema.md#docs).)
 

@@ -176,7 +176,7 @@ codex execpolicy check --rules <file> -- <cmd> [args...]
 
 A parseable file prints a JSON verdict to stdout and exits 0 regardless of the decision (`{"matchedRules":[],...}` means no rule matched — the command would run); a parse error prints to stderr and exits 1.
 
-> **Check the bare command, not the shell wrapper.** This command matches literally what you hand it, so `-- zsh -lc "rm x"` reports no match while the runtime blocks that exact command — the checker doesn't model the unwrapping described above. Write `-- rm x`. Checking the wrapper form gives a false all-clear. Harbour runs this same check on every `.rules` file before each run: an absent `rules/` directory is fine, but a present-and-broken file fails the run, because Codex would otherwise skip it silently while you believe the deny-list is in force.
+> **Check the bare command, not the shell wrapper.** This command matches literally what you hand it, so `-- zsh -lc "rm x"` reports no match while the runtime blocks that exact command — the checker doesn't model the unwrapping described above. Write `-- rm x`. Checking the wrapper form gives a false all-clear. Harbour runs this same check on every `.rules` file before each run: an absent `rules/` directory is fine, but a present-and-broken file fails the run, because Codex would otherwise skip it silently while you believe the deny-list is in force. This one check is fail-*open* by design — if `codex` isn't on the runner's PATH, or the check times out or can't be spawned, the file is treated as unverifiable and the run proceeds. The sandbox is the boundary; the rules file is a tripwire on top of it, and an unverifiable tripwire shouldn't kill a run whose sandbox already passed. The consequence worth knowing: on a host without `codex` installed, `harbour policy check` reports `OK` for a `.rules` file it never actually parsed.
 
 ## What Harbour checks
 
@@ -197,7 +197,7 @@ For Claude Code, additionally:
 For Codex, additionally:
 
 - top-level `sandbox_mode`, if present, must be `workspace-write` — `read-only`, `danger-full-access`, and unrecognized values are refused,
-- the file must contain `network_access = true`,
+- the file must set `network_access = true` **inside the `[sandbox_workspace_write]` table** — a top-level `network_access = true`, or one under any other table, does not count and the run is refused,
 - every `<workspace>/.codex/rules/*.rules` file, if the directory exists, must be a regular, non-symlink, non-empty file that Codex can parse.
 
 These Codex checks confirm the run protocol stays reachable; they say nothing about how far the agent can reach. Harbour does not inspect `[features.network_proxy]`, `web_search`, or `writable_roots`, so a file that scopes none of them — or scopes them in the profile form that [doesn't take effect](#restricting-network-access) — passes every check with network wide open. `harbour policy check` reporting `OK` means the policy resolves, not that it confines.

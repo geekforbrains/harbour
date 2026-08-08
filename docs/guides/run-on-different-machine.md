@@ -48,7 +48,7 @@ The two patterns that work in practice:
 Pick a label for the machine — say `gpu` or `mac-builder`.
 
 - **Workflow job:** set its **Placement** field to that label when you create it (the create dialog has a Placement input; default `local`).
-- **Agent:** set the agent's `placement` to that label. Every run the agent's jobs produce inherits it. (PATCH `/api/agents/:id` with `{ "placement": "gpu" }`; see the [API reference](../reference/api.md).)
+- **Agent:** set the agent's `placement` to that label. Every run the agent's jobs produce inherits it. (PUT `/api/agents/:id` with `{ "placement": "gpu" }`; see the [API reference](../reference/api.md).)
 
 A "remote" agent is simply an agent whose placement points at a label only a remote runner serves — there's no separate API-key poller and no "runs on a different machine" toggle anymore. The agent record still lives on harbour; only where it executes changes.
 

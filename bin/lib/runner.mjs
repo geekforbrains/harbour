@@ -1645,7 +1645,10 @@ export async function runPostrun({
       runId,
       agentName,
       label: "Postrun",
-      extraEnv: env,
+      // Same env contract as prerun and the workflow command: job-linked
+      // secrets as $NAME plus the HARBOUR_* run credentials, which are what a
+      // postrun script needs to curl its own run back.
+      extraEnv: buildRunEnv({ env, url, runId, execToken: apiKey }),
       killPollIntervalMs,
     });
   } catch (err) {
@@ -1806,12 +1809,7 @@ export async function processNextWorkflow(payload, { url, execToken }, opts = {}
   //     -H "Authorization: Bearer $HARBOUR_API_KEY" -d '{"content":"..."}'
   // Job-linked env vars are layered in first (parity with agent runs, so
   // scripts can expand `$SECRET`); HARBOUR_* win on any name collision.
-  const extraEnv = {
-    ...(payload.env || {}),
-    HARBOUR_RUN_ID: runId,
-    HARBOUR_API_KEY: apiKey,
-    HARBOUR_URL: url,
-  };
+  const extraEnv = buildRunEnv({ env: payload.env, url, runId, execToken: apiKey });
 
   // Stage + run the workflow gate through the shared gate runner — same
   // resolveJobDir/materializeGate + kill-poll/timeout dance as prerun/postrun.

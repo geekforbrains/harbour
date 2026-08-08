@@ -82,7 +82,10 @@ claude                              # Terminal 3 — main repo on the current br
 - Each worktree needs its own `npm install`.
 - `.worktreeinclude` copies `.env` / `.env.local` into new worktrees automatically.
 - All worktrees share `~/.harbour/harbour.db` by default. For an isolated
-  database, set `HARBOUR_DB_PATH` in a per-worktree `.env`.
+  database, set `HARBOUR_DB_PATH` in a per-worktree `.env` — note this only
+  reaches the Next dev server, which loads `.env`. Nothing under `bin/` does, so
+  `npm run harbour -- ...` subcommands still hit `~/.harbour/harbour.db`; export
+  `HARBOUR_DB_PATH` in the shell to isolate those too.
 - Use a distinct port per worktree dev server (3010–3020).
 - Merge back via PR: `git push origin worktree-<name>` then `gh pr create`.
 - Cleanup: worktrees with no changes are auto-removed on session exit; otherwise

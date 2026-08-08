@@ -1,6 +1,8 @@
 import { v4 as uuid } from "uuid";
 import { InvalidNameError, NameCollisionError, slugify } from "../slug";
+import { deleteRunAttachmentsDir } from "./attachments";
 import { getDb, isUniqueViolation } from "./schema";
+import { deleteTable } from "./tables";
 
 function projectCollisionError(existingName: string, slug: string) {
   return new NameCollisionError(
@@ -59,10 +61,25 @@ export function updateProject(id: string, data: { name?: string }) {
 }
 
 /**
- * ON DELETE CASCADE wipes everything beneath the project (agents, jobs, runs,
- * docs, env vars, tables).
+ * ON DELETE CASCADE wipes the rows beneath the project (agents, jobs, runs,
+ * docs, env vars, tables), but two things live outside the FK graph and have to
+ * go by hand — the same cleanup deleteAgent/deleteJob already do:
+ *   - the physical `t_*` SQLite tables holding agent-written data, which would
+ *     otherwise stay in the DB file unreachable from listTables;
+ *   - the uploads/runs/<id>/ attachment dirs on disk.
+ * Both are collected before the delete, since cascade removes the rows that
+ * point at them.
  */
 export function deleteProject(id: string) {
   const db = getDb();
+  const tableIds = db.prepare(`SELECT id FROM tables WHERE project_id = ?`).all(id) as {
+    id: string;
+  }[];
+  const runIds = db.prepare(`SELECT id FROM runs WHERE project_id = ?`).all(id) as { id: string }[];
+
+  // deleteTable drops the physical table and its metadata row together; doing
+  // it before the cascade keeps the two in step even if one throws.
+  for (const t of tableIds) deleteTable(t.id);
   db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
+  for (const r of runIds) deleteRunAttachmentsDir(r.id);
 }

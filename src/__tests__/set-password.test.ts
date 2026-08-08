@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authenticateUser,
   consumeSetPasswordToken,
+  createSession,
   createSetPasswordToken,
   createUser,
+  getSession,
   getSetPasswordToken,
   hashPassword,
   pruneSetPasswordTokens,
@@ -178,5 +180,50 @@ describe("set_password_tokens", () => {
     expect(getSetPasswordToken(live.rawToken)).not.toBeNull();
     expect(getSetPasswordToken(toExpire.rawToken)).toBeNull();
     expect(getSetPasswordToken(toConsume.rawToken)).toBeNull();
+  });
+});
+
+// A password reset is the remedy for a compromised account, so it has to end
+// the sessions that were already open — otherwise a stolen cookie outlives the
+// reset by up to HARBOUR_SESSION_TTL_DAYS (30 by default).
+describe("consumeSetPasswordToken session revocation", () => {
+  function makeUser(email = "u@example.com") {
+    const u = createUser(email, null, "User") as { id: string };
+    return u.id;
+  }
+
+  it("invalidates the user's existing sessions", () => {
+    const userId = makeUser();
+    const stale = createSession(userId);
+    const alsoStale = createSession(userId);
+    expect(getSession(stale)).not.toBeNull();
+
+    const { rawToken } = createSetPasswordToken(userId, null);
+    const res = consumeSetPasswordToken(rawToken, "brandnewpw");
+
+    expect(res.ok).toBe(true);
+    expect(getSession(stale)).toBeNull();
+    expect(getSession(alsoStale)).toBeNull();
+  });
+
+  it("leaves other users' sessions alone", () => {
+    const userId = makeUser();
+    const other = createUser("other@x.com", "otherpw", "Other")!;
+    const otherSession = createSession(other.id);
+
+    const { rawToken } = createSetPasswordToken(userId, null);
+    consumeSetPasswordToken(rawToken, "brandnewpw");
+
+    expect(getSession(otherSession)).not.toBeNull();
+  });
+
+  it("keeps sessions when the token is rejected", () => {
+    const userId = makeUser();
+    const session = createSession(userId);
+
+    const res = consumeSetPasswordToken("not-a-real-token", "brandnewpw");
+
+    expect(res.ok).toBe(false);
+    expect(getSession(session)).not.toBeNull();
   });
 });

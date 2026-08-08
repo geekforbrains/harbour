@@ -21,7 +21,9 @@ const extendedPath = [...EXTRA_PATHS, process.env.PATH].join(":");
 
 function checkTool(tool: (typeof CLI_TOOLS)[number]) {
   try {
-    const whichResult = execSync(`which ${tool.binary} 2>/dev/null`, {
+    // `command -v` (POSIX builtin) rather than `which` (an external binary the
+    // server's PATH may not include).
+    const whichResult = execSync(`command -v ${tool.binary} 2>/dev/null`, {
       encoding: "utf-8",
       env: { ...process.env, PATH: extendedPath },
     }).trim();

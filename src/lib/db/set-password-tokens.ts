@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { getDb } from "./schema";
 import { hashToken } from "./tokens";
-import { setUserPassword } from "./users";
+import { deleteUserSessions, setUserPassword } from "./users";
 
 // ─── Set-password / reset tokens ──────────────────────────────────────────────
 //
@@ -86,6 +86,11 @@ export function consumeSetPasswordToken(rawToken: string, newPassword: string): 
     if (res.changes !== 1) return { ok: false, reason: "consumed" };
 
     setUserPassword(row.user_id, newPassword);
+    // A reset is the remedy for a compromised account, so every session opened
+    // under the old password dies with it — otherwise a stolen cookie stays
+    // valid for the rest of its TTL (30 days by default). The caller mints a
+    // fresh session afterwards, so the user redeeming the token stays logged in.
+    deleteUserSessions(row.user_id);
     return { ok: true, userId: row.user_id };
   });
 

@@ -166,3 +166,9 @@ export function deleteSession(sessionId: string) {
   const db = getDb();
   db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
 }
+
+/** Revoke every session belonging to a user — used when their password changes. */
+export function deleteUserSessions(userId: string) {
+  const db = getDb();
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+}

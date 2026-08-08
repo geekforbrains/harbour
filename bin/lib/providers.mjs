@@ -77,7 +77,10 @@ const binaryPathCache = {};
 export function resolveBinary(name) {
   if (!(name in binaryPathCache)) {
     try {
-      binaryPathCache[name] = execSync(`which ${name}`, { encoding: "utf-8" }).trim();
+      // `command -v` is a POSIX shell builtin; `which` is an external binary
+      // that a sanitized PATH may not carry, which would make a CLI that is
+      // installed look missing.
+      binaryPathCache[name] = execSync(`command -v ${name}`, { encoding: "utf-8" }).trim();
     } catch {
       binaryPathCache[name] = null; // not on PATH — do not advertise or spawn it
     }

@@ -140,9 +140,9 @@ curl -s -X POST "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity" \
   -d '{"content":"Fetched 42 rows, syncing..."}'
 ```
 
-Each call appends a `workflow`-authored entry to the run's Output, visible on the dashboard immediately. These are status breadcrumbs only — there is no reply, and posting more than once is expected. The script's stdout is still captured and posted as a final entry when the command exits, so simple scripts need none of this.
+Each call appends a `workflow`-authored entry to the run's Output, visible on the dashboard immediately. These are status breadcrumbs only — there is no reply, and posting more than once is expected. The script's stdout is still captured and posted as a final entry when the command exits cleanly, so simple scripts need none of this.
 
-Note that stdout is *always* posted at exit. If you post breadcrumbs **and** also print the same lines to stdout, they appear twice in the Output. To avoid that, either post breadcrumbs and keep stdout quiet (or for skip/error detail only), or skip breadcrumbs and let the single stdout summary stand.
+Note that stdout is posted at exit **on success only** — a non-empty stdout after exit 0. A skip (exit 77) discards stdout, and any other non-zero exit surfaces stderr instead (falling back to stdout when stderr is empty), as the [exit-code table](#exit-codes) below spells out. If you post breadcrumbs **and** also print the same lines to stdout, they appear twice in the Output of a successful run. To avoid that, either post breadcrumbs and keep stdout quiet (or for skip/error detail only), or skip breadcrumbs and let the single stdout summary stand.
 
 This is the same `POST /api/runs/:id/activity` endpoint agents use, posted with the run's exec token, but on a workflow run user comments return 400 (the activity log is captured runner output only). Keep updates terse and **never echo secrets** — stdout and breadcrumbs are stored verbatim in the run's activity log (the `run_activity` table) and shown on the dashboard, so a secret printed once persists there in plaintext. Inject secrets as env vars (decrypted only at runtime, never stored) and let the script reference `$VAR` rather than printing it.
 
@@ -214,7 +214,7 @@ Retrying a workflow run requeues the same run as `scheduled` with an immediate `
 
 ## Agent Prerun And Postrun Gates
 
-Agent jobs can define a `prerun` gate. The runner materializes it and runs it before invoking the LLM.
+Agent jobs can define a `prerun` gate. The runner materializes it and runs it before invoking the LLM, on fresh runs only — a run resumed from `waiting`, a comment, or a kill goes straight to the CLI, so the gate fires once per run rather than once per attempt.
 
 |  Exit | Result                                                          |
 | ----: | --------------------------------------------------------------- |

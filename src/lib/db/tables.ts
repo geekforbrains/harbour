@@ -204,6 +204,39 @@ function safeColumnName(name: string): string {
   return clean;
 }
 
+/** The only column types Harbour creates. SQLite's affinity rules make more
+ * types pointless, and a closed set is what keeps `type` out of the DDL. */
+export const COLUMN_TYPES = ["TEXT", "INTEGER", "REAL"] as const;
+
+/**
+ * Column `type` and `default` are interpolated into DDL that runs through
+ * `db.exec()`, which executes every statement in the string — so both are
+ * validated here rather than in the routes. Keeping it in one place is the
+ * point: the per-route allow-list this replaces was missing on
+ * `POST /api/agents/:id/tables`, leaving arbitrary DDL reachable by an agent.
+ */
+function safeColumnType(type: unknown): "TEXT" | "INTEGER" | "REAL" {
+  const upper = String(type ?? "").toUpperCase();
+  const match = COLUMN_TYPES.find((t) => t === upper);
+  if (!match) {
+    throw new Error(`Invalid column type: must be one of ${COLUMN_TYPES.join(", ")}`);
+  }
+  return match;
+}
+
+/**
+ * Render a column default as a SQL literal. Strings are single-quoted with
+ * quotes doubled; finite numbers are emitted bare; booleans become 0/1.
+ * Anything else (array, object, NaN, Infinity) is refused — an array was the
+ * bypass that slipped past the old `typeof === "string"` quoting branch.
+ */
+function renderColumnDefault(value: unknown): string {
+  if (typeof value === "string") return `'${value.replace(/'/g, "''")}'`;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "1" : "0";
+  throw new Error("Invalid column default: must be a string, finite number, or boolean");
+}
+
 // --- Table CRUD ---
 
 export function createTable(
@@ -223,10 +256,10 @@ export function createTable(
   if (!columns.length) throw new Error("At least one column is required");
   const colDefs = columns.map((c) => {
     const colName = safeColumnName(c.name);
-    let def = `"${colName}" ${c.type}`;
+    let def = `"${colName}" ${safeColumnType(c.type)}`;
     if (c.required) def += " NOT NULL";
     if (c.default !== undefined && c.default !== null) {
-      def += ` DEFAULT ${typeof c.default === "string" ? `'${c.default.replace(/'/g, "''")}'` : c.default}`;
+      def += ` DEFAULT ${renderColumnDefault(c.default)}`;
     }
     return def;
   });
@@ -342,9 +375,9 @@ export function addColumn(tableId: string, column: ColumnDef) {
   if (!meta) throw new Error("Table not found");
 
   const colName = safeColumnName(column.name);
-  let alterSql = `ALTER TABLE "${meta.table_name}" ADD COLUMN "${colName}" ${column.type}`;
+  let alterSql = `ALTER TABLE "${meta.table_name}" ADD COLUMN "${colName}" ${safeColumnType(column.type)}`;
   if (column.default !== undefined && column.default !== null) {
-    alterSql += ` DEFAULT ${typeof column.default === "string" ? `'${column.default.replace(/'/g, "''")}'` : column.default}`;
+    alterSql += ` DEFAULT ${renderColumnDefault(column.default)}`;
   }
   // Note: NOT NULL requires a default for ALTER TABLE ADD COLUMN
   if (column.required) {

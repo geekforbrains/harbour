@@ -2,6 +2,50 @@
 
 ## v2.2.0 — Unreleased
 
+### Security
+
+- **Agent-created tables can no longer inject SQL.** A column's `type` and
+  `default` were interpolated into the `CREATE TABLE` / `ALTER TABLE` text that
+  runs through `db.exec()`, which executes every statement in the string. The
+  `type` allow-list lived in two route files and was missing from the third,
+  `POST /api/agents/:id/tables` — the agent-facing one — and no route validated
+  `default` at all, so a non-string value (a JSON array, say) slipped past the
+  quoting branch. Either one could append arbitrary DDL, e.g. dropping a table.
+  Validation now lives in `tables.ts` next to the DDL it guards, so no route can
+  skip it: types are allow-listed (`TEXT` / `INTEGER` / `REAL`, case-insensitive)
+  and defaults must be a string, finite number, or boolean.
+- **Setting a password now revokes that user's existing sessions.** A reset is
+  the remedy for a compromised account, but sessions opened under the old
+  password survived it for the rest of their TTL (30 days by default). The user
+  redeeming the token stays signed in; every other session for them is dropped.
+
+### Fixed
+
+- **The postrun gate gets the `HARBOUR_*` run credentials it was documented to
+  have.** v2.2.0 gave prerun the shared env contract on the understanding that
+  postrun already had it — postrun was in fact the gate passing only job-linked
+  vars, so a postrun script following the documented
+  `curl "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity"` pattern expanded empty
+  variables. All three gates now build their environment through the same
+  `buildRunEnv` helper.
+- **Deleting a project cleans up what the FK cascade can't reach.** The
+  project's physical `t_*` SQLite tables (holding agent-written rows) stayed in
+  the database file unreachable from the UI, and its runs' `uploads/runs/<id>/`
+  directories stayed on disk. Job and agent deletion already did this cleanup;
+  project deletion was the one destructive path that didn't.
+- **CLI detection uses `command -v` instead of `which`.** `which` is an external
+  binary a sanitized `PATH` may not carry, which made an installed `claude` or
+  `codex` look missing to both the runner's capability detection and the
+  dashboard's CLI-tools check.
+
+### Dependencies
+
+- `next` 16.2.1 → 16.3.0, picking up fixes for App Router middleware/proxy
+  bypass, RSC cache poisoning, and several DoS advisories.
+- `shadcn` moved to `devDependencies` (it supplies build-time CSS, not runtime
+  code) and `uuid` bumped. The production dependency tree now audits clean.
+- `@types/node` moved from `^20` to `^24`, matching the enforced Node 24 runtime.
+
 ### Breaking: jobs no longer have a description
 
 - **The `jobs.description` column is gone**, with the create/edit dialogs, both

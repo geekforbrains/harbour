@@ -41,14 +41,21 @@ Creating something while a project is active scopes it there — "+ Agent" /
 
 Project delete is a **hard delete**: the row goes, and the cascade follows the
 `project_id` FKs — the project's agents, jobs, runs, docs, secrets, and tables
-all go with it. There is no archive state and no undo.
+all go with it. There is no archive state and no undo. Two things live outside
+the FK graph and are cleaned up explicitly alongside the cascade: the physical
+`t_*` SQLite tables holding agent-written rows, and the on-disk
+`uploads/runs/<id>/` attachment directories of the project's runs (matching what
+job and agent deletion already do).
 
 One caveat worth knowing: deleting a project frees its slug, but runner
-machines keep the old workspace directories
-(`~/.harbour/workspaces/<project-slug>/<agent-slug>/`) — disk cleanup is
-manual. A later project created with the same name takes the same slug and
-will **reuse** those leftover directories, inheriting whatever filesystem
-state the old agents left behind. Clean up the old tree first if that matters.
+machines keep two slug-named trees — the agent workspaces
+(`~/.harbour/workspaces/<project-slug>/<agent-slug>/`) and the materialized
+gate scripts (`~/.harbour/workflows/<project-slug>/...`, holding the
+`workflow.sh` / `prerun.sh` / `postrun.sh` written for each job). Disk cleanup
+is manual for both. A later project created with the same name takes the same
+slug and will **reuse** those leftover directories, inheriting whatever
+filesystem state the old agents left behind. Clean up the old trees first if
+that matters.
 
 ## What projects don't do
 

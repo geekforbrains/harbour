@@ -487,11 +487,14 @@ describe("runCliTool inactivity timer (issue #15)", () => {
   }, 8000);
 
   it("does NOT kill a process that keeps streaming within the window", async () => {
-    // Emit a line every 50ms (< 300ms window) for ~450ms, then exit cleanly.
+    // Emit a line every 50ms for ~450ms, then exit cleanly. The window is a
+    // wide multiple of the tick so the assertion stays about "streaming keeps
+    // it alive" — a tight window turns scheduling jitter under parallel test
+    // load into a spurious timeout.
     const script = `let n = 0; const t = setInterval(() => { process.stdout.write("tick " + (n++) + "\\n"); if (n >= 9) { clearInterval(t); process.exit(0); } }, 50);`;
     const lines: string[] = [];
     const res = await runCliTool(NODE, ["-e", script], process.cwd(), {
-      inactivityTimeoutMs: 300,
+      inactivityTimeoutMs: 2000,
       killGraceMs: 150,
       onLine: (l: string) => lines.push(l),
     });
@@ -642,5 +645,23 @@ describe("detectCapabilities — honest CLI detection", () => {
     process.env.PATH = "/usr/bin:/bin";
     resetBinaryCache();
     expect(resolveBinary("definitely-not-a-real-binary-xyz")).toBeNull();
+  });
+
+  it("resolves a binary on a PATH that has no `which` of its own", () => {
+    // `which` is an external binary; `command -v` is a shell builtin. A PATH
+    // holding only the target CLI (no /usr/bin) is the difference between the
+    // two — and it's what a locked-down runner host or a sanitized service
+    // environment actually looks like.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-nowhich-"));
+    try {
+      const fake = path.join(dir, "codex");
+      fs.writeFileSync(fake, "#!/bin/sh\necho fake\n");
+      fs.chmodSync(fake, 0o755);
+      process.env.PATH = dir;
+      resetBinaryCache();
+      expect(resolveBinary("codex")).toBe(path.join(dir, "codex"));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

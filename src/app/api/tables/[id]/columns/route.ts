@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAgentOrUser } from "@/lib/auth";
 import { addColumn, getTableById } from "@/lib/db/queries";
-import { assertOneOf, readJson, requireNonEmptyString } from "@/lib/http";
-
-const COLUMN_TYPES = ["TEXT", "INTEGER", "REAL"] as const;
+import { readJson, requireNonEmptyString } from "@/lib/http";
 
 export const POST = withAgentOrUser(async (req, _auth, { params }) => {
   const { id } = await params;
@@ -12,11 +10,10 @@ export const POST = withAgentOrUser(async (req, _auth, { params }) => {
 
   const body = await readJson(req);
   requireNonEmptyString(body.name, "name");
-  // Allow-list the type (case-insensitive) before it reaches the DDL.
-  const type = assertOneOf(String(body.type).toUpperCase(), COLUMN_TYPES, "type");
 
   try {
-    const updated = addColumn(id, { ...body, type } as Parameters<typeof addColumn>[1]);
+    // Type and default are validated in addColumn, which owns the DDL.
+    const updated = addColumn(id, body as Parameters<typeof addColumn>[1]);
     return NextResponse.json(updated);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
