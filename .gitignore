@@ -53,3 +53,4 @@ harbour.db-shm
 
 # e2e
 /.e2e/
+/.screenshot/

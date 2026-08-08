@@ -111,6 +111,11 @@ All Harbour state lives under `~/.harbour` by default — DB, uploads, encryptio
 | `HARBOUR_URL` | Base URL used by the bundled runner (highest precedence) | `HARBOUR_PORT`, saved `runner.url`, then `http://127.0.0.1:4272` |
 | `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `500` |
 | `HARBOUR_SESSION_TTL_DAYS` | Dashboard session lifetime in days | `30` |
+| `HARBOUR_POOL_SIZE` | Runner: lock units run in parallel per cycle | `4` |
+| `HARBOUR_MAX_CLAIMS` | Runner: max units claimed in one cycle (floored at the pool size) | `200` |
+| `HARBOUR_RUNNER_LABELS` | Runner: comma-separated placement labels it advertises | `local` |
+| `HARBOUR_CLI_INACTIVITY_MS` | Runner: kill a CLI after this long with no output | `180000` (3 min) |
+| `HARBOUR_USER_PASSWORD` | `harbour user create`: password when not passed as a flag | — |
 
 Setup saves its effective runner URL to `~/.harbour/runner.url`. The macOS
 installer also captures explicit runner-related environment values in its

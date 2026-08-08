@@ -42,6 +42,14 @@ For a release `vX.Y.Z`, create one release-prep commit on `dev`:
    ```
 3. Run the validation ladder from
    [development standards](../reference/development-standards.md#validation-commands).
+   If the dashboard's look changed this cycle, also refresh the README hero —
+   it carries the version badge, so it dates itself every release:
+   ```bash
+   npm run build && node scripts/screenshot.mjs
+   ```
+   It seeds synthetic demo data into a throwaway `HARBOUR_HOME` under
+   `.screenshot/` and captures `/` — it never touches `~/.harbour`. Include
+   `public/screenshot.png` in the release-prep commit when it changes.
 4. Commit — this commit touches **only** the three files above:
    ```bash
    git add changelog.md package.json package-lock.json
